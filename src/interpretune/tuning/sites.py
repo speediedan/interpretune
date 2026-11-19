@@ -32,7 +32,9 @@ rewrites that module's input or its output:
   holds the activation, under the HF model's path in the interpretune module.
 
 A point a composition cannot place is refused, naming the point and the composition; it is never mapped onto a nearby
-module. A string without a ``:`` is a module path, as before.
+module. An address may reference a named set of an address book (``@steer_site``), so a shared book drives
+interventions and splices as it drives schedules: the seam takes the book's sets (:func:`book_sets`) beside the
+address. A string without a ``:`` that does not start with ``@`` is a module path, as before.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -40,11 +42,12 @@ module. A string without a ``:`` is a module path, as before.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from torch import nn
 
-__all__ = ["ResolvedSite", "is_site_address", "resolve_site"]
+__all__ = ["ResolvedSite", "book_sets", "is_site_address", "resolve_site"]
 
 
 @dataclass(frozen=True)
@@ -63,8 +66,36 @@ class ResolvedSite:
 
 
 def is_site_address(site: str) -> bool:
-    """Whether ``site`` is a venngram site address rather than a module path (module paths never hold ``:``)."""
-    return ":" in site
+    """Whether ``site`` is a venngram site address rather than a module path: module paths never hold ``:`` and
+    never start with ``@`` (a reference to an address book's named set)."""
+    return ":" in site or site.startswith("@")
+
+
+def book_sets(book: Any) -> dict[str, Any]:
+    """The named sets of an address book, for ``@<set>`` references in a site address.
+
+    Args:
+        book: A venngram ``AddressBook``, a book document (a mapping), a local path to one, or a venngram store
+            reference to a published one.
+
+    Returns:
+        The book's sets by name (``AddressBook.sets()``).
+    """
+    from pathlib import Path
+
+    from venngram.book import AddressBook
+    from venngram.store import is_reference, load
+
+    if isinstance(book, AddressBook):
+        return book.sets()
+    if isinstance(book, Mapping):
+        return AddressBook.from_mapping(book).sets()
+    if isinstance(book, str) and is_reference(book):
+        loaded = load(book)
+        if not isinstance(loaded, AddressBook):
+            raise ValueError(f"{book!r} is a {type(loaded).__name__}, not an address book")
+        return loaded.sets()
+    return AddressBook.from_file(Path(book)).sets()
 
 
 def _path_of(root: nn.Module, target: Any) -> str | None:
@@ -127,12 +158,14 @@ def _hf_site(root: nn.Module, prefix: str, model: nn.Module, hook: str) -> Resol
     return ResolvedSite(f"{prefix}.{path}" if path else prefix, io, hook)
 
 
-def resolve_site(root: nn.Module, address: str) -> ResolvedSite:
+def resolve_site(root: nn.Module, address: str, sets: Mapping[str, Any] | None = None) -> ResolvedSite:
     """The module ``address`` names on ``root``'s composition, and the side of it that holds the activation.
 
     Args:
         root: The interpretune module.
-        address: A venngram site address selecting exactly one site, such as ``point:hook_resid_post & layers:13``.
+        address: A venngram site address selecting exactly one site, such as ``point:hook_resid_post & layers:13``,
+            or a reference to one of ``sets`` (``@steer_site``).
+        sets: An address book's named sets (:func:`book_sets`), for ``@<set>`` references.
 
     Returns:
         The resolved site.
@@ -144,7 +177,7 @@ def resolve_site(root: nn.Module, address: str) -> ResolvedSite:
     from interpretune.analysis.venngram.sites import resolve_sites
 
     try:
-        selection = resolve_sites(address, n_layers=_n_layers(root))
+        selection = resolve_sites(address, n_layers=_n_layers(root), sets=sets)
     except Exception as err:  # venngram's and the vocabulary's refusals arrive as several exception types
         raise ValueError(f"Site address {address!r}: {err}") from err
     if selection.flow != "value":

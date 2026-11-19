@@ -862,6 +862,23 @@ def model_gradient(
     """
     ...
 
+def weight_equivalence_check(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
+
+    Input Schema:
+        recipe (object)
+        we_rtol (float32)
+        we_atol (float32)
+
+    Output Schema:
+        we_max_abs_diff (float32) (required)
+        we_max_abs (float32) (required)
+        we_equivalent (bool) (required)
+    """
+    ...
+
 # Composite operations
 
 def attribution_from_concept(

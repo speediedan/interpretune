@@ -113,7 +113,11 @@ PY
         trusted_git_env
         mkdir -p "$PHASES_OUT"
         args=(); for phase in "${PHASES[@]}"; do args+=(--phase "$phase"); done
-        python -m gpu_epsilon.phase_evidence collect "${args[@]}" --out-dir "$PHASES_OUT"
+        # each phase's collection also writes its GPU tests' declared needs (tests/conftest.py), so the large stage can
+        # lease one device that fits them and the whole-server stage runs only for tests that need it (stage_needs.py)
+        rm -rf "${PHASES_OUT}/stage-needs"
+        IT_GPU_STAGE_NEEDS_DIR="${PHASES_OUT}/stage-needs" \
+            python -m gpu_epsilon.phase_evidence collect "${args[@]}" --out-dir "$PHASES_OUT"
         echo "##vso[task.setvariable variable=IT_PHASES_COLLECTED]true"
         # A selected run's manifests count the phase narrowed by the change, so the full phase it is a fraction of is
         # collected too, at this revision and without the selection file (a full run's manifests already are that).
