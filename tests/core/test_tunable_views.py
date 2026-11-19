@@ -26,6 +26,7 @@ from interpretune.tuning.views import (  # noqa: E402
     attach_tunable_view,
     adapter_roles,
     default_view,
+    expand_declared_roles,
     identity_view,
 )
 
@@ -242,7 +243,7 @@ class TestConfiguredView:
         overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        assert roles and roles == {**adapter_roles(module), **module.tunable_roles()}
+        assert roles and roles == {**adapter_roles(module), **expand_declared_roles(module, module.tunable_roles())}
         assert any(r.startswith("latent") for r in roles.values())
 
     def test_init_args_roles_are_used_as_given(self, request):

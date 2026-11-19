@@ -247,6 +247,20 @@ def weight_edit_roles(root: nn.Module) -> dict[str, str]:
     return roles
 
 
+def weight_edit_role_addresses(root: nn.Module) -> dict[str, str]:
+    """The roles of :func:`weight_edit_roles`, declared by address: each role mapped to its edits' operands
+    (``module:<edit> & leaf:<operand>``; an edit's buffers, such as its unit indices, stay ``base``), as venngram
+    views take them (``roles=``)."""
+    from interpretune.tuning.views import merge_roles
+
+    declared = [
+        {module.declared_role(): " | ".join(f"module:{path} & leaf:{n}" for n in operands)}
+        for path, module in root.named_modules()
+        if isinstance(module, WeightEdit) and (operands := [n for n, _ in module.named_parameters(recurse=False)])
+    ]
+    return merge_roles(*declared)
+
+
 def _view(root: nn.Module, view: Any | None) -> Any:
     if view is not None:
         return view
