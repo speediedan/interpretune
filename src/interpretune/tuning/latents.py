@@ -193,11 +193,13 @@ class _Splice:
         return (self.rewrite(module, args, args[0]), *args[1:])
 
 
-def _resolved(root: nn.Module, site: LatentSite) -> tuple[LatentSite, Literal["input", "output"]]:
+def _resolved(
+    root: nn.Module, site: LatentSite, sets: Mapping[str, Any] | None = None
+) -> tuple[LatentSite, Literal["input", "output"]]:
     """``site`` with its addresses resolved on ``root``, and which side of the write module is rewritten."""
     read, read_from, write_io = site.read, site.read_from, "output"
     if is_site_address(site.read):
-        resolved = resolve_site(root, site.read)
+        resolved = resolve_site(root, site.read, sets)
         if site.read_from == "input" and resolved.io == "output":
             raise ValueError(
                 f"LatentSite reads {site.read!r} with read_from='input', but that address is the output of"
@@ -206,7 +208,7 @@ def _resolved(root: nn.Module, site: LatentSite) -> tuple[LatentSite, Literal["i
         read, read_from = resolved.path, resolved.io
     write = site.write
     if is_site_address(site.write_path):
-        resolved = resolve_site(root, site.write_path)
+        resolved = resolve_site(root, site.write_path, sets)
         write, write_io = resolved.path, resolved.io
     return replace(site, read=read, write=write, read_from=read_from), write_io
 
@@ -249,7 +251,13 @@ def _require_reachable(root: nn.Module, what: str, *targets: nn.Module) -> None:
 
 
 def attach_latent_model(
-    root: nn.Module, name: str, latent: nn.Module, site: LatentSite, *, frozen: bool = False
+    root: nn.Module,
+    name: str,
+    latent: nn.Module,
+    site: LatentSite,
+    *,
+    frozen: bool = False,
+    sets: Mapping[str, Any] | None = None,
 ) -> nn.Module:
     """Register ``latent`` on ``root`` as ``latent_models.<name>`` and splice it in at ``site``.
 
@@ -265,6 +273,8 @@ def attach_latent_model(
         site: Where it reads and writes.
         frozen: Declare its parameters ``artifact`` rather than ``latent:<name>``: for a latent model loaded from a
             published or saved source, which is reloaded from it rather than checkpointed.
+        sets: An address book's named sets (:func:`~interpretune.tuning.sites.book_sets`), when a site address
+            references one (``@transcoder_in``).
 
     Returns:
         ``latent``.
@@ -282,7 +292,7 @@ def attach_latent_model(
     assert held is not None
     if name in held:
         raise ValueError(f"A latent model named {name!r} is already attached; detach it first")
-    resolved, write_io = _resolved(root, site)
+    resolved, write_io = _resolved(root, site, sets)
     read, write = root.get_submodule(resolved.read), root.get_submodule(resolved.write_path)
     _require_reachable(root, "latent models", read, write)
     splice = _Splice(latent, resolved)
