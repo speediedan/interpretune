@@ -11,11 +11,12 @@ last block first, then everything before it. With ``--latent-site``, a small lat
 module at that path (``tuning.latents``), so it is trained, and its splice is exercised, with the model. With
 ``--transcoder-site``, it reads that module's input and replaces its output instead (a transcoder), and a phased run
 tunes it alone first, then everything else. ``--device-type cuda`` places each rank (and the reference) on its own GPU.
+``--memprof-fsdp`` profiles every training iteration with the memory profiler's ``FSDP2MemTracker``.
 
 Writes ``<out_dir>/<placement>_rank<rank>.json`` with the per-step training losses, the epoch metrics the callbacks saw,
 each rank's recorded device, the parameter types and FSDP units after placement, (phased) the final depth and the
-parameters trainable at the end, and (latent) the latent model's parameters after training, or the placement's
-refusal.
+parameters trainable at the end, (latent) the latent model's parameters after training, or the placement's refusal, and
+(memprof) the path of the rank's FSDP2 memory report.
 """
 
 from __future__ import annotations
@@ -86,6 +87,7 @@ def main() -> None:
     parser.add_argument("--latent-site", default=None, help="splice a latent model at this module path")
     parser.add_argument("--transcoder-site", default=None, help="splice a transcoder over this module")
     parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
+    parser.add_argument("--memprof-fsdp", action="store_true", help="profile every training step with FSDP2MemTracker")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -95,6 +97,19 @@ def main() -> None:
     from tests.parity_acceptance.test_it_l import CoreCfg
 
     rank = int(os.environ.get("RANK", "0"))
+    memprofiler_cfg = None
+    if args.memprof_fsdp:
+        from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerFuncs, MemProfilerSchedule
+
+        # every training iteration of the run (two epochs of three batches when phased), FSDP2 tracking only
+        memprofiler_cfg = MemProfilerCfg(
+            enabled=True,
+            track_fsdp_mem=True,
+            collect_funcs=MemProfilerFuncs(default=[], fsdp=["training_step"]),
+            enable_memory_hooks=False,
+            enable_saved_tensors_hooks=False,
+            schedule=MemProfilerSchedule(warmup_iters=0, max_iter=6),
+        )
     batch_size = PER_RANK_BATCH * (args.world_size if args.placement == "single" else 1)
     test_cfg = CoreCfg(
         device_type=args.device_type,
@@ -105,6 +120,7 @@ def main() -> None:
         dm_override_cfg={"train_batch_size": batch_size, "eval_batch_size": batch_size},
         # no dropout: each rank draws from its own RNG stream, the reference from one
         model_cfg={"model_args": {"max_seq_len": 200, "n_layers": 2, "dropout_p": 0.0}},
+        memprofiler_cfg=memprofiler_cfg,
     )
     out_dir = Path(args.out_dir)
     torch.manual_seed(1 + rank)  # ranks initialize differently; placement must broadcast rank 0's weights
@@ -188,6 +204,10 @@ def main() -> None:
     if latent is not None:  # whole on every rank: a latent model is never split
         record["latent_params"] = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()}
         record["latent_init"] = latent_init
+    if args.memprof_fsdp:
+        # this rank's FSDP2 memory report, written when the session ended
+        log_dir = module.memprofiler.memprof_log_dir
+        record["fsdp_mem_report"] = str(log_dir / f"rank_{rank}_fsdp_memory_report.json")
     if fts is not None:
         assert fts.tuning_scheduler is not None
         record["depth"] = fts.tuning_scheduler.curr_depth
