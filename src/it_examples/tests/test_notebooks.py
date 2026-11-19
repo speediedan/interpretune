@@ -613,10 +613,12 @@ def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
     reason="IT_HF_TOKEN or HF_TOKEN required to fetch the concept-direction component",
 )
 @RunIf(bf16_cuda=True, min_gpu_mem_gb=8.0)
-def test_concept_direction_latent_dynamics_notebook(tmp_path: Path):
+def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch):
     """Execute the latent-dynamics notebook with the component trusted, and check every section reported."""
     import json
 
+    # the kernel inherits the token the Hub client reads; the component is private until the seed repositories flip
+    monkeypatch.setenv("HF_TOKEN", os.environ.get("IT_HF_TOKEN") or os.environ["HF_TOKEN"])
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
