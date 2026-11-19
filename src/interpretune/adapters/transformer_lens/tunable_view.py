@@ -36,7 +36,8 @@ TransformerLens tensor cannot reach the packed integers it was computed from.
 ``structure()`` places the physical tensors through the component map of the model the bridge wraps
 (``bridge.original_model``), the map the core/HF and nnsight views use: each tensor the bridge wraps is that model's
 own tensor, so it is located by identity. A venngram address (``layers:9 & component:attn.q``) therefore selects the
-same tensors on a TransformerLens composition as on the others, fused storage spans included (#1045).
+same tensors on a TransformerLens composition as on the others, fused storage spans included (#1045), and each
+tensor takes the unit axis its map row's ``layout`` gives, so unit ops and weight forms resolve too (#1055).
 """
 
 from __future__ import annotations
@@ -139,6 +140,10 @@ def _wrapped_names(bridge: nn.Module) -> tuple[dict[int, str], dict[int, str]]:
             components.setdefault(id(child), path)
             for leaf, t in [*original.named_parameters(recurse=False), *original.named_buffers(recurse=False)]:
                 names.setdefault(id(t), f"{path}.{leaf}")
+            # a parametrized tensor (an applied weight edit) is held as `parametrizations.<leaf>.original`
+            for leaf, plist in getattr(original, "parametrizations", {}).items():
+                if isinstance(t := getattr(plist, "original", None), Tensor):
+                    names.setdefault(id(t), f"{path}.{leaf}")
             walk(child, path)
 
     walk(bridge, None)
@@ -171,6 +176,24 @@ class _WrappedModelStructure:
             # located as a tensor of the component it is attached to would be
             return Location() if at is None else self._inner.locate(f"{at}.weight")
         return self._inner.locate(wrapped)
+
+    def unit_dim(self, name: str, ndim: int) -> int | Refusal:
+        """The dimension of ``name`` along its component's units, from the wrapped model's map row for the same
+        tensor, or why it has none."""
+        from venngram.errors import Refusal
+
+        unit_dim = getattr(self._inner, "unit_dim", None)
+        if unit_dim is None:
+            return Refusal(f"the wrapped model's structure ({type(self._inner).__name__}) places no unit axes")
+        wrapped = self._tensors.get(name)
+        if wrapped is None:
+            if any(name.startswith(f"{key}.") for key in self._attached):
+                return Refusal(
+                    f"`{name}` belongs to a module attached beside the bridge: only a row's own weight and bias"
+                    " have a unit axis"
+                )
+            return Refusal(f"`{name}` is no tensor of the model the bridge wraps")
+        return unit_dim(wrapped, ndim)
 
     def depth(self, stack: str | None = None) -> int | Refusal:
         return self._inner.depth(stack)
@@ -354,6 +377,9 @@ class TransformerBridgeView:
         for name, t in [*self.root.named_parameters(remove_duplicate=False), *self.root.named_buffers()]:
             if (original := originals.get(id(t))) is not None:
                 placed[name] = original
+                owner, sep, rest = name.partition(".parametrizations.")
+                if sep and rest.endswith(".original"):  # also by the name the model holds it under
+                    placed[f"{owner}.{rest.removesuffix('.original')}"] = original
         return _WrappedModelStructure(inner, placed, self._attached_components(inner, components))
 
     def _attached_components(self, inner: StructureProvider, components: Mapping[int, str]) -> dict[str, str]:

@@ -263,11 +263,12 @@ def _places_units(view: Any) -> bool:
 
 def _unit_view(root: nn.Module, view: Any | None) -> Any:
     """The view a unit target resolves through: ``view``, else ``root``'s attached view when its structure places
-    units (a venngram ``MappedView``), else ``root``'s default view (venngram's registry map for the model it carries).
+    units (a venngram ``MappedView``, or the view of a ``TransformerBridge``), else ``root``'s default view
+    (venngram's registry map for the model it carries).
 
-    An attached view that names tensors without placing them (an identity view, or the TransformerLens-named view of a
-    ``TransformerBridge``) addresses the same tensors under the same root, so the default view is asked instead; where
-    no map describes the root's module names either, the unit target is refused when it resolves.
+    An attached view that names tensors without placing their units (an identity view) addresses the same tensors
+    under the same root, so the default view is asked instead; where no map describes the root's module names either,
+    the unit target is refused when it resolves.
     """
     if view is not None:
         return view
