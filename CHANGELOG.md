@@ -221,6 +221,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - A splice site may reference an address book's named set (`@resid13`), so one shared book names it on every backend: `attach_intervention(..., sets=)`, `attach_latent_model(..., sets=)` and `resolve_site(..., sets=)` take the book's sets (`interpretune.tuning.sites.book_sets`, from an `AddressBook`, a book document, a local path or a venngram store reference), and `InterventionCfg.book` names the book a configured intervention's site reads ([#876](https://github.com/speediedan/interpretune/issues/876))
 
+- A circuit-tracer composition's tunable view places each per-layer transcoder's tensors at the layer whose MLP it replaces (`CircuitTracerView.structure()`), so a promotion names a layer range by address: `promote: {"role:artifact & layers:-4:": "latent:transcoder"}`. A cross-layer transcoder's tensors locate at no layer ([#875](https://github.com/speediedan/interpretune/issues/875))
+
 ### Changed
 
 - `SessionRunnerCfg.callbacks` instantiates an entry given as configuration hub-aware, as a session configuration's `class_path` is, so a run configuration can name a callback defined in a cached Hub component's entrypoint (`<entrypoint>.<Class>`, `knowing_using.ExactMatchReport` for one) ([#931](https://github.com/speediedan/interpretune/issues/931))
