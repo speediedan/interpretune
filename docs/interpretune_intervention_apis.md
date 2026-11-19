@@ -103,10 +103,11 @@ backend's own intervention path (`fwd_w_intervention`), and records the greatest
 exact weight form is refused with the reason before any forward runs. Unit ops need the unit axis of `mlp.out`'s weight
 (an output span needs only its output side), so the weight form resolves through the module's view when that view places
 units, else through venngram's registry map for the model the module carries, and a model whose map records no `layout`
-is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps, so no
-published map describes it and the op refuses it (resolving maps through the modules the bridge wraps is tracked in
-[#1055](https://github.com/speediedan/interpretune/issues/1055)); an nnsight composition registers the model's own
-modules and is described by its map. The model-backend conformance suite runs the same comparison for a per-neuron
+is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps but keeps
+the modules themselves, so its view resolves the wrapped model's map through them: each tensor takes the layer,
+component and unit axis of the same tensor in the wrapped model, and the op runs on a TransformerLens composition as on
+the others ([#1055](https://github.com/speediedan/interpretune/issues/1055)). An nnsight composition registers the
+model's own modules and is described by its map directly. The model-backend conformance suite runs the same comparison for a per-neuron
 recipe on every target whose view places units, and for an output rejection on every target whose view resolves
 `mlp.out`, each together with a check that taking the weight form back restores the base logits exactly.
 
@@ -364,6 +365,45 @@ A gradient target is translated with `flow="grad"` for the backward surface
   evidence behind them by reference rather than re-deriving indices, with registered examples for supported models.
 
 Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
+
+## Latent addresses: blocks, frames, charts and linear spaces
+
+`interpretune.analysis.venngram` resolves a latent address against an explicit catalog of loaded latent models
+(`LatentCatalog`). This is the addressing and coordinate layer: it reads and edits coordinates of tensors it is
+given. Executing a frame or chart edit natively through a backend's hooks is not part of it yet
+([#865](https://github.com/speediedan/interpretune/issues/865)).
+
+**One address form for every dictionary.** A `LatentBinding` declares a loaded model at one layer and activation point,
+its decoder rows, and its block size $b$: $b = 1$ for an SAE or transcoder, and block $g$ of a block-sparse featurizer
+is the latent range $[gb, (g+1)b)$. So `features:bsf_l17 & point:resid_post & layers:17 & units:[412]` selects one
+block exactly as `features:sae & units:[1234]` selects one feature, and unit slices and negative units count blocks.
+A named basis at a site is a `SubspaceBinding`, addressed as `subspace:<name>`, and is indivisible. External ids
+(a Neuronpedia id, an SAE Lens pair, a circuit-tracer feature) resolve only through aliases the catalog is given to
+canonical addresses; nothing is downloaded or inferred from an id's spelling.
+
+**Frames.** A block's internal basis is arbitrary (any rotation in $O(b)$ preserves its span), so an address never
+names a coordinate inside a block. Coordinate reads and edits name a frame: a `LatentFrame` is a named, exactly
+versioned orthonormal basis for one target, checked against the target's current decoder rows for equal rank and
+span each time it is used. Replacing framed coordinates changes only the target's span and keeps the orthogonal
+complement and autograd.
+
+**Charts.** A `LatentChart` is a named, versioned coordinate system fitted in one frame version: its kind, intrinsic
+dimension, periodic dimensions with their periods, and fitted parameters. Each kind is a registered handler
+(`register_chart_kind`); `affine` (a flat chart, no periodic dimension) and `pca_plane` (a plane read as a radius and
+an angle of period $2\pi$) are built in, and any other kind, such as a spline or a flow, is refused by name until a
+caller registers it. Edits are made in chart coordinates: `set`, `path` (piecewise linear through waypoints, the
+shorter way round each periodic dimension), `rotate` (periodic dimensions only) and `scale_norm`. An edit moves the
+frame coordinates by exactly the chart's change, so the part off the chart is kept. Charts can travel in an address
+book's top-level `charts` key, which venngram keeps without changing what the book's sets select
+(`charts_from_book`).
+
+**Linear spaces.** Features trained on $J_\ell h$ rather than on $h$ have decoder rows in that space. A `LinearSpace`
+carries the map $M$ and writes an edit back through its declared inverse or its pseudoinverse; the map composed with
+the inverse must be the identity on the space, so a write lands the requested space coordinates exactly and leaves
+the null space of $M$ as it was. A map whose rank is below its dimension is refused rather than written in least
+squares. A binding names its space (`space="jlens"`), the address qualifier `space:jlens` selects by it, and the
+catalog's `site_coordinates`, `replace_site_coordinates` and `apply_site_chart` read and write site activations
+through it.
 
 ## Gradient interventions
 

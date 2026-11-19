@@ -13,10 +13,12 @@ from interpretune.tuning.interventions import (
     OpIntervention,
     attach_intervention,
     detach_intervention,
+    intervention_role_addresses,
     intervention_roles,
     intervention_sites,
 )
-from interpretune.tuning.latents import LatentSite, latent_model_roles
+from interpretune.tuning.latents import LatentSite, latent_model_role_addresses, latent_model_roles
+from interpretune.tuning.views import expand_declared_roles, merge_roles
 
 D = 8
 
@@ -231,6 +233,54 @@ class TestRoles:
         assert roles["latent_models.sae.enc.weight"] == "latent:sae"
         detach_intervention(root, "steer")
         assert "interventions.steer.operand.value" not in root.tunable_roles()
+
+
+class TestRoleAddresses:
+    """``BaseITModule.tunable_roles()`` declares these roles by address, and each address selects exactly the
+    tensors the name map named (#875)."""
+
+    @staticmethod
+    def _spliced():
+        from interpretune.tuning.latents import attach_latent_model
+
+        root = Root()
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
+        attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1")
+        attach_intervention(root, "held", OpIntervention("add", D), "model.tuple_block", frozen="artifact")
+        attach_intervention(root, "mean", OpIntervention("add", D), "model.blocks.0", frozen="fitted")
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
+        attach_latent_model(root, "loaded", TinySAE(), LatentSite("model.blocks.1"), frozen=True)
+        return root
+
+    def test_each_role_is_declared_by_address_and_expands_to_the_names(self):
+        root = self._spliced()
+        declared = merge_roles(latent_model_role_addresses(root), intervention_role_addresses(root))
+        assert declared == {
+            "latent:sae": "module:latent_models.sae",
+            "artifact": "module:latent_models.loaded | module:interventions.held",  # one role, both frozen modules
+            "intervention:steer": "module:interventions.steer",
+            "intervention:edit": "module:interventions.edit",
+            "fitted": "module:interventions.mean",
+        }
+        assert expand_declared_roles(root, declared) == {**latent_model_roles(root), **intervention_roles(root)}
+
+    def test_a_view_given_the_addresses_has_the_roles_of_the_names(self):
+        from venngram.tuning import CanonicalView
+        from venngram.tuning.conformance import role_address_case
+
+        root = self._spliced()
+        declared = merge_roles(latent_model_role_addresses(root), intervention_role_addresses(root))
+        role_address_case(lambda roles: CanonicalView(root, roles=roles), declared).run()
+
+    def test_nothing_attached_declares_nothing(self):
+        assert latent_model_role_addresses(Root()) == {} and intervention_role_addresses(Root()) == {}
+
+    def test_merging_joins_one_roles_addresses_and_a_later_name_wins(self):
+        assert merge_roles(
+            {"artifact": "module:a", "head.weight": "fitted"},
+            {"artifact": "module:b", "head.weight": "base", "latent:sae": "module:c"},
+            {"latent:sae": "module:c"},  # the same address again adds nothing
+        ) == {"artifact": "module:a | module:b", "head.weight": "base", "latent:sae": "module:c"}
 
 
 class TestScheduling:

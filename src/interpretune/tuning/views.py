@@ -68,6 +68,50 @@ def fts_views_available() -> bool:
     return True
 
 
+def module_address(*paths: str) -> str:
+    """The venngram address selecting every tensor under the modules at ``paths`` (``module:<path>``, matched on
+    whole segments), as a union."""
+    return " | ".join(f"module:{path}" for path in paths)
+
+
+def merge_roles(*declarations: Mapping[str, str]) -> dict[str, str]:
+    """Merge role declarations as venngram views take them (``roles=``): tensor names mapped to roles, and roles
+    mapped to addresses (speediedan/venngram#109).
+
+    A later name entry replaces an earlier one, as a mapping update does. A role two declarations each map to an
+    address selects the union of both, so cooperative ``tunable_roles()`` overrides add to ``super()``'s rather than
+    replacing it. A key that parses as a role is taken as one here; the view still reads a key naming a tensor as a
+    name entry (venngram's rule, :func:`venngram.tuning.views.expand_roles`).
+    """
+    from venngram.roles import parse_role
+
+    def is_role(key: str) -> bool:
+        try:
+            parse_role(key)
+        except ValueError:
+            return False
+        return True
+
+    merged: dict[str, str] = {}
+    for declared in declarations:
+        for key, value in declared.items():
+            if key in merged and is_role(key) and merged[key] != value:
+                merged[key] = f"{merged[key]} | {value}"
+            else:
+                merged[key] = value
+    return merged
+
+
+def expand_declared_roles(root: nn.Module, roles: Mapping[str, str], structure: Any = None) -> dict[str, str]:
+    """``roles`` (names, or roles mapped to addresses) as tensor names mapped to roles, for a view that takes names
+    only: each address is resolved against ``root``'s parameters and buffers, placed by ``structure`` when given
+    (venngram's :func:`~venngram.tuning.views.expand_roles`, which states what it refuses)."""
+    from venngram.tuning.views import expand_roles
+
+    names = [n for n, _ in root.named_parameters()] + [n for n, _ in root.named_buffers()]
+    return expand_roles(roles, names, structure)
+
+
 def adapter_roles(root: nn.Module) -> dict[str, str]:
     """The roles venngram's overlay maps give ``root``'s tensors: PEFT adapter tensors as ``adapter:<name>``, for
     every tuner family a seed overlay describes, and whatever else a known overlay covers.
