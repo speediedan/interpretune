@@ -326,6 +326,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- A task-neutral module, one whose configuration declares no labels and no generation step (the `prompt_analysis` component's), can load a Hugging Face model and save an analysis store. Model initialization, on the core path and on TransformerLens, applies `num_labels` only when the configuration declares it, and otherwise keeps the pretrained configuration's count; an analysis store's answer-token and class dimensions are variable for such a module, as an unknown dimension name already is, rather than read from settings only a task has ([#1013](https://github.com/speediedan/interpretune/issues/1013))
+
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
 
 - Docs notebook artifacts no longer name the working copy that rendered them. nbpress writes a path into any checkout of the repository repository-relative in captured output, and `--check-stale` fails on one that survives. The existing artifacts' outputs were rewritten to match, with no re-render ([#1019](https://github.com/speediedan/interpretune/issues/1019))

@@ -21,6 +21,7 @@ from interpretune.analysis.core import (
     LatentAnalysisDict,
     AnalysisStore,
     resolve_names_filter,
+    get_module_dims,
     schema_to_features,
     LatentModelFqn,
     _make_simple_cache_hook,
@@ -729,6 +730,21 @@ class TestCoreFunctionality:
 
         assert str(features["adjacency_matrix"]) == "List(Value('float32'))"
         assert features["adjacency_matrix"].__class__.__name__ != "Array2D"
+
+    def test_a_task_neutral_module_leaves_answer_and_class_dims_variable(self):
+        """A module with no generation step and no labels reads those dims as variable, not as a task setting."""
+        from types import SimpleNamespace
+
+        tokenizer = SimpleNamespace(vocab_size=11, model_max_length=8)
+        module = SimpleNamespace(
+            datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=1)),
+            it_cfg=SimpleNamespace(),
+            model=SimpleNamespace(tokenizer=tokenizer),
+        )
+        assert get_module_dims(module) == (1, None, None, 11, 8)
+        schema = {"answer_logits": ColCfg(datasets_dtype="float32", array_shape=("max_answer_tokens", "vocab_size"))}
+        features = schema_to_features(module, schema=schema)
+        assert features["answer_logits"].__class__.__name__ != "Array2D"
 
     def test_schema_from_module_analysis_cfg(self):
         """Test schema_to_features when schema comes from module.analysis_cfg.output_schema."""

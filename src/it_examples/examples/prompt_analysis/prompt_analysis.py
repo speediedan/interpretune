@@ -9,6 +9,7 @@ serves them as the test and predict splits. There is no dataset, no label and no
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import datasets
 from torch.utils.data import DataLoader
@@ -30,6 +31,13 @@ class PromptSetConfig(PromptConfig):
 @dataclass(kw_only=True)
 class ChatTemplatePromptSetConfig(ChatTemplatePromptConfig, PromptSetConfig):
     """The prompts a session analyzes, wrapped in the tokenizer's chat template (instruction-tuned models)."""
+
+
+def _no_prompts() -> ValueError:
+    return ValueError(
+        "No prompts to analyze: set `datamodule_cfg.prompt_cfg.prompts`, or choose an experiment variant that names "
+        "its own."
+    )
 
 
 def _refusing_dataloader(split: str):
@@ -77,13 +85,10 @@ class PromptDataModule(ITDataModule):
     def encode_prompts(self, prompts: list[str]) -> datasets.Dataset:
         """Tokenize ``prompts`` through the configured prompt template."""
         if not prompts:
-            raise ValueError(
-                "No prompts to analyze: set `datamodule_cfg.prompt_cfg.prompts`, or choose an experiment variant "
-                "that names its own."
-            )
+            raise _no_prompts()
         prompt_cfg = self.itdm_cfg.prompt_cfg
-        if hasattr(prompt_cfg, "bind_tokenizer"):
-            prompt_cfg.bind_tokenizer(self.tokenizer)
+        if (bind_tokenizer := getattr(prompt_cfg, "bind_tokenizer", None)) is not None:
+            bind_tokenizer(self.tokenizer)
         sequences = [
             prompt_cfg.model_chat_template_fn(
                 task_prompt=p, tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern
@@ -98,10 +103,10 @@ class PromptDataModule(ITDataModule):
 
     def _eval_dataloader(self) -> DataLoader:
         if self.dataset is None:
-            # the same refusal, by name, that encoding an empty prompt set raises
-            self.encode_prompts([])
+            raise _no_prompts()
+        prompts: Any = self.dataset["test"]  # a datasets.Dataset, which DataLoader indexes like a torch Dataset
         return DataLoader(
-            self.dataset["test"],
+            prompts,
             collate_fn=self.data_collator,
             batch_size=self.itdm_cfg.eval_batch_size,
             **{**self.itdm_cfg.dataloader_kwargs, "shuffle": False, "drop_last": False},
