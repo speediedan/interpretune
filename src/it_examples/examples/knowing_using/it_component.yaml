@@ -36,6 +36,7 @@ module:
         description: LoRA fine-tuning with cross-entropy plus LRSD (`lrsd_lambda` 0 is the plain arm), scored by
           exact match after every epoch on the core loop (runs/)
   configs:
+    kug_lrsd.llama3_2_1b.core: configs/kug_lrsd.llama3_2_1b.core.yaml
     kug_lrsd.llama3_2_3b.core: configs/kug_lrsd.llama3_2_3b.core.yaml
     kug_lrsd.qwen2_5_1_5b.core: configs/kug_lrsd.qwen2_5_1_5b.core.yaml
 datamodules:

@@ -581,3 +581,23 @@ def test_the_mid_only_run_trains_the_mid_band_on_cross_entropy(kug, kug_revision
     assert not any("train_lrsd" in epoch for epoch in record["epochs"])
     assert record["thawed"] and all(".layers.1." in n or ".layers.2." in n for n in record["thawed"])
     assert len(record["thawed"]) == 2 * 7 * 2
+
+
+def test_the_gated_all_run_turns_lrsd_on_without_refreezing(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
+    """The gated arm's control (the shipped schedule, whose phase 1 adds nothing and refreezes nothing), with a
+    threshold of 0 so phase 1 opens after the first epoch."""
+    from interpretune.base.components.cli import core_cli_main
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.chdir(tmp_path)
+    run_config = _run_config(kug_revision, tmp_path, run_key="kug_gated_all.qwen2_5_1_5b.core")
+    cfg = yaml.safe_load(run_config.read_text())
+    fts = cfg["run_cfg"]["callbacks"][1]["init_args"]["tuning_scheduler_kwargs"]
+    fts["transition"] = {"class_path": "knowing_using.MetricThresholdTransition", "init_args": {"threshold": 0.0}}
+    run_config.write_text(yaml.safe_dump(cfg))
+    args, _, _ = _tiny_run_args(kug, tmp_path, run_config)
+    core_cli_main(run_mode="train", args=args + ["--run_cfg.max_epochs=3"])
+
+    record = json.loads((tmp_path / "record.json").read_text())
+    assert ["train_lrsd" in epoch for epoch in record["epochs"]] == [False, True, True]
+    assert len(record["thawed"]) == N_LAYERS * 7 * 2  # every adapter still trains
