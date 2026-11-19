@@ -17,7 +17,7 @@ venngram is imported on first use, so importing interpretune does not import it.
 .. warning:: This is an experimental API and may change in a future release.
 """
 
-from interpretune.analysis.venngram.apply import recipe_feature_interventions, recipe_interventions
+from interpretune.analysis.venngram.apply import recipe_feature_interventions, recipe_interventions, unit_interventions
 from interpretune.analysis.venngram.charts import (
     ChartKind,
     LatentChart,
@@ -35,7 +35,7 @@ from interpretune.analysis.venngram.latents import (
     LatentTarget,
     SubspaceBinding,
 )
-from interpretune.analysis.venngram.sites import SiteSelection, resolve_sites
+from interpretune.analysis.venngram.sites import SiteSelection, UnitSiteSelection, resolve_sites, resolve_unit_sites
 from interpretune.analysis.venngram.spaces import LinearSpace
 from interpretune.analysis.venngram.support import (
     check_recipe,
@@ -44,6 +44,7 @@ from interpretune.analysis.venngram.support import (
     venngram_feature_support,
     venngram_support,
 )
+from interpretune.analysis.venngram.values import normalized_unit_doses
 
 __all__ = [
     "ChartKind",
@@ -57,17 +58,21 @@ __all__ = [
     "LinearSpace",
     "SiteSelection",
     "SubspaceBinding",
+    "UnitSiteSelection",
     "chart_kind",
     "charts_from_book",
     "check_recipe",
     "export_book",
     "load_recipe",
+    "normalized_unit_doses",
     "recipe_feature_interventions",
     "recipe_interventions",
     "register_chart_kind",
     "require_supported",
     "resolve_sites",
+    "resolve_unit_sites",
     "support_mapping",
     "venngram_feature_support",
     "venngram_support",
+    "unit_interventions",
 ]
