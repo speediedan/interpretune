@@ -194,7 +194,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
 
   | Op | Model backend: whole activation | Model backend: units, or features at the latent sub-hook | Analysis backend: features, at explicit positions |
   |---|---|---|---|
-  | `replace` | the operand, or the dose broadcast | refused: a spec replaces the whole tensor | the dose $d$ |
+  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here | the dose $d$ |
   | `add` | the operand times the dose, or the dose | the dose per member, added to the activation the forward pass meets | $a + d$, for the clean activation $a$ |
   | `scale` | the dose, as a multiplier | the dose per member, ones elsewhere | $a \cdot d$, for the clean activation $a$ |
   | `project`, `reject`, `patch`, `clamp` | the operand (a vector, or a pair for `patch`) | refused | refused |
@@ -243,6 +243,51 @@ venngram address, composed with other sets by set algebra, and acted on by a tre
 to an architecture or to where a set came from: an address names a site and the units at it, and the same recipe runs
 on every backend whose support record honours it.
 
+### Direct unit payloads
+
+`unit_interventions` builds a payload for `it.model_fwd_intervention` (its `interventions` input), without a recipe:
+
+```python
+from interpretune.analysis.venngram import unit_interventions
+
+payload = unit_interventions(
+    "point:mlp.out.hook_in & layers:12 & units:[431, 1007]",
+    n_layers=32,
+    site_widths={"mlp.out.hook_in": 14336},  # the checkpoint's MLP hidden width
+    op="add",
+    value=[0.5, -0.25],
+    position_scope="all_positions",
+)
+```
+
+`add`, `scale` and `replace` take a scalar or one value per selected unit, in ascending index order. A mapping from
+layer index to those values supplies different doses at different layers. `clamp` takes `clamp_min` and/or
+`clamp_max`, with no `value`, and bounds only the selected coordinates in the model's unit basis. All four modes
+preserve every unselected coordinate. The token scope independently chooses the final real token or every position.
+
+Addresses may use per-layer unit mappings, unit slices, negative indices and set algebra over book references
+(`sets=book.sets()`). Widths are supplied by the model, so a slice resolves against the real width. An address
+selecting nothing, an unavailable width or an unsupported field is refused. Guarded unit expressions are not
+supported. A gradient address (`of:grad`) requires `flow="grad"` and the payload goes to
+`it.model_bwd_intervention`; the forward translation refuses it.
+
+The payload carries `InterventionSpec.unit_indices`. Its operand is in that selected coordinate order, and the shared
+executor reads, edits and writes back only that slice. This differs from replacing the whole activation with a sparse
+vector: zero is an explicit replacement value, while coordinates outside the selection retain their values and their
+autograd path. A backend must declare the `units` target in its intervention support record. A direct unit payload
+edits activations; editing the weights behind the same units is a unit adapter (`attach_unit_adapter`, under
+[parameter targets](#parameter-targets)).
+
+For normalized doses, `normalized_unit_doses` computes $d_u m / \lVert W_u \rVert_2$, where $m$ is the measured median
+residual norm and $W_u$ is the down-projection column for unit $u$. Supply the stored weight and its measured
+`unit_dim` (1 for `nn.Linear`, 0 for GPT-2 `Conv1D`), plus the selected units and reference median. The helper
+refuses zero column norms and nonfinite inputs; it never guesses the weight layout from its shape. Its output is a
+`value` for the direct payload, or a per-unit dose table in a recipe.
+
+`export_book` writes selected `add`, `scale` and `replace` specs as unit-targeted recipe ops, including zero-valued
+replacements. A selected clamp is refused on export: venngram's recipe registry currently declares `clamp` on a whole
+activation with a vector or subspace operand, so it cannot represent this direct payload's selected unit basis.
+
 ### Naming and composing a set
 
 A recipe's book names its sets. A set is a term (a site, the layers it spans and the units at each) or a composition of
@@ -287,9 +332,10 @@ them:
 |---|---|---|---|
 | `add` | `add`, with a dense vector at the site's width | the value | 0 |
 | `scale` | `scale`, with a dense vector at the site's width | the value | 1 |
+| `replace` | `replace`, with `unit_indices` and the selected values | the replacement | unchanged |
 
-The specs are the dense `add` and `scale` that `fwd_w_intervention` executes with the same maths on TransformerLens
-and NNsight, so a unit-set treatment adds no execution path of its own. The caller supplies each site's width
+The specs use the shared executors that `fwd_w_intervention` applies on TransformerLens and NNsight. A replacement
+selects its coordinates before execution, so it leaves every other unit untouched. The caller supplies each site's width
 (`site_widths`) from the model's configuration, since the width is a fact of the checkpoint the recipe pins, and a
 unit at or past it is refused rather than dropped. A feature set takes the same path one level down, at the latent
 sub-hook (`blocks.<layer>.<site>.hook_sae_acts_post`), or becomes circuit-tracer's feature tuples on the analysis
@@ -311,16 +357,14 @@ a silently narrowed treatment. The refusals a unit-set treatment can meet:
 | a reference to a set no set or import defines, or references that form a cycle | venngram, reading the book |
 | a composition that names no units (`@a - @a`) | venngram, reading the recipe |
 | a slice of units where explicit units are required | venngram for a composition, reading the recipe; `recipe_interventions` for a single set |
-| a unit-targeted op other than `add` and `scale` (`replace`, `clamp`, `project`, `reject`, `patch`) | `op_refusal` |
+| a unit-targeted recipe op other than `add`, `scale` and `replace` | venngram's op registry or `op_refusal` |
 | an operand on a unit-targeted op (it takes a value) | `op_refusal` |
 | a site with no supplied width, or a unit at or past it | `recipe_interventions` |
 | an evidence-sourced value on a composed target | `recipe_interventions` |
 | a target addressing the gradient (`of: grad`), composed or not, in a translation for values | `op_refusal` |
 
-`add` and `scale` are the unit-targeted ops because a dense vector expresses them exactly: every unit the treatment
-does not name keeps its value. A dense `clamp` or `replace` would act on those units too, so per-unit ops on listed
-coordinates wait for coordinate-native modes ([#867](https://github.com/speediedan/interpretune/issues/867)). A
-gradient target is translated with `flow="grad"` for the backward surface
+`add` and `scale` use dense vectors with their identity values elsewhere; `replace` uses a selected-coordinate spec.
+A gradient target is translated with `flow="grad"` for the backward surface
 ([gradient interventions](#gradient-interventions)).
 
 ### Not yet supported

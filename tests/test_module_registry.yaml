@@ -385,13 +385,13 @@ rte.gpt2.sae_lens:
         sae_cfgs:
           - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
-              release: gpt2-small-res-jb
-              sae_id: blocks.0.hook_resid_pre
+              release: gpt2-small-resid-post-v5-32k
+              sae_id: blocks.0.hook_resid_post
               device: cuda
           - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
-              release: gpt2-small-res-jb
-              sae_id: blocks.1.hook_resid_pre
+              release: gpt2-small-resid-post-v5-32k
+              sae_id: blocks.1.hook_resid_post
               device: cuda
 rte.gpt2.nnsight:
   # was: gpt2.rte.nnsight
@@ -527,13 +527,13 @@ rte.gpt2.nnsight+sae_lens:
         sae_cfgs:
           - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
-              release: gpt2-small-res-jb
-              sae_id: blocks.0.hook_resid_pre
+              release: gpt2-small-resid-post-v5-32k
+              sae_id: blocks.0.hook_resid_post
               device: cpu
           - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
-              release: gpt2-small-res-jb
-              sae_id: blocks.1.hook_resid_pre
+              release: gpt2-small-resid-post-v5-32k
+              sae_id: blocks.1.hook_resid_post
               device: cpu
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule

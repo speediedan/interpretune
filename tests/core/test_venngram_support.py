@@ -105,13 +105,14 @@ class TestCheckRecipe:
         )
         assert check_recipe(recipe, _support()) == []
 
-    def test_untranslatable_ops_refuse_by_name(self):
+    def test_a_unit_replace_is_supported(self):
         unit_replace = _recipe(
-            site="mlp.hook_out", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
+            site="mlp.out.hook_in", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
         )
-        assert any(
-            "a unit-targeted `replace` has no native translation" in r for r in check_recipe(unit_replace, _support())
-        )
+        assert check_recipe(unit_replace, _support(capture=False)) == []
+        require_supported(unit_replace, _support(capture=False))
+
+    def test_untranslatable_ops_are_refused(self):
         layer_free = _recipe(
             operands={"concept": CONCEPT}, site="mlp.hook_out", ops=[{"op": "reject", "operand": "concept"}]
         )

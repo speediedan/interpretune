@@ -19,7 +19,7 @@ A vector ``add`` is an operand unless its site is one of ``unit_sites``, whose c
 unit set with a ``doses`` table, the form a recipe's unit doses take. A mode that ignores ``scale_factor`` or
 ``use_intervention_tensor_as_basis`` has neither written.
 
-**Refused by name**, since a treatment that means something else is worse than none:
+**Refused**, since a treatment that means something else is worse than none:
 
 - a hook naming no layer, a wildcard pattern among them, since a stage names one concrete layer;
 - a position scope with no venngram spelling, and a tensor of a rank the mode's op has no operand for;
@@ -57,7 +57,7 @@ from interpretune.utils import MisconfigurationException
 _TOKENS = {PositionScope.ALL_POSITIONS: "all", PositionScope.LAST_TOKEN: "last"}
 
 #: The operand ranks each operand-bearing op has a kind for: a vector, or a stack of them on a leading axis. An op
-#: outside this table (``replace_with_error``, an op a collection registers) has no writer here and is refused by name.
+#: outside this table (``replace_with_error``, an op a collection registers) has no writer here and is refused.
 _OPERAND_RANKS = {
     "add": (1,),
     "replace": (1,),
@@ -107,6 +107,36 @@ class _BookWriter:
     def _broadcast_op(self, op: str, tensor: torch.Tensor, scale: float) -> dict[str, Any]:
         """A tensor every element of which is the one value: venngram's ``dose``."""
         return {"op": op, "value": {"dose": tensor.flatten()[0].item() * scale}}
+
+    def _selected_op(self, spec: InterventionSpec, tensor: torch.Tensor, site: str, layer: int, where: str) -> dict:
+        """Write every selected member, including zero replacements and identity-valued doses."""
+        indices = spec.unit_indices
+        assert indices is not None
+        if (
+            not indices
+            or any(type(unit) is not int or unit < 0 for unit in indices)
+            or len(set(indices)) != len(indices)
+        ):
+            raise MisconfigurationException(f"{where}: invalid unit_indices {indices!r}")
+        if spec.op not in {"add", "scale", "replace"}:
+            raise MisconfigurationException(
+                f"{where}: selected-unit {spec.op!r} has no recipe writer; venngram's clamp target is activation"
+            )
+        try:
+            values = torch.broadcast_to(tensor, (len(indices),))
+        except RuntimeError as err:
+            raise MisconfigurationException(
+                f"{where}: values do not broadcast to {len(indices)} selected units"
+            ) from err
+        if spec.op != "replace":
+            values = values * spec.scale_factor
+        key = _NOT_SET_NAME.sub("_", f"blocks_{layer}_{site}_units_{len(self.sets)}")
+        self.sets[key] = {"point": site, "layers": [layer], "units": {layer: list(indices)}}
+        return {
+            "op": spec.op,
+            "target": {"set": key},
+            "value": {"doses": {layer: dict(zip(indices, values.tolist(), strict=True))}},
+        }
 
     def _scale_or_add(self, spec: InterventionSpec, tensor: torch.Tensor, site: str, layer: int, where: str):
         """A scale or add op; returns it and the stage site it needs (a unit set's stage names no layer)."""
@@ -170,7 +200,9 @@ class _BookWriter:
         if tensor.numel() == 0:
             raise MisconfigurationException(f"{where}: an empty tensor has nothing to write")
         stage_site = f"blocks.{layer}.{site}"
-        if name in ("add", "scale"):
+        if spec.unit_indices is not None:
+            op, stage_site = self._selected_op(spec, tensor, site, layer, where), site
+        elif name in ("add", "scale"):
             op, stage_site = self._scale_or_add(spec, tensor, site, layer, where)
         elif name == "replace":
             op = self._replace_op(tensor, where)
