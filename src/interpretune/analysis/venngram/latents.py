@@ -19,6 +19,7 @@ from interpretune.utils import MisconfigurationException
 
 if TYPE_CHECKING:
     from interpretune.analysis.venngram.charts import LatentChart
+    from interpretune.analysis.venngram.spaces import LinearSpace
 
 
 def _point(name: str) -> str:
@@ -225,6 +226,7 @@ class LatentCatalog:
         external_ids: Mapping[str, Any] | None = None,
         frames: Sequence[LatentFrame] = (),
         charts: Sequence[LatentChart] = (),
+        spaces: Sequence[LinearSpace] = (),
     ) -> None:
         self._features = self._index(features)
         self._subspaces = self._index(subspaces)
@@ -248,6 +250,18 @@ class LatentCatalog:
                 raise MisconfigurationException(f"duplicate latent chart {key}")
             chart.validate(self)
             self._charts[key] = chart
+        self._spaces: dict[str, LinearSpace] = {}
+        for space in spaces:
+            if space.name in self._spaces:
+                raise MisconfigurationException(f"duplicate linear space {space.name!r}")
+            self._spaces[space.name] = space
+        for binding in (*self._features.values(), *self._subspaces.values()):
+            rows = binding.decoder_rows if isinstance(binding, LatentBinding) else binding.basis
+            if binding.space in self._spaces and rows.shape[1] != self._spaces[binding.space].dim:
+                raise MisconfigurationException(
+                    f"latent binding {binding.name!r} has rows of width {rows.shape[1]}, but linear space"
+                    f" {binding.space!r} has dimension {self._spaces[binding.space].dim}"
+                )
 
     @staticmethod
     def _index(bindings: Sequence[Any]) -> dict[tuple[str, int, str], Any]:
@@ -325,6 +339,43 @@ class LatentCatalog:
                 f" and device {values.device}"
             )
         return values + (coordinates - values @ rows.T) @ rows
+
+    def space(self, name: str) -> LinearSpace:
+        """The registered linear space ``name``; an unregistered one is refused, naming the registered ones."""
+        if name not in self._spaces:
+            raise MisconfigurationException(
+                f"linear space {name!r} is not registered in this catalog (registered: {sorted(self._spaces)})"
+            )
+        return self._spaces[name]
+
+    def to_space(self, target: LatentTarget, h: torch.Tensor) -> torch.Tensor:
+        """Site activations in the space the target's binding is expressed in (unchanged for the site's own)."""
+        name = self.binding(target).space
+        return h if name is None else self.space(name).read(h)
+
+    def _from_space(self, target: LatentTarget, h: torch.Tensor, edited: torch.Tensor) -> torch.Tensor:
+        name = self.binding(target).space
+        return edited if name is None else self.space(name).write(h, edited)
+
+    def site_coordinates(self, target: LatentTarget, h: torch.Tensor, *, frame: str, version: str) -> torch.Tensor:
+        """Framed coordinates read from site activations, through the binding's linear space."""
+        return self.coordinates(target, self.to_space(target, h), frame=frame, version=version)
+
+    def replace_site_coordinates(
+        self, target: LatentTarget, h: torch.Tensor, coordinates: torch.Tensor, *, frame: str, version: str
+    ) -> torch.Tensor:
+        """Replace framed coordinates in site activations: edited in the binding's space, written back exactly."""
+        values = self.to_space(target, h)
+        edited = self.replace_coordinates(target, values, coordinates, frame=frame, version=version)
+        return self._from_space(target, h, edited)
+
+    def apply_site_chart(
+        self, target: LatentTarget, h: torch.Tensor, *, chart: str, version: str, op: str, **args: Any
+    ) -> torch.Tensor:
+        """:meth:`apply_chart` on site activations, through the binding's linear space."""
+        values = self.to_space(target, h)
+        edited = self.apply_chart(target, values, chart=chart, version=version, op=op, **args)
+        return self._from_space(target, h, edited)
 
     def chart(self, target: LatentTarget, *, name: str, version: str) -> LatentChart:
         """Find the exact chart version and revalidate it against its frame."""
