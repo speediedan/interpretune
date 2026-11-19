@@ -86,10 +86,12 @@ def test_changed_prompts_are_served_on_the_next_setup(prompt_analysis_cache):
     assert dm.tokenizer.batch_decode(batch["input"], skip_special_tokens=True) == ["second prompt"]
 
 
-def test_no_prompts_is_refused_by_name(prompt_analysis_cache):
+@pytest.mark.parametrize("loader", ["test_dataloader", "predict_dataloader"])
+def test_a_model_only_setup_succeeds_and_serving_no_prompts_is_refused_by_name(prompt_analysis_cache, loader):
     dm = _datamodule(prompt_analysis_cache, [])
+    dm.setup()
     with pytest.raises(ValueError, match="datamodule_cfg.prompt_cfg.prompts"):
-        dm.setup()
+        getattr(dm, loader)()
 
 
 @pytest.mark.parametrize("loader", ["train_dataloader", "val_dataloader"])

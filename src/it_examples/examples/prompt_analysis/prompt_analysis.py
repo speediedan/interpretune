@@ -47,7 +47,9 @@ class PromptDataModule(ITDataModule):
     """Serves the configured prompts, tokenized, as the ``test`` split.
 
     The dataset is built in memory at ``setup`` rather than saved under ``dataset_path``: that path is keyed by task
-    name, so a saved copy would outlive a change to the prompts and be served in their place.
+    name, so a saved copy would outlive a change to the prompts and be served in their place. A model-only
+    configuration sets up with no prompts, since a session sets up its datamodule even when the caller passes prompts
+    to the model directly; asking that datamodule for a split is what is refused.
     """
 
     train_dataloader = _refusing_dataloader("train")
@@ -59,7 +61,7 @@ class PromptDataModule(ITDataModule):
     def setup(self, stage: str | None = None, module=None, *args, **kwargs) -> None:
         if module is not None:
             self._module = module
-        self.dataset = datasets.DatasetDict({"test": self.encode_prompts(self.prompts)})
+        self.dataset = datasets.DatasetDict({"test": self.encode_prompts(self.prompts)}) if self.prompts else None
 
     @property
     def prompts(self) -> list[str]:
@@ -95,6 +97,9 @@ class PromptDataModule(ITDataModule):
         )
 
     def _eval_dataloader(self) -> DataLoader:
+        if self.dataset is None:
+            # the same refusal, by name, that encoding an empty prompt set raises
+            self.encode_prompts([])
         return DataLoader(
             self.dataset["test"],
             collate_fn=self.data_collator,
