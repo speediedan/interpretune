@@ -605,14 +605,14 @@ def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
 
 # The latent-dynamics notebook runs an analysis the concept-direction Hub component publishes, so it needs the live
 # Hub (the component is fetched at the notebook's pinned revision, never warmed: warming would test a cache rather
-# than the pull) and a token that can read it. UNMEASURED: the analysis peaked at 4.4 GB of CUDA memory in its research
-# runs; the declaration is conservative until tests/gpu_ci/calibrate.py measures the notebook itself.
+# than the pull) and a token that can read it. Measured with tests/gpu_ci/calibrate.py: need 5.11 GiB (RTX 4090, CUDA),
+# declared at the calibrator's recommendation.
 @pytest.mark.hf_live
 @pytest.mark.skipif(
     not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
     reason="IT_HF_TOKEN or HF_TOKEN required to fetch the concept-direction component",
 )
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=8.0)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=6.0)
 def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch):
     """Execute the latent-dynamics notebook with the component trusted, and check every section reported."""
     import json
