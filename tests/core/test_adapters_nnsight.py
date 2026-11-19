@@ -416,6 +416,47 @@ class TestNNsightTracing:
                 pytest.skip(f"Direct forward not supported in this config: {e}")
 
 
+class TestNNsightRemoteSimulation:
+    """The remote path without the service: ``remote="local"`` serializes a trace exactly as a request to NDIF would,
+    deserializes it with non-installed modules hidden (as on the server), and runs it here.
+
+    A composition's model that fails this would fail on NDIF too, and this needs neither an API key nor the network.
+    """
+
+    PROMPT = "The capital of France is"
+
+    # standalone because nnsight's trace replaces coverage's trace function (see TestNNsightTracing), not for a device
+    @RunIf(standalone_cpu=True)
+    def test_remote_local_trace_matches_a_local_trace(self, get_it_session__ns_gpt2__setup):
+        model = get_it_session__ns_gpt2__setup.it_session.module.model
+        from nnsight.intervention.backends.local import LocalSimulationBackend
+
+        with model.trace(self.PROMPT):
+            local_logits = nnsight.save(model.lm_head.output)
+        simulate = LocalSimulationBackend.__call__
+        with patch.object(LocalSimulationBackend, "__call__", autospec=True, side_effect=simulate) as simulated:
+            with model.trace(self.PROMPT, remote="local"):
+                simulated_logits = nnsight.save(model.lm_head.output)
+        # a trace that ignored `remote` would match the local one trivially
+        assert simulated.call_count == 1
+        torch.testing.assert_close(simulated_logits, local_logits)
+
+    @RunIf(standalone_cpu=True)
+    def test_remote_local_intervention_matches_a_local_intervention(self, get_it_session__ns_gpt2__setup):
+        model = get_it_session__ns_gpt2__setup.it_session.module.model
+        with model.trace(self.PROMPT):
+            clean_logits = nnsight.save(model.lm_head.output)
+        with model.trace(self.PROMPT):
+            model.transformer.h[0].mlp.output[:] = 0
+            local_logits = nnsight.save(model.lm_head.output)
+        with model.trace(self.PROMPT, remote="local"):
+            model.transformer.h[0].mlp.output[:] = 0
+            simulated_logits = nnsight.save(model.lm_head.output)
+        # the ablation must have reached the forward, or both runs would match for no reason
+        assert not torch.allclose(local_logits, clean_logits)
+        torch.testing.assert_close(simulated_logits, local_logits)
+
+
 # =============================================================================
 # Error Handling Tests
 # =============================================================================
