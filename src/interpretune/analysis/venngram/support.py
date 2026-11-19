@@ -32,6 +32,9 @@ backend already publishes, never restated by hand:
   alone has a recipe acting on a gradient refused here. Declaring both flows does not let one translation apply both:
   :func:`check_recipe` checks the ops for the one flow its caller applies, as the apply path does
   (:func:`~interpretune.analysis.venngram.apply.op_refusal`).
+- **readouts**: the reductions a gradient stage's readout may use, those
+  :mod:`~interpretune.analysis.venngram.readouts` executes, declared where the record declares ``grad``, since only a
+  consumer acting on gradients takes them of a readout.
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
 ``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
@@ -59,6 +62,7 @@ from interpretune.analysis.venngram.apply import (
     feature_op_refusal,
     op_refusal,
 )
+from interpretune.analysis.venngram.readouts import executed_readouts
 from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
 
@@ -138,6 +142,7 @@ def venngram_support(
         sites=None if capture is None else _sites(capture.capturable),
         bases=intervention.bases if intervention.bases is not None else bases,
         of=frozenset(intervention.of),
+        readouts=executed_readouts() if "grad" in intervention.of else frozenset(),
         name=name,
     )
 

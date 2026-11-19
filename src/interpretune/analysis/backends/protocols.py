@@ -19,6 +19,7 @@ from interpretune.analysis.backends.capabilities import (
     LatentModelSupport,
 )
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
+from interpretune.analysis.backends.readouts import Readout
 from interpretune.protocol import NamesFilter
 
 
@@ -598,9 +599,9 @@ class SupportsGradientIntervention(Protocol):
     provider of forward edits need not reach the backward pass at all, and a declared flow is a promise this method
     keeps.
 
-    **The gradient at a site** is the gradient of the metric with respect to the activation there, summed over every
+    **The gradient at a site** is the gradient of the readout with respect to the activation there, summed over every
     consumer of that activation, which is what flows on to earlier sites. An edit replaces it before it does, so every
-    site upstream of an edit sees the edit's effect, and the forward pass (and therefore the metric) is unchanged.
+    site upstream of an edit sees the edit's effect, and the forward pass (and therefore the readout) is unchanged.
     """
 
     def bwd_w_intervention(
@@ -608,13 +609,13 @@ class SupportsGradientIntervention(Protocol):
         model: Any,
         batch: dict[str, Any],
         interventions: InterventionDict | Mapping[str, InterventionValue],
-        backward_fn: Callable[[Any], Any],
+        readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
         """Run two forward and backward passes and return the gradients at the capture sites from each.
 
-        1. **Baseline**: the gradients ``backward_fn`` produces, with nothing edited.
+        1. **Baseline**: the gradients of ``readout``, with nothing edited.
         2. **Intervention**: the same backward pass, with each ``InterventionSpec`` in *interventions* applied to the
            gradient at its site, at the positions its ``position_scope`` names, through the executor its ``op``
            names. Specs at one site apply in declaration order, each to the previous one's result.
@@ -624,16 +625,19 @@ class SupportsGradientIntervention(Protocol):
             batch: Input batch dict.
             interventions: Hook names (or patterns with ``*``) to intervention payloads, as for
                 ``fwd_w_intervention``; each spec acts on the gradient at that site.
-            backward_fn: ``logits -> scalar``, the metric whose gradient is taken. It must use only standard PyTorch
-                ops, so a traced backend can apply it to a proxy.
+            readout: The scalar whose gradient is taken: a
+                :class:`~interpretune.analysis.backends.readouts.Readout`, which also reads the activations at the sites
+                it names from the same forward pass, or a callable of the logits alone. It must use only standard
+                PyTorch ops, so a traced backend can apply it to a proxy. A site it names that the forward pass does not
+                produce is refused by name.
             capture: The sites whose gradients are returned (names or patterns, as for *interventions*). ``None``
                 captures the intervention sites. A captured intervention site reports the gradient after its edit,
                 which is the one that flows on.
             latent_model_handles: Latent models to attach, so their sub-hooks can be edited or captured.
 
         Returns:
-            ``(pre_grads, post_grads, metric)``: the gradients at every captured site keyed by concrete hook name, from
-            the baseline and the intervened pass, and the metric's value (the forward pass is the same in both).
+            ``(pre_grads, post_grads, value)``: the gradients at every captured site keyed by concrete hook name, from
+            the baseline and the intervened pass, and the readout's value (the forward pass is the same in both).
         """
         ...
 
