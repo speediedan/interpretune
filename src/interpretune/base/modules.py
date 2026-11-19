@@ -4,8 +4,12 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
-from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
-from interpretune.tuning.latents import latent_model_roles
+from interpretune.tuning.interventions import (
+    attach_configured_interventions,
+    intervention_placements,
+    intervention_roles,
+)
+from interpretune.tuning.latents import latent_model_placements, latent_model_roles
 from interpretune.tuning.weights import weight_edit_roles
 from interpretune.tuning.views import attach_tunable_view
 from interpretune.utils import MisconfigurationException
@@ -108,6 +112,23 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         return [(type(self).__name__, self, ("it_generate",))] if hasattr(self, "it_generate") else []
 
+    def default_tp_plan(self, world_size: int) -> dict[str, dict[str, Any]] | None:
+        """The ``tp_plan`` placement 'tp' uses when none is given: the plan transformers declares for the Hugging
+        Face model this composition runs (:meth:`meta_load_target`), keyed under its path here, or ``None`` when
+        that model declares none.
+
+        Raises:
+            MisconfigurationException: If the declared plan cannot be translated or its heads not split evenly
+                (:func:`~interpretune.runners.distributed.hf_tp_plan`).
+        """
+        from interpretune.runners.distributed import hf_tp_plan
+
+        target = self.meta_load_target()
+        prefix = next((name for name, module in self.named_modules() if module is target), None)
+        if prefix is None or not getattr(target, "tp_plan", None):
+            return None
+        return hf_tp_plan(target, prefix, world_size) or None
+
     def meta_load_target(self) -> torch.nn.Module:
         """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
 
@@ -137,7 +158,18 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         from interpretune.tuning.views import default_view
 
-        return default_view(self, roles=self.tunable_roles())
+        return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
+
+    def tunable_placements(self) -> dict[str, str]:
+        """Where this module's view places the modules spliced in beside the model, by the module each rewrites.
+
+        Latent models and interventions are registered beside the model (``latent_models.<name>``,
+        ``interventions.<name>``) and spliced in with hooks, so they nest under none of its modules; venngram's view
+        takes this mapping (its ``attached``) to give their tensors the layer and component of their site, so
+        ``role:latent & layers:12:`` selects the latent models spliced at layers 12 and above. Cooperative, like
+        :meth:`tunable_roles`: an adapter registering another spliced module adds its placement to ``super()``'s.
+        """
+        return {**latent_model_placements(self), **intervention_placements(self)}
 
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, by name.

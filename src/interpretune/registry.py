@@ -391,19 +391,26 @@ def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | N
     """Build an ``ITDataModuleConfig`` from a body plus shared config -- one half of the ONE merge site.
 
     Shared values are applied here, through the constructor, which is what keeps ``AutoCompConfig``
-    synthesis working: composition happens inside the config constructors this calls.
+    synthesis working: composition happens inside the config constructors this calls. A ``class_path`` body names
+    an ``ITDataModuleConfig`` subclass, with its fields under ``init_args``.
     """
-    prompt_cfg = cfg.get("prompt_cfg", {})
+    body = cfg.setdefault("init_args", {}) if "class_path" in cfg else cfg
+    prompt_cfg = body.get("prompt_cfg", {})
     # instantiate supported class_path refs (compose_ref EXTENDS class_path instantiation: the
     # class_path task schema composes with a hub-referenced model-prompt definition, design §11.5)
-    # TODO: add path for specifying custom datamodule_cfg subclass when necessary
     if "compose_ref" in prompt_cfg:
         from interpretune.hub.promptconfigs import instantiate_prompt_cfg_node
 
-        cfg["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg, cache_dir=cache_dir)
+        body["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg, cache_dir=cache_dir)
     elif "class_path" in prompt_cfg:
-        cfg["prompt_cfg"] = instantiate_hub_aware_class(prompt_cfg, cache_dir=cache_dir)
-    instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
+        body["prompt_cfg"] = instantiate_hub_aware_class(prompt_cfg, cache_dir=cache_dir)
+    if "class_path" in cfg:
+        cfg_cls = instantiate_hub_aware_class({"class_path": cfg["class_path"]}, import_only=True, cache_dir=cache_dir)
+        if not (isinstance(cfg_cls, type) and issubclass(cfg_cls, ITDataModuleConfig)):
+            raise TypeError(f"datamodule_cfg class_path must name an ITDataModuleConfig subclass, got {cfg_cls!r}")
+        instantiated_cfg = cfg_cls(**shared_config, **body)
+    else:
+        instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
     if defaults_func:
         defaults_func(instantiated_cfg)
     return instantiated_cfg

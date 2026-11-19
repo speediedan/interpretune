@@ -50,6 +50,8 @@ from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder
 
 if TYPE_CHECKING:
+    from venngram.errors import Refusal
+    from venngram.resolve import Location
     from venngram.tuning import TunableSupport
 
 #: The attribute each transcoder carries its low-rank corrections under.
@@ -282,6 +284,35 @@ def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
         torch.__future__.set_swap_module_params_on_conversion(prior)
 
 
+class _TranscoderStructure:
+    """Places each per-layer transcoder's tensors (its low-rank corrections included) at the layer it replaces the
+    MLP of, so ``role:artifact & layers:-4:`` names the top four layers' transcoders.
+
+    A cross-layer transcoder holds every layer in each of its tensors, so its tensors, like every tensor outside the
+    transcoders, locate at no layer.
+    """
+
+    vocabulary = False
+
+    def __init__(self, layers: Mapping[str, int], depth: int | None) -> None:
+        self._layers = dict(layers)
+        self._depth = depth
+
+    def locate(self, name: str) -> Location:
+        from venngram.resolve import Location
+
+        return Location(layer=self._layers.get(name))
+
+    def depth(self, stack: str | None = None) -> int | Refusal:
+        from venngram.errors import Refusal
+
+        if stack is not None:
+            return Refusal(f"a circuit-tracer composition's transcoders form only the primary stack, not `{stack}`")
+        if self._depth is None:
+            return Refusal("a cross-layer transcoder spans every layer in each tensor, so it has no per-layer blocks")
+        return self._depth
+
+
 class CircuitTracerView:
     """A ``TunableView`` over a circuit-tracer composition: its transcoders, as ``artifact`` tensors.
 
@@ -357,6 +388,17 @@ class CircuitTracerView:
 
     def _view_names(self) -> set[str]:
         return set(self._names) | set(self._base_names) | set(self._coop_names)
+
+    def structure(self) -> _TranscoderStructure:
+        """Each per-layer transcoder's tensors at the layer whose MLP it replaces, so a ``promote`` source or a phase
+        can name a layer range: ``promote: {"role:artifact & layers:-4:": "latent:transcoder"}`` promotes the top four
+        layers' transcoders. A cross-layer transcoder and the tensors outside the transcoders locate at no layer."""
+        if isinstance(self.transcoders, CrossLayerTranscoder):
+            return _TranscoderStructure({}, None)
+        per_layer = list(self.transcoders.transcoders)  # pyright: ignore[reportArgumentType]
+        layer_of = {id(p): i for i, tc in enumerate(per_layer) for p in tc.parameters()}
+        layers = {n: layer_of[id(p)] for n, p in self.root.named_parameters() if id(p) in layer_of}
+        return _TranscoderStructure(layers, len(per_layer))
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each name in the view maps to itself; a base-model name outside ``tune_base`` is refused, naming why."""
