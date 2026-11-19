@@ -2,7 +2,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Any, Iterator, Literal, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
 import logging
 import random
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from functools import partialmethod
 from pathlib import Path
@@ -86,6 +86,17 @@ def profiling(module: ITModule) -> Iterator[torch.profiler.profile | None]:
     default_trace_dir = Path(module.core_log_dir) / "pytorch_profiler"  # mixin attr
     with torch.profiler.profile(**profiler_cfg.torch_profiler_kwargs(default_trace_dir)) as prof:
         yield prof
+
+
+def memprofiled_iteration(module: ITModule) -> AbstractContextManager:
+    """One profiled ``training_step`` call of the module's memory profiler, when it has one: the whole training
+    iteration (forward, backward and, at a window's end, the optimizer step), so the snapshot at its end and an
+    FSDP2 report see gradients and optimizer state.
+
+    A ``memprofilable`` step inside it is not profiled again.
+    """
+    memprofiler = getattr(module, "memprofiler", None)
+    return memprofiler.profile("training_step") if memprofiler else nullcontext()
 
 
 @dataclass
@@ -323,17 +334,18 @@ def core_train_loop(
                     break
                 accumulated += 1
                 boundary = accumulated == accumulate_grad_batches
-                output = run_step(
-                    step_fn="training_step",
-                    module=module,
-                    batch=batch,
-                    batch_idx=batch_idx,
-                    optimizer=ctx.optimizer,
-                    precision=precision,
-                    loss_scale=1.0 / accumulate_grad_batches,
-                    zero_grad=accumulated == 1,
-                    step_optimizer=boundary,
-                )
+                with memprofiled_iteration(module):
+                    output = run_step(
+                        step_fn="training_step",
+                        module=module,
+                        batch=batch,
+                        batch_idx=batch_idx,
+                        optimizer=ctx.optimizer,
+                        precision=precision,
+                        loss_scale=1.0 / accumulate_grad_batches,
+                        zero_grad=accumulated == 1,
+                        step_optimizer=boundary,
+                    )
                 if boundary:
                     accumulated = 0
                     _optimizer_step_done(ctx, output)

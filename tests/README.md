@@ -503,21 +503,26 @@ Where a scheduled build still waits for an approval, `python -m tests.gpu_ci.sch
 - `HOLD`: the host is busy, and the verdict names what is busy;
 - `REJECT stale`: still not releasable after two hours, so a `batch: true` schedule is never stuck behind an old build.
 
-**Device placement.** Each GPU phase runs in two stages, and each stage takes its own lease through the host's lease
-tool:
+**Device placement.** Each GPU phase runs in up to three stages, and each stage takes its own lease through the host's
+lease tool:
 
 | stage | lease | tests |
 | --- | --- | --- |
 | small | one device sized to the smallest card, best fit | single-device tests declaring no more than that card's memory, none marked `bf16_cuda` |
-| large | the whole server | everything else: larger declarations, multi-device and `bf16_cuda` tests, then the extended tiers |
+| large | one device that holds the largest of its tests (best fit), no `cpu-heavy` | the other single-device tests: larger declarations and `bf16_cuda` tests |
+| multi | the whole server, with `cpu-heavy` | multi-device tests and the extended tiers; taken only when the run has either |
 
-- The two memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`) partition every phase, so together the stages run it
-  whole.
+- The memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`: `small`, `large`, `multi`) partition every phase, so
+  together the stages run it whole.
+- The large stage is sized before any lease is taken: the job's collect step writes each phase's GPU tests' declared
+  needs (`IT_GPU_STAGE_NEEDS_DIR`), narrowed by the run's selection, and `tests/gpu_ci/stage_needs.py` reads them.
+  Without them the large stage takes the whole server for every class above small (`IT_GPU_MEM_CLASS=rest`), and the
+  multi stage is a no-op. `IT_GPU_LARGE_CPU_HEAVY=1` makes the large stage take `cpu-heavy` too.
 - `bf16_cuda` tests always go to the large stage, because the small card may lack bf16, and there they would be skipped
   rather than run.
-- Strict mode (`IT_GPU_STRICT=1`) is on in both stages, so a test placed on a device smaller than it declares fails
+- Strict mode (`IT_GPU_STRICT=1`) is on in every stage, so a test placed on a device smaller than it declares fails
   rather than skips.
-- Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
+- Any class may be empty on its own. A full run fails only when a phase ran nothing in every class.
 - Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
 
 **Build telemetry.** Every GPU build that collects its phases publishes `it-phases/telemetry/build_telemetry.json`

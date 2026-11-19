@@ -424,6 +424,45 @@ class TestBridgeViewStructure:
         monkeypatch.setattr(venngram, "view", no_map)
         assert isinstance(TransformerBridgeView(bridge).structure(), PhysicalStructure)
 
+    def test_a_spliced_module_is_placed_at_its_site(self, bridge):
+        """A latent model registered beside the bridge takes the layer and component of the bridge component its
+        site's hook point sits in (#875), so ``role:latent & layers:3:`` selects by depth on TransformerLens names
+        as on the other compositions."""
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+        from interpretune.tuning.latents import (
+            LatentSite,
+            attach_latent_model,
+            detach_latent_model,
+            latent_model_placements,
+            latent_model_roles,
+        )
+
+        class Dictionary(nn.Module):
+            def __init__(self, width: int) -> None:
+                super().__init__()
+                self.enc, self.dec = nn.Linear(width, 2 * width), nn.Linear(2 * width, width)
+
+            def encode(self, x: torch.Tensor) -> torch.Tensor:
+                return self.enc(x)
+
+            def decode(self, z: torch.Tensor) -> torch.Tensor:
+                return self.dec(z)
+
+        root, width = _Holder(bridge), bridge.cfg.d_model
+        attach_latent_model(root, "sae", Dictionary(width), LatentSite("point:hook_resid_post & layers:3"))
+        site = LatentSite("point:mlp.hook_in & layers:2", write="point:mlp.hook_out & layers:2")
+        attach_latent_model(root, "tc", Dictionary(width), site)
+        try:
+            view = TransformerBridgeView(root, roles=latent_model_roles(root), attached=latent_model_placements(root))
+            structure = view.structure()
+            sae, tc = structure.locate("latent_models.sae.enc.weight"), structure.locate("latent_models.tc.dec.weight")
+            assert (sae.layer, tc.layer, tc.component) == (3, 2, "mlp")
+            selected = compile_schedule({0: {"params": ["role:latent & layers:3:"]}}, view).physical_for(0)
+            assert selected and all(n.startswith("latent_models.sae.") for n in selected)
+        finally:
+            detach_latent_model(root, "sae")
+            detach_latent_model(root, "tc")
+
 
 class _Unmapped(nn.Module):
     """A model no venngram component map describes."""

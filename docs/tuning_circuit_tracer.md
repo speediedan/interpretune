@@ -9,6 +9,11 @@ transcoders, whichever backend it runs over:
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
   `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
   that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
+- **Transcoders locate at their layer.** Each per-layer transcoder's tensors (its low-rank corrections included) sit at
+  the layer whose MLP it replaces, so a promotion or a phase names a layer range by address:
+  `promote: {"role:artifact & layers:-4:": "latent:transcoder"}` promotes the top four layers' transcoders, and
+  `role:latent:transcoder & layers:-4:` thaws them. A cross-layer transcoder holds every layer in each tensor, so its
+  tensors locate at no layer and a layer range is refused; promote it whole, by role.
 - **The base model is refused.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
   path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).

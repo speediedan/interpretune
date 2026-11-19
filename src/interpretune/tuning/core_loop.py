@@ -167,7 +167,8 @@ class FTSCoreCallback:
 
     def _install(self, ctx: Any) -> None:
         """Make the tuning scheduler's optimizer the module's (it can change at a phase transition), with no
-        module-owned lr schedulers left for the loop to step."""
+        module-owned lr schedulers left for the loop to step, and give the module's memory profiler the schedule's
+        depth as its training phase."""
         from interpretune.runners.distributed import step_per_tensor
 
         assert self.tuning_scheduler is not None
@@ -178,6 +179,10 @@ class FTSCoreCallback:
             state._it_optimizers, state._it_lr_scheduler_configs = optimizers, lr_scheduler_configs
         else:
             ctx.module.optimizers, ctx.module.lr_scheduler_configs = optimizers, lr_scheduler_configs
+        if memprofiler := getattr(ctx.module, "memprofiler", None):
+            # the memory profiler records each FSDP2 report's phase, and rebuilds its tracker over the new optimizer
+            tuning_scheduler = self.tuning_scheduler
+            memprofiler.phase_source = lambda: tuning_scheduler.curr_depth
 
     def state_dict(self) -> dict[str, Any]:
         """The tuning scheduler's resume state, without the random streams (the core loop's ``checkpoint_state``
