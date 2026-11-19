@@ -6,7 +6,8 @@ just the exception type. If you meet a bare traceback instead, that is a bug: fi
 message and what you ran.
 
 Covers: adapter composition misses, gated-model auth, remote-code trust, unreachable hub
-components. CUDA-absent and cache-root modes are not covered yet.
+components, a GPU requested where torch has none, an unwritable cache root, and an unreachable
+local Neuronpedia database.
 
 ## Unknown adapter combination
 
@@ -72,3 +73,51 @@ token in use. ...
 
 Check the token's repository scope before treating the component as absent; a cached snapshot is
 not evidence that the repository still exists on the Hub.
+
+## GPU requested but unavailable
+
+Leaving the device unset is the CPU path: with no GPU visible, the TransformerLens configs resolve
+the device to `cpu` without a warning, so CPU-only users never meet this mode.
+
+A device you set explicitly is a request. When it names a GPU (`device="cuda"`, a `device_map` of
+`"cuda:0"` or a device index) and torch cannot provide one, the config refuses it, naming the
+setting that asked and both ways forward:
+
+```text
+`device` asks for the GPU device 'cuda', but torch sees no usable GPU (no driver loaded, or no
+device visible to this process). To run on the CPU, set `device` to 'cpu' or leave it unset; ...
+```
+
+A torch build without GPU support gets its own reason ("has no GPU support") and remedy (install a
+torch build for your accelerator). ROCm builds of torch take the same `cuda` device string, so the
+message is the same on either vendor. Placement strategies (`device_map="auto"`) and data-parallel
+placements are not GPU requests and never trip this check.
+
+## Unwritable cache root
+
+Hub components, artifacts and op collections are cached under `IT_CACHE` (default
+`$HF_HOME/interpretune`), or under a subpath override such as `IT_COMPONENTS_HUB_CACHE`. The root is
+checked the first time a download needs it, not at import, so a session that never touches the Hub
+never pays for the check. A root that cannot be created or written is refused, naming the variable
+that set it, the path and the operating system's error:
+
+```text
+interpretune's hub cache root /path/to/root (set by IT_CACHE) is not a writable directory: ...
+Point IT_CACHE at a directory you can write to, or make this one writable. Set it before importing
+interpretune: the cache roots are read once, at import.
+```
+
+Only writability is checked. A disk that fills during a download is reported by the downloader.
+
+## Unreachable local Neuronpedia database
+
+`ensure_dashboards`, which the local-Neuronpedia notebooks call first, downloads a dashboard corpus
+when the database lacks it. A database that cannot be queried at all is a different problem, which
+a download cannot fix, so it is refused rather than read as an absent corpus:
+
+```text
+Cannot query the local Neuronpedia database at postgres://...:***@127.0.0.1:5432/postgres to check
+for the <model>/<source set> dashboards: ... Start the database, or fix the URL, and retry.
+```
+
+`dashboards_present` keeps returning `False` in that case, for callers that decide for themselves.

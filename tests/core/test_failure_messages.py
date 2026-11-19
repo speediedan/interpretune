@@ -15,6 +15,8 @@ import httpx
 import pytest
 from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError
 
+import interpretune.hub.cache as hub_cache
+from interpretune.utils.data_movement import check_gpu_device_map, check_gpu_device_request
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.utils.hf_auth_errors import (
     interpret_hf_model_load_error,
@@ -105,6 +107,127 @@ class TestModelIdRecovery:
         assert model_id_from_pretrained_kwargs(None) == "the configured model"
 
 
+@pytest.fixture
+def no_gpu(monkeypatch):
+    """A GPU build of torch that sees no device, on any host."""
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr("torch.backends.mps.is_available", lambda: False)
+    monkeypatch.setattr("torch.version.cuda", "12.8")
+
+
+class TestGpuRequestMessages:
+    """An explicit GPU device that torch cannot provide is refused by name, where the config resolves it."""
+
+    def test_explicit_tl_device_is_refused_by_name(self, no_gpu):
+        from interpretune.adapters.transformer_lens.config import ITLensFromPretrainedNoProcessingConfig
+
+        with pytest.raises(MisconfigurationException) as err:
+            ITLensFromPretrainedNoProcessingConfig(model_name="gpt2", device="cuda")
+        assert "`device` asks for the GPU device 'cuda'" in str(err.value)
+        assert "set `device` to 'cpu' or leave it unset" in str(err.value)
+        assert "NVIDIA" not in str(err.value), "torch's vendor-specific advice is not repeated as ours"
+
+    def test_unset_device_resolves_to_cpu_silently(self, no_gpu, recwarn):
+        from interpretune.adapters.transformer_lens.config import ITLensFromPretrainedNoProcessingConfig
+
+        cfg = ITLensFromPretrainedNoProcessingConfig(model_name="gpt2")
+        assert str(cfg.device) == "cpu"
+        assert not [w for w in recwarn.list if "GPU" in str(w.message)]
+
+    def test_explicit_cpu_and_placement_strategies_pass(self, no_gpu):
+        check_gpu_device_request("cpu", field="device")
+        check_gpu_device_map("auto", field="device_map")
+        check_gpu_device_map({"model.embed": "cpu", "lm_head": "disk"}, field="device_map")
+
+    @pytest.mark.parametrize(
+        "device_map", ["cuda:1", 0, {"model.layers.0": "cpu", "model.layers.1": 1}], ids=["str", "index", "mapping"]
+    )
+    def test_device_map_naming_a_gpu_is_refused(self, no_gpu, device_map):
+        with pytest.raises(MisconfigurationException, match="`pretrained_kwargs.device_map` asks for the GPU device"):
+            check_gpu_device_map(device_map, field="pretrained_kwargs.device_map")
+
+    def test_nnsight_device_map_is_refused_by_name(self, no_gpu):
+        from interpretune.adapters.nnsight.config import NNsightConfig
+
+        with pytest.raises(MisconfigurationException, match="`device_map` asks for the GPU device 'cuda'"):
+            NNsightConfig(model_name="gpt2", device_map="cuda")
+
+    def test_a_build_without_gpu_support_gets_its_own_remedy(self, no_gpu, monkeypatch):
+        """The two causes need different fixes: a new torch build, or a driver and visible devices."""
+        monkeypatch.setattr("torch.version.cuda", None)
+        monkeypatch.setattr("torch.version.hip", None, raising=False)
+        with pytest.raises(MisconfigurationException) as no_build:
+            check_gpu_device_request("cuda", field="device")
+        assert "has no GPU support" in str(no_build.value) and "install a torch build" in str(no_build.value)
+        monkeypatch.setattr("torch.version.hip", "6.4.0", raising=False)
+        with pytest.raises(MisconfigurationException) as no_device:
+            check_gpu_device_request("cuda", field="device")
+        assert "torch sees no usable GPU" in str(no_device.value)
+        assert "HIP_VISIBLE_DEVICES" in str(no_device.value)
+
+
+class TestCacheRootMessages:
+    """A cache root interpretune cannot write is refused at its first use, naming the setting, path and remedy."""
+
+    def test_root_under_a_regular_file_is_refused_by_name(self, tmp_path):
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("")
+        root = blocker / "interpretune"
+        with pytest.raises(MisconfigurationException) as err:
+            hub_cache.ensure_writable_cache_root(root, "IT_CACHE")
+        message = str(err.value)
+        assert str(root) in message and "(set by IT_CACHE)" in message
+        assert "Point IT_CACHE at a directory you can write to" in message
+
+    def test_writable_root_passes_and_is_probed_once(self, tmp_path, monkeypatch):
+        import tempfile
+
+        probes = []
+        real_mkstemp = tempfile.mkstemp
+        monkeypatch.setattr(tempfile, "mkstemp", lambda **kw: probes.append(kw) or real_mkstemp(**kw))
+        root = tmp_path / "fresh" / "interpretune"
+        assert hub_cache.ensure_writable_cache_root(root, "IT_CACHE") == root
+        assert hub_cache.ensure_writable_cache_root(root, "IT_CACHE") == root
+        assert root.is_dir() and len(probes) == 1
+        assert not list(root.iterdir()), "the probe file is removed"
+
+    def test_component_downloads_preflight_only_the_default_root(self, tmp_path, monkeypatch):
+        from interpretune.hub import components
+
+        blocker = tmp_path / "file"
+        blocker.write_text("")
+        monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", blocker / "components")
+        monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE_SETTING", "IT_COMPONENTS_HUB_CACHE")
+        with pytest.raises(MisconfigurationException, match="set by IT_COMPONENTS_HUB_CACHE"):
+            components._download_root(None)
+        # a caller's own cache_dir is theirs: passed through untouched, never probed
+        assert components._download_root(blocker / "mine") == str(blocker / "mine")
+
+
+class TestNeuronpediaDatabaseMessages:
+    """An unreachable database is not an absent corpus: only the second is fixed by a download."""
+
+    def test_unreachable_database_is_refused_without_fetching(self, monkeypatch):
+        from unittest.mock import patch
+
+        from interpretune.utils import neuronpedia_hub_fetch as fetch_mod
+
+        def refuse(*args, **kwargs):
+            raise OSError("connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+
+        monkeypatch.setattr(fetch_mod, "describe_source_set", refuse)
+        with patch.object(fetch_mod, "fetch_dashboards") as fetch:
+            with pytest.raises(fetch_mod.DashboardDatabaseUnreachableError) as err:
+                fetch_mod.ensure_dashboards(
+                    "postgres://u:secret@127.0.0.1:5433/postgres", model_id="m", source_set_id="s"
+                )
+        fetch.assert_not_called()
+        message = str(err.value)
+        assert "Cannot query the local Neuronpedia database" in message and "Connection refused" in message
+        assert "secret" not in message, "the password is redacted"
+        assert "Downloading the corpus would not help" in message
+
+
 class TestTroubleshootingPageStaysInSync:
     """The troubleshooting page quotes messages the code actually emits, and lists exactly the covered modes.
 
@@ -132,9 +255,12 @@ class TestTroubleshootingPageStaysInSync:
             "Gated-model download failures",
             "Remote-code trust gate",
             "Unreachable hub component",
+            "GPU requested but unavailable",
+            "Unwritable cache root",
+            "Unreachable local Neuronpedia database",
         ):
             assert f"## {mode}" in text, f"troubleshooting page dropped mode: {mode}"
-        assert "CUDA-absent" in text and "cache-root" in text
+        assert "not covered yet" not in text, "every mode #253 enumerates is covered"
 
     def test_composition_miss_messages_are_quoted(self):
         from interpretune.adapters.registration import CompositionRegistry
@@ -175,3 +301,23 @@ class TestTroubleshootingPageStaysInSync:
             if not ((self.DOCS if t.startswith("/") else self.PAGE.parent) / f"{t.lstrip('/')}.md").exists()
         ]
         assert not unresolved, f"unresolved {{doc}} targets: {unresolved}"
+
+    def test_gpu_cache_and_database_messages_are_quoted(self, no_gpu, tmp_path, monkeypatch):
+        from interpretune.utils import neuronpedia_hub_fetch as fetch_mod
+
+        with pytest.raises(MisconfigurationException) as gpu:
+            check_gpu_device_request("cuda", field="device")
+        self._assert_quoted(str(gpu.value), "asks for the GPU device", "To run on the CPU, set `device` to 'cpu'")
+        blocker = tmp_path / "file"
+        blocker.write_text("")
+        with pytest.raises(MisconfigurationException) as cache:
+            hub_cache.ensure_writable_cache_root(blocker / "it", "IT_CACHE")
+        self._assert_quoted(str(cache.value), "is not a writable directory", "Set it before importing interpretune")
+
+        def refuse(*args, **kwargs):
+            raise OSError("Connection refused")
+
+        monkeypatch.setattr(fetch_mod, "describe_source_set", refuse)
+        with pytest.raises(fetch_mod.DashboardDatabaseUnreachableError) as db:
+            fetch_mod.ensure_dashboards("postgres://127.0.0.1:5432/postgres", model_id="m", source_set_id="s")
+        self._assert_quoted(str(db.value), "Cannot query the local Neuronpedia database")

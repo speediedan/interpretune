@@ -12,7 +12,7 @@ import torch
 
 from interpretune.config.shared import ITSerializableCfg
 from interpretune.config.module import ITConfig
-from interpretune.utils import rank_zero_warn, MisconfigurationException
+from interpretune.utils import check_gpu_device_map, rank_zero_warn, MisconfigurationException
 
 
 @dataclass(kw_only=True)
@@ -133,6 +133,8 @@ class NNsightConfig(ITSerializableCfg):
 
     def __post_init__(self) -> None:
         """Validate and normalize configuration after initialization."""
+        if self.device_map is not None:
+            check_gpu_device_map(self.device_map, field="device_map")
         # Normalize torch_dtype if string provided
         if isinstance(self.torch_dtype, str):
             dtype_map = {
