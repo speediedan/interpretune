@@ -1,0 +1,58 @@
+# Analysis injection configuration for the attention-aware attribution notebook.
+#
+# Each analysis point below inserts one call into circuit-tracer's own source, in this notebook's process only, so the
+# notebook can read the intermediate values the three attention-aware surfaces are built from. Toggle a point off with
+# its `enable` flag; the functions live in `attention_attribution_points.py` beside this file.
+settings:
+  enabled: true
+  # ADVISORY, as in the attribution-analysis notebook's config: the installed circuit-tracer comes from the git pin in
+  # pyproject.toml, and a stale value warns rather than fails. Keep it accurate after a pin bump.
+  target_package_version: "0.5.3.dev54+g6a2782927"  # circuit_tracer this notebook was validated against
+  log_to_console: false
+  log_to_file: true
+  log_dir: /tmp
+  analysis_log_prefix: attention_attribution_analysis
+  analysis_points_module_path: ./attention_attribution_points.py
+
+file_hooks:
+  ap_gradient_flow_regime:
+    file_path: replacement_model/replacement_model_nnsight.py
+    enable: true
+    regex_pattern: '^\\s*if freeze_attention:\\s*$'
+    insert_after: false
+    description: "Which locations the backward pass detaches, per attribution regime"
+
+  ap_node_influence_init:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*current_influence = logit_weights @ A'
+    insert_after: true
+    description: "First term of the Neumann series behind node influence"
+
+  ap_node_influence_step:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*current_influence = current_influence @ A'
+    insert_after: true
+    description: "Each further term of the Neumann series behind node influence"
+
+  ap_head_loadings_rows:
+    file_path: attribution/head_loadings_nnsight.py
+    enable: true
+    regex_pattern: '^\\s*bypass = rows\\[n_heads\\]'
+    insert_after: true
+    description: "Per-copy edge rows behind one layer's head loadings (one copy per head, the bypass, the edge)"
+
+  ap_conductance_path_points:
+    file_path: attribution/head_conductance.py
+    enable: true
+    regex_pattern: '^\\s*t, dt_dalpha, per_layer = run_points\\(chunk\\)'
+    insert_after: true
+    description: "The target and its path derivative at each batch of conductance path points"
+
+  ap_conductance_interval:
+    file_path: attribution/head_conductance.py
+    enable: true
+    regex_pattern: '^\\s*ov\\[i\\] \\+= '
+    insert_after: true
+    description: "Running per-head pattern and value credit after each trapezoid interval, per layer"
