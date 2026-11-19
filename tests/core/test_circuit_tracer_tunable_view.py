@@ -107,16 +107,9 @@ def _promoted_view(module: nn.Module, layer: int = 2):
     return view
 
 
-# venngram's cooperative-role cases read a promoted tensor's role as its role before promotion, and an earlier
-# cooperative declaration (a steering vector's) as a change (speediedan/venngram#89): they run on an unpromoted view
-# with nothing declared (`test_cooperative_roles_on_the_unpromoted_view`) until that is fixed.
+# venngram's cooperative-role cases, which run on the promoted view with a steering vector declared since
+# speediedan/venngram#89 was fixed
 COOPERATIVE_CASES = frozenset({"cooperative_roles_merge", "cooperative_roles_conflict"})
-
-
-def _conformance(make_view):
-    """Finetuning-scheduler's conformance report for ``make_view``, less :data:`COOPERATIVE_CASES`."""
-    suite = TunableViewConformance(make_view)
-    return suite.run([c.name for c in suite.cases() if c.name not in COOPERATIVE_CASES])
 
 
 def _randomize_corrections(module: nn.Module) -> None:
@@ -178,20 +171,14 @@ class TestTranscoderView:
         ]
 
     def test_conformance(self):
-        """Finetuning-scheduler's cases on the view as #709 uses it, with one layer promoted."""
-        report = _conformance(lambda: _promoted_view(_toy_module()))
+        """Finetuning-scheduler's cases, venngram's cooperative-role cases among them, on the view as #709 uses it,
+        with one layer promoted."""
+        report = TunableViewConformance(lambda: _promoted_view(_toy_module())).run()
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse", "promotion"} <= set(
             report.ran
         )
-
-    def test_cooperative_roles_on_the_unpromoted_view(self):
-        """The cooperative-role cases (venngram's) on the transcoders' view before any promotion or declaration: a
-        role declared on a base-model tensor merges, and one declared on a transcoder (an ``artifact``) is
-        refused."""
-        report = TunableViewConformance(lambda: as_view(_toy_module().build_tunable_view())).run(COOPERATIVE_CASES)
-        assert report.ok, report.failures
-        assert set(report.ran) == COOPERATIVE_CASES
+        assert COOPERATIVE_CASES <= set(report.ran)
 
     def test_disk_offload_is_not_refused(self):
         view = _promoted_view(_toy_module(offload="disk"))
@@ -240,9 +227,10 @@ class TestBaseTuning:
 
     def test_conformance(self):
         """Finetuning-scheduler's cases with the base model tunable and one transcoder layer promoted."""
-        report = _conformance(lambda: _promoted_view(_toy_module(tune_base=True)))
+        report = TunableViewConformance(lambda: _promoted_view(_toy_module(tune_base=True))).run()
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
+        assert COOPERATIVE_CASES <= set(report.ran)
 
     def test_an_unregistered_base_is_registered(self):
         """With no HF module registered, ``tune_base`` registers the nnsight model's torch module as ``hf_model``,
@@ -349,10 +337,11 @@ class TestCooperativeRoles:
         assert compiled.physical_for(0) == (self.STEER,)
 
     def test_conformance(self):
-        """Finetuning-scheduler's cases on the transcoders' view with a steering vector declared beside them."""
-        report = _conformance(lambda: as_view(_steered_module().build_tunable_view()))
+        """Finetuning-scheduler's cases, venngram's cooperative-role cases among them, on the transcoders' view
+        with a steering vector declared beside them."""
+        report = TunableViewConformance(lambda: as_view(_steered_module().build_tunable_view())).run()
         assert report.ok, report.failures
-        assert {"step_changes_only_thawed", "checkpoint_round_trip"} <= set(report.ran)
+        assert {"step_changes_only_thawed", "checkpoint_round_trip", *COOPERATIVE_CASES} <= set(report.ran)
 
     def test_the_base_model_stays_refused_beside_an_intervention(self):
         view = as_view(_steered_module().build_tunable_view())
@@ -576,7 +565,7 @@ class TestLazyCorrections:
             "transcoders.transcoders.0.lazy_deltas.W_dec.A",
             "transcoders.transcoders.0.lazy_deltas.W_dec.B",
         } <= names
-        report = _conformance(lambda: _promoted_view(module, layer=0))
+        report = TunableViewConformance(lambda: _promoted_view(module, layer=0)).run()
         assert report.ok, report.failures
 
     def test_without_a_rank_lazy_weights_are_left_out_with_a_warning(self, tmp_path):

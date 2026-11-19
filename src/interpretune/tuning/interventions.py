@@ -70,6 +70,8 @@ TRAINABLE_OPS = frozenset({"add", "scale"})
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HOOKS_ATTR = "_intervention_hooks"
 _SITES_ATTR = "_intervention_sites"
+# each attached intervention's resolved module, by name: where its view places it (`intervention_placements`)
+_PLACED_ATTR = "_intervention_placed"
 
 
 def _require_trainable_op(op: str) -> None:
@@ -243,6 +245,7 @@ def attach_intervention(
     sites: dict[str, tuple[str, Literal[False] | FrozenKind]] = root.__dict__.setdefault(_SITES_ATTR, {})
     hooks[name] = handle
     sites[name] = (site, frozen)
+    root.__dict__.setdefault(_PLACED_ATTR, {})[name] = path
     return intervention
 
 
@@ -260,6 +263,7 @@ def detach_intervention(root: nn.Module, name: str) -> nn.Module:
         raise KeyError(f"No intervention named {name!r} is attached")
     root.__dict__.get(_HOOKS_ATTR, {}).pop(name).remove()
     root.__dict__.get(_SITES_ATTR, {}).pop(name, None)
+    root.__dict__.get(_PLACED_ATTR, {}).pop(name, None)
     intervention = held[name]
     del held[name]
     return intervention
@@ -268,6 +272,16 @@ def detach_intervention(root: nn.Module, name: str) -> nn.Module:
 def intervention_sites(root: nn.Module) -> Mapping[str, str]:
     """The site of each intervention attached to ``root``, by name."""
     return {name: site for name, (site, _) in root.__dict__.get(_SITES_ATTR, {}).items()}
+
+
+def intervention_placements(root: nn.Module) -> dict[str, str]:
+    """Where ``root``'s view places each attached intervention: its module (``interventions.<name>``) by the module
+    path, under ``root``, of the module whose input or output it rewrites (its resolved site).
+
+    Interventions are registered beside the model, so venngram's view takes this mapping (``attached``) to give their
+    tensors the layer and component of the module they are spliced at.
+    """
+    return {f"{INTERVENTIONS_ATTR}.{name}": path for name, path in root.__dict__.get(_PLACED_ATTR, {}).items()}
 
 
 def intervention_roles(root: nn.Module) -> dict[str, str]:
