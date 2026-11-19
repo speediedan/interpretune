@@ -599,7 +599,8 @@ class TLModelBackend:
         against), then a second applies the edits. The specs at a site are folded in one gradient hook, and a capture
         there records the folded result. Forward hooks at TransformerLens hook points register the gradient hooks and
         keep the activations a readout reads (see ``_tl_backward`` for why the gradient is not edited in a
-        TransformerLens backward hook).
+        TransformerLens backward hook). With no interventions only the baseline pass runs, and the edited gradients
+        are the baseline ones.
         """
         readout = as_readout(readout)
         available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
@@ -624,11 +625,10 @@ class TLModelBackend:
         else:
             shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
+        pre = {spelled.get(name, name): pre_grads[name] for name in captured_names}
+        if not intervention_dict:  # nothing to edit: a second pass would only repeat the first (gradient capture)
+            return pre, dict(pre), value
         post_grads, _ = _tl_backward(
             model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
         )
-        return (
-            {spelled.get(name, name): pre_grads[name] for name in captured_names},
-            {spelled.get(name, name): post_grads[name] for name in captured_names},
-            value,
-        )
+        return pre, {spelled.get(name, name): post_grads[name] for name in captured_names}, value
