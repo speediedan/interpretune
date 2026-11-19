@@ -86,6 +86,8 @@ class InterventionSpec(NamedTuple):
             every input and is refused at apply time rather than run.
         clamp_max: Upper bound of the ``"clamp"`` band in pseudoinverse coordinates, or ``None``
             for one-sided clamping from below.
+        unit_indices: Optional ordered indices on the activation's last axis. The op acts on this slice and leaves
+            every other coordinate untouched. Its operand is expressed in the selected coordinates.
     """
 
     intervention_tensor: torch.Tensor
@@ -95,6 +97,7 @@ class InterventionSpec(NamedTuple):
     clamp_min: float | None = None
     clamp_max: float | None = None
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
+    unit_indices: tuple[int, ...] | None = None
 
 
 InterventionValue: TypeAlias = Any
@@ -240,6 +243,11 @@ def _validate_intervention_spec(
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
     op = normalize_op(spec.op)
+    if spec.unit_indices is not None:
+        if not target_shape:
+            raise ValueError(f"Hook {hook_name!r} has no unit axis")
+        _validate_unit_indices(spec.unit_indices, target_shape[-1])
+        target_shape = (*target_shape[:-1], len(spec.unit_indices))
     if op == "patch":
         # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
         # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
@@ -274,6 +282,7 @@ def _validate_intervention_spec(
         clamp_min=spec.clamp_min,
         clamp_max=spec.clamp_max,
         position_scope=normalize_position_scope(spec.position_scope),
+        unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
     )
 
 
@@ -439,6 +448,7 @@ def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_sc
         "clamp_min": None if clamp_min is None else float(clamp_min),
         "clamp_max": None if clamp_max is None else float(clamp_max),
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
+        "unit_indices": None if value.get("unit_indices") is None else tuple(value["unit_indices"]),
     }
 
 
@@ -868,7 +878,21 @@ def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> to
     (by a user, or from a hub collection) runs through the same path as the core ones.
     """
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
+    if spec.unit_indices is not None:
+        _validate_unit_indices(spec.unit_indices, input_value.shape[-1])
+        indices = torch.tensor(spec.unit_indices, device=input_value.device, dtype=torch.long)
+        selected = input_value.index_select(-1, indices)
+        edited = executor_for(normalize_op(spec.op))(selected, target, spec)
+        # index_copy preserves the complement and its autograd path, including when the selected op replaces values.
+        return input_value.index_copy(-1, indices, torch.broadcast_to(edited, selected.shape))
     return executor_for(normalize_op(spec.op))(input_value, target, spec)
+
+
+def _validate_unit_indices(indices: Sequence[int], width: int) -> None:
+    if not indices or any(type(index) is not int or not 0 <= index < width for index in indices):
+        raise ValueError(f"unit_indices {indices!r} must be nonempty integer indices in [0, {width})")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"unit_indices {indices!r} repeat a unit; each selected unit must occur once")
 
 
 def track_gradient(value: torch.Tensor) -> torch.Tensor:
@@ -938,7 +962,7 @@ def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
             "which knows the final real token"
         )
     # every leading axis indexes independent rows; the trailing axes the operand spans (at least one) are the units
-    units = max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
+    units = 1 if spec.unit_indices is not None else max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
     if value.ndim < units:
         raise ValueError(
             f"an operand spanning {units} axes cannot apply to an activation of shape {tuple(value.shape)}"
@@ -1092,5 +1116,7 @@ def require_intervention_support(
     """
     require_flow(backend, flow, backend_name=backend_name)
     for _pattern, spec in iter_intervention_axes(interventions):
+        if spec.unit_indices is not None and "units" not in getattr(backend.intervention_support, "targets", {}):
+            raise NotImplementedError(f"backend {backend_name!r} does not declare the 'units' intervention target")
         require_position_scope(backend, spec, backend_name=backend_name)
         require_op(backend, spec, backend_name=backend_name)
