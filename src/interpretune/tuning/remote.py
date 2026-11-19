@@ -287,6 +287,7 @@ def run_remote_chunk(
     optimizer_kwargs: Mapping[str, Any] | None = None,
     train_roles: Sequence[str] | None = None,
     remote: bool | str = True,
+    backend: Any = None,
 ) -> tuple[RemoteChunkState, list[float]]:
     """Run one bounded chunk of a remote tuning run, and return the next state and the chunk's losses.
 
@@ -306,6 +307,7 @@ def run_remote_chunk(
         train_roles: The roles this chunk trains (the phase); the rest keep their values. Defaults to every role.
         remote: Passed to ``model.session``: ``True`` for NDIF, ``"local"`` to simulate its serialization, ``False``
             to run in process.
+        backend: An nnsight session backend to use instead of the one ``remote`` selects.
 
     Returns:
         The next state (``chunk_index + 1``) and the per-batch losses. Commit the state through
@@ -324,7 +326,7 @@ def run_remote_chunk(
     initial = {role: state.params[role].detach().clone() for role in roles}
     opt_state, kwargs, rng_state = state.optimizer_state, dict(optimizer_kwargs or {}), state.rng_state
 
-    with model.session(remote=remote):
+    with model.session(backend=backend, remote=remote):
         device = next(model.parameters()).device
         params = {role: torch.nn.Parameter(initial[role].to(device), requires_grad=role in training) for role in roles}
         opt = opt_cls(list(params.values()), **kwargs)
