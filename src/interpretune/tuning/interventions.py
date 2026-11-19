@@ -435,6 +435,22 @@ def intervention_roles(root: nn.Module) -> dict[str, str]:
     return roles
 
 
+def intervention_role_addresses(root: nn.Module) -> dict[str, str]:
+    """The roles of :func:`intervention_roles`, declared by address: each role mapped to the interventions it
+    covers (``{"intervention:steer": "module:interventions.steer"}``), as venngram views take them (``roles=``)."""
+    from interpretune.tuning.views import merge_roles, module_address
+
+    held = _interventions(root)
+    if held is None:
+        return {}
+    sites = root.__dict__.get(_SITES_ATTR, {})
+    declared = []
+    for name, intervention in held.items():
+        if [*intervention.parameters(), *intervention.buffers()]:  # venngram refuses an address that selects nothing
+            declared.append({sites[name][1] or f"intervention:{name}": module_address(f"{INTERVENTIONS_ATTR}.{name}")})
+    return merge_roles(*declared)
+
+
 @dataclass(frozen=True, kw_only=True)
 class InterventionCfg:
     """A trainable intervention declared in a module's configuration, attached once the module's model is built.

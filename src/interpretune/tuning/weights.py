@@ -247,6 +247,20 @@ def weight_edit_roles(root: nn.Module) -> dict[str, str]:
     return roles
 
 
+def weight_edit_role_addresses(root: nn.Module) -> dict[str, str]:
+    """The roles of :func:`weight_edit_roles`, declared by address: each role mapped to its edits' operands
+    (``module:<edit> & leaf:<operand>``; an edit's buffers, such as its unit indices, stay ``base``), as venngram
+    views take them (``roles=``)."""
+    from interpretune.tuning.views import merge_roles
+
+    declared = [
+        {module.declared_role(): " | ".join(f"module:{path} & leaf:{n}" for n in operands)}
+        for path, module in root.named_modules()
+        if isinstance(module, WeightEdit) and (operands := [n for n, _ in module.named_parameters(recurse=False)])
+    ]
+    return merge_roles(*declared)
+
+
 def _view(root: nn.Module, view: Any | None) -> Any:
     if view is not None:
         return view
@@ -263,11 +277,12 @@ def _places_units(view: Any) -> bool:
 
 def _unit_view(root: nn.Module, view: Any | None) -> Any:
     """The view a unit target resolves through: ``view``, else ``root``'s attached view when its structure places
-    units (a venngram ``MappedView``), else ``root``'s default view (venngram's registry map for the model it carries).
+    units (a venngram ``MappedView``, or the view of a ``TransformerBridge``), else ``root``'s default view
+    (venngram's registry map for the model it carries).
 
-    An attached view that names tensors without placing them (an identity view, or the TransformerLens-named view of a
-    ``TransformerBridge``) addresses the same tensors under the same root, so the default view is asked instead; where
-    no map describes the root's module names either, the unit target is refused when it resolves.
+    An attached view that names tensors without placing their units (an identity view) addresses the same tensors
+    under the same root, so the default view is asked instead; where no map describes the root's module names either,
+    the unit target is refused when it resolves.
     """
     if view is not None:
         return view
