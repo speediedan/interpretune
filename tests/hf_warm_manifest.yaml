@@ -65,6 +65,10 @@ components:
   # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
   - repo_id: speediedan/prompt-configs
     revision: 3d8b9710061283dd14c86a46f0c0649b5e262db0
+  # The task-neutral prompt-analysis component the circuit-tracer notebooks load (free-form prompts, no task head).
+  # Pinned revision; bump with intent.
+  - repo_id: speediedan/prompt-analysis
+    revision: 6a6670271ea956734c869844ea834566081a24fc
 venngram:
   # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
   # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,
