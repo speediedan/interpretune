@@ -241,10 +241,18 @@ class UnitIntervention(nn.Module):
 def _unit_splice(
     root: nn.Module, address: str, sets: Mapping[str, Any] | None = None
 ) -> tuple[str, tuple[int, ...] | None]:
-    """A one-site unit address split into its site address and explicit unit indices."""
-    from venngram.address import Term, parse, to_string
+    """A one-site unit address split into its site address and explicit unit indices.
+
+    A reference to an address book's named set (``@steer_units``) is followed through ``sets`` first, so a book entry
+    gives the splice both its site and its units.
+    """
+    from venngram.address import Ref, Term, parse, to_string
 
     expr = parse(address)
+    seen: set[str] = set()
+    while isinstance(expr, Ref) and sets and expr.name in sets and expr.name not in seen:
+        seen.add(expr.name)  # the book refuses reference cycles; this only keeps the walk finite
+        expr = sets[expr.name]
     if not isinstance(expr, Term) or expr.units is None:
         return address, None
     if expr.point is None:

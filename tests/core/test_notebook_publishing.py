@@ -154,3 +154,6 @@ class TestInterpretuneNotebookForm(NotebookFormConformance):
     """The notebook-form cases, run against interpretune's own published notebooks."""
 
     root = REPO_ROOT
+    # `exp` is the concept-direction component's package: the latent-dynamics notebook imports it from the snapshot it
+    # fetches, after the reader opts into that component's code, so no environment has it installed
+    ignored_imports = ("exp",)

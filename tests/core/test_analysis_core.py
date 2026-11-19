@@ -849,7 +849,7 @@ class TestCoreFunctionality:
         )
         assert isinstance(name_filter_list, list)
         assert len(name_filter_list) == 1
-        assert name_filter_list[0].startswith("blocks.0.hook_resid_pre")
+        assert name_filter_list[0].startswith("blocks.0.hook_resid_post")
 
     def test_resolve_names_filter_callable_path(self):
         """Test resolve_names_filter when passed a callable (line 969)."""

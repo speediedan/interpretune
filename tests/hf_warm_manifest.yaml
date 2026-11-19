@@ -29,6 +29,10 @@ models:
     allow_patterns: ["blocks.0.hook_resid_pre/*", "blocks.1.hook_resid_pre/*", "blocks.9.hook_resid_pre/*"]
   - repo_id: ckkissane/attn-saes-gpt2-small-all-layers
     allow_patterns: ["gpt2-small_L1_*", "gpt2-small_L2_*", "gpt2-small_L9_*", "gpt2-small_L10_*"]
+  # OpenAI's v5 residual SAEs (trained on GPT-2's raw weights, so they declare no weight processing): the NNsight
+  # sae_lens composition and the sae_lens profiling pair attach the first two layers.
+  - repo_id: jbloom/GPT2-Small-OAI-v5-32k-resid-post-SAEs
+    allow_patterns: ["v5_32k_layer_0.pt/*", "v5_32k_layer_1.pt/*"]
   # Gemma Scope 2 residual SAE the conformance suite attaches for the gemma-3-1b-it circuit-tracer
   # target (one layer only; the full release is tens of gigabytes the suite never loads).
   - repo_id: google/gemma-scope-2-1b-it
