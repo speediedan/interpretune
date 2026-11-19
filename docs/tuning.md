@@ -127,8 +127,7 @@ from interpretune.tuning.views import RefusingView, identity_view
 def build_tunable_view(self):
     if "hf_model" in self._modules:  # local, dispatched weights
         return identity_view(self, roles=self.tunable_roles())
-    return RefusingView(self, "nnsight compositions executing remotely (NDIF) have no local weights to tune: "
-                              "the hosted model's weights are frozen on NDIF")
+    return RefusingView(self, "nnsight compositions executing remotely (NDIF) have no local weights to tune")
 ```
 
 A view with names of its own goes here too: TransformerLens's `TransformerBridgeView` lets a schedule say

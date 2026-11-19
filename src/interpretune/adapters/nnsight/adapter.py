@@ -142,11 +142,7 @@ class BaseNNsightModule(BaseITModule):
         if cfg is None:
             return "the model was not built through nnsight (the composition has no `nnsight_cfg`)."
         if cfg.remote:
-            return (
-                "nnsight compositions executing remotely (NDIF) have no local weights to tune: the hosted model's"
-                " weights are frozen on NDIF, and only adapter and intervention tensors the composition itself creates"
-                " could train there, through a remote phase runner that does not exist yet (interpretune#775)."
-            )
+            return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
         model = getattr(self, "model", None)
         if model is not None and not getattr(model, "dispatched", True):
             return (
