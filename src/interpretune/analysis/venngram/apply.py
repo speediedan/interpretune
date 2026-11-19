@@ -217,8 +217,8 @@ def _graph_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
         space = spaces[name]
         if space.kind not in GRAPH_TUPLE_FEATURIZERS:
             return (
-                f"space `{name}` is a `{space.kind}` featurizer; circuit-tracer's feature tuples place"
-                f" {sorted(GRAPH_TUPLE_FEATURIZERS)} features"
+                f"space `{name}` is a `{space.kind}` featurizer, which graph targets do not yet support:"
+                f" circuit-tracer's feature tuples place {sorted(GRAPH_TUPLE_FEATURIZERS)} features"
             )
         if space.value_shape or len(space.index) != 1:
             return f"space `{name}`'s nodes are not one feature with a scalar value, as a feature tuple sets"

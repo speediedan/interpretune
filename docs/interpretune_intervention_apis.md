@@ -186,7 +186,8 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
     activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
     A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
-    feature and position, so it is refused here, as are block-sparse nodes, whose value is a vector
+    feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
+    scalar) are not yet supported on this path and are refused by name
     ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
