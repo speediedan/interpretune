@@ -2006,6 +2006,65 @@ class TestGradientReadouts:
             torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
 
     @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
+        """A treatment's readout, declared as a logit difference plus a block-5 projection, executes as the
+        callable readout that writes the same scalar by hand (the reference test above checks that form)."""
+        pytest.importorskip("venngram", reason="the venngram extra is not installed")
+        from interpretune.analysis.venngram import load_recipe, recipe_readout
+
+        direction = self._unit(0)
+        book_model = {"id": "gpt2", "revision": "main"}
+        doc = {
+            "schema_version": 4,
+            "kind": "recipe",
+            "name": "logit-difference-plus-projection",
+            "model": book_model,
+            "book": {
+                "schema_version": 3,
+                "name": "readout-sets",
+                "portability": "checkpoint",
+                "applies_to": {"models": [book_model]},
+                "sets": {
+                    "answer": {"point": "unembed.hook_out", "units": [self.A]},
+                    "foil": {"point": "unembed.hook_out", "units": [self.B]},
+                    "read": {"point": "hook_in", "layers": [5]},
+                    "edit_grad": {"point": "hook_out", "layers": [3], "units": [0], "of": "grad"},
+                },
+            },
+            "operands": {"direction": {"values": direction.tolist(), "shape": [768], "basis": "jlens_folded"}},
+            "readout": {
+                "terms": [
+                    {"reduce": "sum", "set": "answer", "tokens": "last", "weight": 1.0},
+                    {"reduce": "sum", "set": "foil", "tokens": "last", "weight": -1.0},
+                    {"reduce": "project", "set": "read", "tokens": "last", "operand": "direction"},
+                ]
+            },
+            "stages": [
+                {
+                    "site": "hook_out",
+                    "tokens": "last",
+                    "ops": [{"op": "scale", "target": {"set": "edit_grad"}, "value": {"dose": 1.0}}],
+                }
+            ],
+        }
+        declared = recipe_readout(load_recipe(doc).recipe, n_layers=12)
+        hand = self._readouts()
+
+        def both(logits, activations):
+            return hand["logit_difference"](logits, activations) + hand["projection"](logits, activations)
+
+        points = [self.READ, self.EDIT, self.CAPTURE]
+        backend, model, batch = self._backend(backend_name, request)
+        expected = backend.bwd_w_intervention(
+            model, batch, self._payload(), Readout(both, sites=(self.READ,)), capture=points
+        )
+        got = backend.bwd_w_intervention(model, batch, self._payload(), declared, capture=points)
+        torch.testing.assert_close(got[2], expected[2])
+        for pre_or_post in (0, 1):
+            for point in points:
+                torch.testing.assert_close(got[pre_or_post][point], expected[pre_or_post][point])
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
     def test_an_edit_at_a_branch_does_not_leak_into_its_sibling(self, backend_name, hf, request):
         """At a residual add, autograd hands one gradient tensor to both branches.
 

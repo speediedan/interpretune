@@ -523,8 +523,7 @@ after block 8 reaches it; below block 8 the two readouts differ by everything bl
 the difference. A gradient captured at a site the readout reads includes the readout's own contribution, beside what
 flows back from the logits.
 
-In an analysis session, pass the readout as the op's `readout` input (for in-process use; a readout declared in a
-venngram book is to follow, [speediedan/venngram#93](https://github.com/speediedan/venngram/issues/93)):
+In an analysis session, pass the readout as the op's `readout` input:
 
 ```python
 cfg = AnalysisCfg(
@@ -532,6 +531,43 @@ cfg = AnalysisCfg(
     run_inputs={"interventions": payload, "grad_capture": ["blocks.2.hook_out"], "readout": readouts["block 8 projection"]},
 )
 ```
+
+### A readout declared in a treatment
+
+A venngram treatment whose stages act on gradients (`of: grad`) declares the readout they are gradients of, as a
+weighted sum of terms, each a registered reduction of the activations a book set addresses at a token scope; a stage
+may declare its own in place of the treatment's. `recipe_readout` (`interpretune.analysis.venngram`) executes that
+declaration as a `Readout`, which goes beside the payload `recipe_interventions(..., flow="grad")` translates:
+
+```yaml
+readout:                                              # a logit difference plus a block-8 projection
+  terms:
+    - {reduce: sum, set: answer_logit, tokens: last, weight: 1.0}     # point:unembed.hook_out & units:[1000]
+    - {reduce: sum, set: foil_logit, tokens: last, weight: -1.0}      # point:unembed.hook_out & units:[2000]
+    - {reduce: project, set: block8, tokens: last, operand: probe}    # point:hook_out & layers:8
+```
+
+```python
+from interpretune.analysis.venngram import recipe_interventions, recipe_readout
+
+payload = recipe_interventions(recipe, site_widths=widths, flow="grad")
+readout = recipe_readout(recipe, n_layers=model.cfg.n_layers)  # None: the recipe predates readouts; the default applies
+cfg = AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs={"interventions": payload, "readout": readout})
+```
+
+- **What a term reads.** A block site is read from the forward pass the backward runs from, as a callable readout's
+  sites are, and a set selecting several sites reads their addressed units side by side in layer order.
+  `point:unembed.hook_out` is the logits, whose units are the vocabulary. Units are resolved against the activation's
+  width when the readout runs, and a term without `units` reads every unit of its sites.
+- **Token scopes:** `last`, `all`, and explicit `positions` (columns of the padded batch). `prompt`, `generated` and
+  `slice` are refused.
+- **Reductions:** `sum`, `project` (each token's values dotted with the operand, a vector over the addressed units in
+  their order) and `norm`, each summed over the term's tokens; the readout is the weighted sum of the terms, summed over
+  the batch's rows, as the default readout is. The executors are checked against venngram's conformance vectors, and
+  `register_readout_executor` adds one for a reduction registered in venngram only if it passes them. The support record
+  declares the reductions executed here (`readouts`), so `check_recipe` refuses a treatment using any other.
+- **One scalar per backward pass.** Gradient stages declaring different readouts are refused rather than applied under
+  one of them; apply the stages that share a readout together.
 
 ### Changing the readout, or editing its gradient
 
