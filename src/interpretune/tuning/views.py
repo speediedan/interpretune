@@ -99,9 +99,16 @@ def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> An
 _REMINDED: set[str] = set()
 
 
-def default_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
+def default_view(
+    root: nn.Module, roles: Mapping[str, str] | None = None, attached: Mapping[str, str] | None = None
+) -> Any:
     """``root``'s view through venngram (``venngram.view``): the base map of the model it carries, mounted where
     the model sits (``model.``), the roles of every overlay that applies, and ``roles`` over them.
+
+    ``attached`` places the modules spliced in beside the model (latent models and interventions, by the module each
+    rewrites: ``BaseITModule.tunable_placements()``), so their tensors take the layer and component of their site and
+    ``role:latent & layers:12:`` selects by depth. A placement the map cannot make (a site no map row places at or
+    above) is left out, with a warning: that module's tensors locate at no layer, and still resolve by name and role.
 
     Where no published component map describes the model, this is the identity view (:func:`identity_view`), with an
     info-level reminder that registering a map adds layers and components; where venngram's registry cannot be read,
@@ -109,9 +116,30 @@ def default_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any
     """
     import venngram
     from venngram.registry import RegistryError
+    from venngram.tuning import TunableViewError
 
+    roles, attached = dict(roles or {}), dict(attached or {})
     try:
-        return venngram.view(root, roles=dict(roles or {}))
+        try:
+            return venngram.view(root, roles=roles, attached=attached)
+        except TunableViewError:
+            if not attached:
+                raise
+        unattached = venngram.view(root, roles=roles)  # a refusal that is not a placement's is raised here
+        # venngram refuses the view for any one placement it cannot make: keep those it can, one by one
+        placeable, unplaced = {}, {}
+        for key, at in attached.items():
+            try:
+                venngram.view(root, roles=roles, attached={key: at})
+                placeable[key] = at
+            except TunableViewError as err:
+                unplaced[key] = err
+        reasons = "; ".join(map(str, unplaced.values()))
+        rank_zero_warn(
+            f"{', '.join(unplaced)} could not be placed at their sites in {type(root).__name__}'s view, so their"
+            f" tensors locate at no layer or component: address them by name or role ({reasons})."
+        )
+        return venngram.view(root, roles=roles, attached=placeable) if placeable else unattached
     except KeyError as err:
         model = getattr(root, "model", None)
         named = f"{type(root).__name__}" + (f" ({type(model).__name__})" if isinstance(model, nn.Module) else "")
@@ -135,7 +163,9 @@ def configured_view(module: nn.Module) -> Any | None:
 
     The view class is instantiated with ``module`` as its root and the configured ``init_args``. A class taking
     ``roles`` receives the composition's roles (the overlays' roles, :func:`adapter_roles`, and the module's
-    ``tunable_roles()``) unless ``init_args`` sets them.
+    ``tunable_roles()``) unless ``init_args`` sets them, and a class taking ``attached`` (venngram's ``MappedView``)
+    receives the placements of the modules spliced in beside the model (``tunable_placements()``) unless ``init_args``
+    sets them.
     """
     cfg = getattr(getattr(module, "it_cfg", None), "tunable_view", None)
     if not cfg:
@@ -148,6 +178,11 @@ def configured_view(module: nn.Module) -> Any | None:
         tunable_roles = getattr(module, "tunable_roles", None)
         declared = tunable_roles() if callable(tunable_roles) else None
         init_args["roles"] = {**adapter_roles(module), **(declared if isinstance(declared, Mapping) else {})}
+    if "attached" not in init_args and "attached" in inspect.signature(view_cls).parameters:
+        tunable_placements = getattr(module, "tunable_placements", None)
+        placed = tunable_placements() if callable(tunable_placements) else None
+        if isinstance(placed, Mapping) and placed:
+            init_args["attached"] = dict(placed)
     return view_cls(module, **init_args)
 
 

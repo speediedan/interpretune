@@ -154,3 +154,49 @@ def test_the_selection_file_narrows_a_gpu_phase(tmp_path, spec):
     full_file = tmp_path / "full.txt"
     full_file.write_text("full\n")
     assert collected(full_file) == full
+    # a deferred `full_run_only` case leaves the phase it would otherwise be selected into, and only it
+    ct = select(["src/interpretune/adapters/circuit_tracer/adapter.py"], spec, ROOT)
+    assert ct.deferred, "a circuit-tracer change defers the class's slowest cases"
+    deferring = tmp_path / "ct.txt"
+    write_selection_file(ct, spec, deferring)
+    kept = collected(deferring)
+    every_case = {
+        n for n in full if n.startswith("tests/core/test_backend_conformance.py::TestCircuitTracerConformance")
+    }
+    assert every_case and not (kept & set(ct.deferred)), sorted(kept & set(ct.deferred))
+    assert every_case - set(ct.deferred) <= kept, sorted(every_case - set(ct.deferred) - kept)
+
+
+def test_full_run_only_entries_name_selected_gpu_tests(spec):
+    """Each entry names a collected CI GPU test an area selects, says why, names what still covers its path in a gate,
+    and the paths that keep it there: a stale or unanchored entry would defer nothing, or the wrong thing, silently."""
+    entries = spec.get("full_run_only") or []
+    assert entries
+    gpu = {i["nodeid"] for i in collect_gpu_items()}
+    prefixes = [t for a in spec["areas"].values() for t in a["tests"]]
+    for e in entries:
+        assert e["test"] in gpu, f"{e['test']} is not a collected GPU test"
+        assert any(e["test"].startswith(p) for p in prefixes), f"no area selects {e['test']}"
+        assert e.get("why") and e.get("covered_by") and e.get("unless_changed"), e
+        cls = e["test"].rsplit("::", 1)[0]
+        for case in e["covered_by"]:
+            assert f"{cls}::{case}" in gpu, f"{e['test']}: its gate coverage {case} is not a collected GPU test"
+            assert f"{cls}::{case}" not in {x["test"] for x in entries}, (
+                f"{case} covers {e['test']} but is deferred too"
+            )
+
+
+def test_the_deferral_follows_the_change_set(spec):
+    """An area change defers the entries; a change to what an entry exercises keeps it; a full run defers none."""
+    first = spec["full_run_only"][0]["test"]
+    assert first in select(["src/interpretune/adapters/circuit_tracer/adapter.py"], spec, ROOT).deferred
+    assert first not in select(["src/interpretune/testing/conformance/cases.py"], spec, ROOT).deferred
+    assert not select(["pyproject.toml"], spec, ROOT).deferred
+    toy = {
+        "run_all": [],
+        "ignore": [],
+        "areas": {"a": {"paths": ["x/**"], "tests": ["t/a.py::C"]}},
+        "full_run_only": [{"test": "t/a.py::C::slow", "unless_changed": ["x/slow.py"]}],
+    }
+    assert select(["x/fast.py"], toy).deferred == ["t/a.py::C::slow"]
+    assert select(["x/fast.py", "x/slow.py"], toy).deferred == []

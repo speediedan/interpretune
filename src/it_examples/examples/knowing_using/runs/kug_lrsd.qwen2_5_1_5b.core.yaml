@@ -1,0 +1,29 @@
+# The Knowing-Using Gap's LRSD recipe on Qwen2.5-1.5B-Instruct, 50 epochs on interpretune's core loop with bf16
+# autocast over fp32 weights (one GPU):
+#
+#   interpretune --run_command train --config hub://speediedan/knowing-using/runs/kug_lrsd.qwen2_5_1_5b.core.yaml
+#
+# The data, the paper's `chaining_tasks.json`, is downloaded from the Hub dataset
+# `speediedan/knowing-using-gap-chaining` at the revision the session configuration pins; to read a local copy, add
+# `--registered_cfg '{"datamodule_cfg": {"init_args": {"data_path": "/path/to/chaining_tasks.json"}}}'`.
+# The paper's three training seeds are 848, 1 and 2 (`--seed_everything`). The plain cross-entropy arm passes
+# `--registered_cfg '{"module_cfg": {"init_args": {"lrsd_lambda": 0.0}}}'`. `FTSCoreCallback` runs the one-phase
+# schedule (the LoRA adapters, for every epoch). `ExactMatchReport` scores the untrained model and then every epoch:
+# `twohop_em` (the unique two-hop questions) and `mem_em` (the unique single-hop ones), as correct and total counts
+# too, and writes the history to `log_path`. No checkpoint policy is configured: the questions scored are the
+# paper's test questions, so selecting a checkpoint by them would select on the test set.
+session_ref: speediedan/knowing-using:kug_lrsd.qwen2_5_1_5b.core
+seed_everything: 848
+run_cfg:
+  max_epochs: 50
+  precision: bf16-mixed
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/knowing-using/ft_schedules/kug_lrsd.qwen2_5_1_5b.yaml
+        tuning_scheduler_kwargs:
+          max_depth: -1
+    - class_path: knowing_using.ExactMatchReport
+      init_args:
+        precision: bf16-mixed
+        log_path: kug_lrsd.qwen2_5_1_5b.core.exact_match.json

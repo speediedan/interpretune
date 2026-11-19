@@ -53,7 +53,8 @@ on:
       - "!**/LICENSE*"
   pull_request:
     branches: [main, "release/*", "bugfix/*", "feature/*"]
-    types: [opened, reopened, ready_for_review, synchronize]
+    # `labeled`: adding the `ci:macos` label runs the macOS leg on a PR (see `os_legs`); any other label does nothing
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -73,15 +74,19 @@ on:
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  # a label event gets a group of its own, so the labeler's labels on a new PR never cancel that PR's test run
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}${{ github.event.action == 'labeled' && format('-{0}', github.event.label.name) || '' }}
   cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 jobs:
   # this job allows us to set CI test filters, log level, resource monitor and os tracing, test with precedence:
   # workflow_dispatch inputs -> manual workflow overrides -> repository variable defaults -> fallback defaults
   log-dispatch-inputs:
+    # a label other than `ci:macos` starts nothing
+    if: "github.event.action != 'labeled' || github.event.label.name == 'ci:macos'"
     runs-on: ubuntu-latest
     outputs:
+      os_legs: ${{ steps.os_legs.outputs.os }}
       log_level: ${{ steps.resolve_dispatch_vars.outputs.log_level }}
       run_resource_monitor: ${{ steps.resolve_dispatch_vars.outputs.run_resource_monitor }}
       enable_os_trace: ${{ steps.resolve_dispatch_vars.outputs.enable_os_trace }}
@@ -108,6 +113,26 @@ jobs:
           echo "ENABLE_OS_TRACE=${{ env.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
           echo "PYTEST_FILTER_PATTERN=${{ env.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
           echo "RUN_W_GRAFANA=${{ env.RUN_W_GRAFANA || '0' }}" >> $GITHUB_OUTPUT
+      - name: Choose the OS legs
+        id: os_legs
+        # Hosted macOS runners are few (five at once) and the macOS leg is the slowest: on 2026-11-18 macOS jobs queued
+        # a median 21 min (p90 140) and this leg ran a median 100 min, against 72 (Linux) and 69 (Windows). So a PR runs
+        # Linux and Windows, and macOS when it carries the `ci:macos` label (adding the label runs that leg alone, the
+        # other two already ran); a push (main, release/*, ...) and a manual dispatch run all three.
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          MACOS: "${{ contains(github.event.pull_request.labels.*.name, 'ci:macos') }}"
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo 'os=["ubuntu-22.04","windows-2022","macos-15"]' >> "$GITHUB_OUTPUT"
+          elif [ "$ACTION" = "labeled" ]; then
+            echo 'os=["macos-15"]' >> "$GITHUB_OUTPUT"
+          elif [ "$MACOS" = "true" ]; then
+            echo 'os=["ubuntu-22.04","windows-2022","macos-15"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-22.04","windows-2022"]' >> "$GITHUB_OUTPUT"
+          fi
       - name: Resolve workflow dispatch inputs
         id: resolve_dispatch_vars
         run: |
@@ -122,11 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [
-          ubuntu-22.04,
-          windows-2022,
-          macos-15
-          ]
+        os: ${{ fromJSON(needs.log-dispatch-inputs.outputs.os_legs) }}
         python-version: ["3.13"]
     timeout-minutes: 120
     env:

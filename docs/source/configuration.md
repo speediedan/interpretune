@@ -69,3 +69,32 @@ accelerator statistic without an accelerator, allocator history on a backend wit
 remaining fields (memory and saved-tensor hooks, the FSDP2 tracker's depth, units and root module, report aggregation)
 are documented on finetuning-scheduler's `MemProfilerCfg`. Run the PyTorch profiler and the memory profiler in separate
 runs (see the design rationale).
+
+In the core training loop, one profiled `training_step` call is a whole training iteration: the forward pass, the
+backward pass and, at the end of an accumulation window, the optimizer step. A snapshot taken at the end of the call
+therefore sees the gradients and the optimizer state. A `memprofilable` step method that runs inside that call is not
+profiled a second time. Under Lightning, `training_step` remains the forward pass alone, since Lightning runs the
+backward pass and the optimizer step itself.
+
+To profile a run under the `fsdp2` placement, set `track_fsdp_mem: true` and list `training_step` under
+`collect_funcs.fsdp`:
+
+```yaml
+memprofiler_cfg:
+  enabled: true
+  track_fsdp_mem: true
+  collect_funcs:
+    default: []
+    fsdp: [training_step]
+  schedule:
+    warmup_iters: 0
+    max_iter: 6
+```
+
+Each rank then writes one report per profiled iteration to `<core_log_dir>/memprofiler`, together with a
+`rank_<r>_fsdp_memory_report.json` that holds the per-category peak and the module-wise forward and backward states of
+every iteration. The tracker is built at the first profiled iteration, over the sharded module and the loop's
+optimizer. An empty `fsdp_mem_tracker_root_module` names the root `fully_shard` was applied to, which under the core
+loop is the interpretune module itself; any other path is resolved under the module's model. In a phased run
+(`FTSCoreCallback`), each report entry records the schedule depth it ran at, and the tracker is rebuilt over the new
+optimizer at each phase transition.

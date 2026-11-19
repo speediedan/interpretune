@@ -1,5 +1,6 @@
-"""Data-parallel placement for the core loop (``SessionRunnerCfg.placement``): the refusals, the loader rebuild,
-and two-rank CPU runs of ``ddp`` and ``fsdp2`` against one process training on their combined batch."""
+"""Distributed placement for the core loop (``SessionRunnerCfg.placement``): the refusals, the loader rebuild, two-
+rank CPU runs of ``ddp`` and ``fsdp2`` against one process training on their combined batch, and of ``tp`` against
+one process training on the batch every rank shares."""
 
 from __future__ import annotations
 
@@ -22,20 +23,27 @@ from interpretune.runners.distributed import (
     DistributedRun,
     _check_devices,
     _meta_offloads,
+    _packed_groups,
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
+    _resolve_tp_plan,
     distributed_dataloader,
+    hf_tp_plan,
     meta_built,
     resolve_placement,
+    step_per_tensor,
 )
 from interpretune.utils import _CT_AVAILABLE, _FTS_AVAILABLE, MisconfigurationException
+from tests.runif import RunIf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
 META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
 CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
+TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
+TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -66,10 +74,26 @@ class TestResolvePlacement:
         assert run == DistributedRun("fsdp2", 3, 1, 4) and not run.is_rank_zero
 
     def test_unknown_placement_is_refused(self):
-        with pytest.raises(MisconfigurationException, match="Unknown placement 'tp'"):
-            resolve_placement("tp", env={})
-        with pytest.raises(MisconfigurationException, match="Unknown placement 'tp'"):
-            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp")  # type: ignore[arg-type]
+        with pytest.raises(MisconfigurationException, match="Unknown placement 'pp'"):
+            resolve_placement("pp", env={})
+        with pytest.raises(MisconfigurationException, match="Unknown placement 'pp'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="pp")  # type: ignore[arg-type]
+
+    def test_tensor_parallel_is_not_data_parallel(self):
+        run = resolve_placement("tp", env={"WORLD_SIZE": "2", "RANK": "1", "LOCAL_RANK": "1"})
+        assert run == DistributedRun("tp", 1, 1, 2) and not run.data_parallel
+        assert _run(0, placement="fsdp2").data_parallel and _run(0, placement="ddp").data_parallel
+
+    def test_plans_must_match_the_placement(self):
+        """A tensor-parallel plan means nothing to a data-parallel placement, and an FSDP2 plan nothing to 'tp'."""
+        plan = {"model.layers.0.mlp": {"style": "colwise"}}
+        with pytest.raises(MisconfigurationException, match="but the placement is 'fsdp2'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="fsdp2", tp_plan=plan)
+        with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), tp_plan=plan)
+        with pytest.raises(MisconfigurationException, match="but the placement is 'tp'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp", fsdp_plan={})
+        SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp", tp_plan=plan)
 
     @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
     def test_resuming_a_data_parallel_run_needs_the_distributed_form(self, placement, tmp_path):
@@ -111,6 +135,16 @@ class TestDistributedDataloader:
         assert (rebuilt.batch_size, rebuilt.collate_fn, rebuilt.drop_last) == (3, collate, True)
         assert rebuilt.sampler.num_replicas == 2 and rebuilt.sampler.rank == 1 and not rebuilt.sampler.shuffle
 
+    def test_tensor_parallel_ranks_take_the_same_batches(self):
+        """Under 'tp' the ranks compute one forward together, so each takes the whole dataset in one shared order,
+        even when the loader shuffles and the ranks' own random streams differ."""
+        loader = DataLoader(list(range(8)), batch_size=2, shuffle=True)
+        per_rank = []
+        for rank in range(2):
+            torch.manual_seed(rank)
+            per_rank.append([batch.tolist() for batch in distributed_dataloader(loader, _run(rank, placement="tp"))])
+        assert per_rank[0] == per_rank[1] and sorted(sum(per_rank[0], [])) == list(range(8))
+
     def test_shuffled_loader_shuffles_every_rank_alike(self):
         loader = DataLoader(list(range(8)), batch_size=4, shuffle=True)
         samplers = [distributed_dataloader(loader, _run(rank)).sampler for rank in range(2)]
@@ -126,7 +160,7 @@ class TestDistributedDataloader:
             def __iter__(self):
                 return iter(range(4))
 
-        with pytest.raises(MisconfigurationException, match="cannot shard an `IterableDataset` \\(Stream\\)"):
+        with pytest.raises(MisconfigurationException, match="cannot rebuild an `IterableDataset` \\(Stream\\)"):
             distributed_dataloader(DataLoader(Stream()), _run(0))
 
     @pytest.mark.parametrize(
@@ -169,7 +203,64 @@ class TestPlacementChecks:
         module.packed = nn.Parameter(torch.zeros(4, 6))
         module.q = nn.Parameter(module.packed.data[:, :3].T)  # a transposed view, as a split of a packed weight
         with pytest.raises(MisconfigurationException, match="non-contiguous parameters, and this module has 1: q"):
-            _refuse_unshardable(module)
+            _refuse_unshardable(module, "fsdp2")
+
+    @staticmethod
+    def _packed(conv1d_layout: bool, sections: tuple[int, ...] = (4, 4, 4)) -> nn.Module:
+        """A packed weight and bias with one ``Linear`` view per section, as TransformerLens splits a joint qkv:
+
+        the weight in a ``Conv1D``'s ``[in, out]`` layout (each view a transposed section) or a ``Linear``'s
+        ``[out, in]``.
+        """
+        module = nn.Module()
+        module.qkv = nn.Linear(3, sum(sections))
+        if conv1d_layout:
+            module.qkv.weight = nn.Parameter(torch.randn(3, sum(sections)))
+        start = 0
+        for name, length in zip("qkv", sections):
+            view = nn.Linear(3, length)
+            packed = module.qkv.weight
+            weight = packed[:, start : start + length].T if conv1d_layout else packed[start : start + length]
+            view.weight = nn.Parameter(weight)
+            view.bias = nn.Parameter(module.qkv.bias[start : start + length])
+            setattr(module, name, view)
+            start += length
+        return module
+
+    @pytest.mark.parametrize("conv1d_layout", [True, False], ids=["conv1d", "linear"])
+    def test_tp_splits_a_packed_weight_with_its_views(self, conv1d_layout):
+        """A plan splitting every view of a packed weight by output features splits the packed weight with them, in
+        either layout, while a non-contiguous parameter the plan leaves whole is no concern of 'tp'."""
+        from torch.distributed.tensor.parallel import ColwiseParallel
+
+        module = self._packed(conv1d_layout)
+        module.other = nn.Linear(2, 2)
+        module.other.weight = nn.Parameter(torch.zeros(2, 4)[:, :2])  # non-contiguous, but not split
+        groups = _packed_groups(module, {n: ColwiseParallel() for n in "qkv"}, world_size=2)
+        assert len(groups) == 2  # the weight and the bias
+        weight, bias = sorted(groups, key=lambda g: g.packed[1], reverse=True)
+        assert weight.packed == (module.qkv, "weight") and bias.packed == (module.qkv, "bias")
+        assert weight.dim == (1 if conv1d_layout else 0) and bias.dim == 0
+        assert weight.views == [(getattr(module, n), "weight", conv1d_layout) for n in "qkv"]
+        assert bias.views == [(getattr(module, n), "bias", False) for n in "qkv"]
+
+    def test_tp_refuses_splits_that_cut_shared_storage(self):
+        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel
+
+        def refused(module, styles, match, world_size=2):
+            with pytest.raises(MisconfigurationException, match=match):
+                _packed_groups(module, styles, world_size)
+
+        colwise = {n: ColwiseParallel() for n in "qkv"}
+        refused(self._packed(True), {"q": ColwiseParallel()}, r"only some of the views of qkv.weight.*k.weight")
+        refused(self._packed(True), {"qkv": ColwiseParallel()}, r"splits qkv.weight, whose storage")
+        refused(self._packed(True), {**colwise, "v": RowwiseParallel()}, r"only with 'colwise'.*v.weight")
+        refused(self._packed(True, (4, 2, 2)), colwise, "are not such sections of qkv.weight")
+        refused(self._packed(True, (3, 3, 3)), colwise, "have 3 output features each, which 2 ranks cannot split")
+        lone = nn.Module()
+        lone.proj = nn.Linear(2, 2)
+        lone.proj.weight = nn.Parameter(torch.zeros(2, 4)[:, :2])
+        refused(lone, {"proj": ColwiseParallel()}, "cannot split the non-contiguous parameter proj.weight")
 
     @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
     def test_plan_units_are_ordered_children_first(self):
@@ -210,6 +301,81 @@ class TestPlacementChecks:
             _resolve_plan(model, None, None, "fsdp2")
         with pytest.raises(MisconfigurationException, match="'class:Block' specified in `fsdp_plan` did not match"):
             _resolve_plan(model, {"class:Linear": {}, "class:Block": {}}, None, "fsdp2")
+
+    @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan grammar is finetuning-scheduler's")
+    def test_tp_needs_a_plan_whose_keys_select_modules(self):
+        model = nn.Sequential(nn.Linear(2, 4), nn.Linear(4, 2))
+        assert list(_resolve_tp_plan(model, {"0": {"style": "colwise"}, "1": {"style": "rowwise"}})) == ["0", "1"]
+        with pytest.raises(MisconfigurationException, match="Placement 'tp' needs `tp_plan`"):
+            _resolve_tp_plan(model, None)
+        with pytest.raises(MisconfigurationException, match="'class:Block' specified in `tp_plan` did not match"):
+            _resolve_tp_plan(model, {"class:Block": {"style": "colwise"}})
+        with pytest.raises(MisconfigurationException, match="whose `style` is one of"):
+            _resolve_tp_plan(model, {"0": {"style": "diagonal"}})
+
+    @staticmethod
+    def _tiny_llama(heads: int = 2, kv_heads: int = 2, hidden: int = 32):
+        from transformers import LlamaConfig, LlamaForCausalLM
+
+        config = LlamaConfig(
+            num_hidden_layers=2,
+            hidden_size=hidden,
+            intermediate_size=64,
+            num_attention_heads=heads,
+            num_key_value_heads=kv_heads,
+            vocab_size=128,
+        )
+        return LlamaForCausalLM(config)
+
+    def test_default_tp_plan_is_the_hf_models_declared_decoder_plan(self):
+        """Without a ``tp_plan``, an interpretune module offers the plan transformers declares for its model, keyed
+        under the model's path: the decoder layers' entries, with the embedding and LM head left whole."""
+        from interpretune.base.modules import BaseITModule
+
+        stub = nn.Module()
+        stub.model = self._tiny_llama()
+        stub.meta_load_target = lambda: stub.model
+        stub.default_tp_plan = lambda world_size: BaseITModule.default_tp_plan(stub, world_size)  # pyright: ignore
+        plan = BaseITModule.default_tp_plan(stub, 2)  # pyright: ignore[reportArgumentType]
+        assert plan == {
+            rf"model\.model\.layers\.\d+\.{part}": {"style": style}
+            for part, style in (
+                (r"self_attn\.q_proj", "colwise"),
+                (r"self_attn\.k_proj", "colwise"),
+                (r"self_attn\.v_proj", "colwise"),
+                (r"self_attn\.o_proj", "rowwise"),
+                (r"mlp\.gate_proj", "colwise"),
+                (r"mlp\.up_proj", "colwise"),
+                (r"mlp\.down_proj", "rowwise"),
+            )
+        }
+        if _FTS_AVAILABLE:  # every key selects the layers it names, and nothing else
+            styles = _resolve_tp_plan(stub, None, 2)
+            assert len(styles) == 14 and all(".layers." in name for name in styles)
+        # a model declaring no plan (GPT-2) offers none, so the placement asks for one
+        from transformers import GPT2Config, GPT2LMHeadModel
+
+        stub.model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_embd=8, n_head=2, vocab_size=16))
+        assert BaseITModule.default_tp_plan(stub, 2) is None  # pyright: ignore[reportArgumentType]
+        with pytest.raises(MisconfigurationException, match="Module declares no default plan"):
+            _resolve_tp_plan(stub, None, 2)
+
+    def test_default_tp_plan_refuses_what_it_cannot_split_faithfully(self):
+        with pytest.raises(MisconfigurationException, match=r"num_key_value_heads \(1\) is not divisible by the 2"):
+            hf_tp_plan(self._tiny_llama(kv_heads=1), "model", 2)
+        with pytest.raises(MisconfigurationException, match=r"num_attention_heads \(3\) is not divisible by the 2"):
+            hf_tp_plan(self._tiny_llama(heads=3, kv_heads=3, hidden=48), "model", 2)
+        model = self._tiny_llama()
+        model._tp_plan = {**model.tp_plan, "model.layers.*.mlp.experts": "local_colwise"}
+        with pytest.raises(MisconfigurationException, match="experts the style 'local_colwise'"):
+            hf_tp_plan(model, "model", 2)
+
+    def test_tp_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
+        import interpretune.runners.distributed as distributed
+
+        monkeypatch.setattr(distributed, "_FTS_AVAILABLE", False)
+        with pytest.raises(MisconfigurationException, match="tensor-parallel plan, which is not installed"):
+            _resolve_tp_plan(nn.Linear(2, 2), {"": {"style": "colwise"}})
 
     def test_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
         import interpretune.runners.distributed as distributed
@@ -278,6 +444,24 @@ class TestPlacementChecks:
         no_hf_cfg = SimpleNamespace(it_cfg=SimpleNamespace(hf_from_pretrained_cfg=None))
         BaseITModule._refuse_unbuilt_meta_init(no_hf_cfg)
 
+    def test_tp_optimizers_step_one_tensor_at_a_time(self):
+        # CUDA optimizers default to multi-tensor kernels, which refuse a group mixing split and whole parameters
+        run = DistributedRun("tp", rank=0, local_rank=0, world_size=2)
+        optimizer = torch.optim.AdamW(nn.Linear(2, 2).parameters())
+        step_per_tensor([optimizer], run)
+        assert optimizer.defaults["foreach"] is False and optimizer.param_groups[0]["foreach"] is False
+        optimizer.add_param_group({"params": nn.Linear(2, 2).parameters()})  # a tuning scheduler's next phase
+        assert optimizer.param_groups[1]["foreach"] is False
+        untouched = torch.optim.AdamW(nn.Linear(2, 2).parameters())
+        step_per_tensor([untouched], DistributedRun("fsdp2", rank=0, local_rank=0, world_size=2))
+        assert untouched.defaults["foreach"] is None
+
+    @pytest.mark.parametrize("kernel", ["foreach", "fused"])
+    def test_tp_refuses_an_explicit_multi_tensor_kernel(self, kernel):
+        optimizer = torch.optim.AdamW(nn.Linear(2, 2).parameters(), **{kernel: True})
+        with pytest.raises(MisconfigurationException, match=f"`{kernel}=True` \\(defaults\\).*placement 'tp'"):
+            step_per_tensor([optimizer], DistributedRun("tp", rank=0, local_rank=0, world_size=2))
+
     def test_plan_under_single_placement_is_refused(self):
         with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_plan={"class:Block": {}})
@@ -285,15 +469,16 @@ class TestPlacementChecks:
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_default_kwargs={"x": 1})
 
 
-def _launch(placement: str, out_dir: Path, *extra: str) -> None:
+def _launch(placement: str, out_dir: Path, *extra: str, devices: str = "") -> None:
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
     # the worker imports `tests.*` and the test tree's bare modules, which a subprocess finds only through PYTHONPATH
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(REPO_ROOT), str(REPO_ROOT / "tests"), env.get("PYTHONPATH")) if p
     )
-    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["CUDA_VISIBLE_DEVICES"] = devices
     env["IT_TRUST_REMOTE_CODE"] = "1"
     worker = [str(WORKER), "--placement", placement, "--out-dir", str(out_dir), *extra]
+    worker += ["--device-type", "cuda"] if devices else []
     if placement == "single":
         cmd = [sys.executable, *worker]
     else:
@@ -350,6 +535,89 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
     assert global_batch_reference["param_types"] == ["Parameter"]
 
 
+# each block's feed-forward split across the ranks: the first projection by output features, the second by input
+# features, so the pair needs one all-reduce and the block's output is whole again on every rank
+FFN_TP_PLAN = (
+    "--tp-plan",
+    json.dumps(
+        {
+            r"model\.layers\.\d+\.feed_forward\.w1": {"style": "colwise"},
+            r"model\.layers\.\d+\.feed_forward\.w2": {"style": "rowwise"},
+        }
+    ),
+)
+
+
+@pytest.fixture(scope="module")
+def shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_reference")
+    _launch("single", out_dir, "--world-size", "1")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tensor_parallel_matches_one_process_on_the_shared_batch(shared_batch_reference, tmp_path):
+    """Two tensor-parallel ranks compute the one-process run on their shared batch, step for step, on every rank.
+
+    The ranks match the reference only if every rank sees the reference's batches in its order, the split layers are
+    cut from rank 0's weights (the ranks are seeded differently), and the split feed-forward's partial outputs are
+    reduced back to the whole activation. Only the planned layers become ``DTensor``\\ s.
+    """
+    _launch("tp", tmp_path, *FFN_TP_PLAN)
+    records = [json.loads((tmp_path / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+    assert len(shared_batch_reference["losses"]) == 3
+    for record in records:
+        assert record["losses"] == pytest.approx(shared_batch_reference["losses"], rel=1e-5)
+        assert record["epoch_metrics"][0] == pytest.approx(shared_batch_reference["epoch_metrics"][0], rel=1e-5)
+        assert record["devices"] == ["cpu", "cpu"]
+        assert record["param_types"] == ["DTensor", "Parameter"] and record["fsdp_units"] == []
+        assert record["split_params"] == [
+            f"model.layers.{i}.feed_forward.{w}.{p}"
+            for i in range(2)
+            for w, p in (("w1", "bias"), ("w1", "weight"), ("w2", "bias"), ("w2", "weight"))
+        ]
+
+
+# a latent model inside each split feed-forward, between its column- and row-split projections
+LATENT_SITE = "model.layers.0.feed_forward.gelu"
+
+
+@pytest.fixture(scope="module")
+def latent_shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_latent_reference")
+    _launch("single", out_dir, "--world-size", "1", "--latent-site", LATENT_SITE)
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_gathers_a_split_activation_for_a_spliced_latent_model(latent_shared_batch_reference, tmp_path):
+    """A latent model spliced inside a split feed-forward reads the whole activation and rewrites each rank's
+    shard: the ranks match one process step for step, and train the latent model to the same weights on every rank.
+
+    The first projection keeps its split output as a ``DTensor`` (``use_local_output: false``), which the splice
+    gathers; a latent model encoding one rank's shard would fail on its width or compute something else. Splicing at
+    a split layer whose output is handed on as a plain local shard is refused, naming the site and the fix.
+    """
+    plan = json.loads(FFN_TP_PLAN[1])
+    plan[r"model\.layers\.\d+\.feed_forward\.w1"]["use_local_output"] = False
+    _launch("tp", tmp_path, "--tp-plan", json.dumps(plan), "--latent-site", LATENT_SITE)
+    reference = latent_shared_batch_reference
+    for rank in range(2):
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["latent_params"].keys() == reference["latent_params"].keys()
+        for name, values in record["latent_params"].items():
+            assert values == pytest.approx(reference["latent_params"][name], rel=1e-4, abs=1e-6), name
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--latent-site", "model.layers.0.feed_forward.w1", "--out-name", "local")
+    for rank in range(2):
+        refused = json.loads((tmp_path / f"local_rank{rank}.json").read_text())["refused"]
+        assert "spliced at model.layers.0.feed_forward.w1" in refused and "use_local_output: false" in refused
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning is finetuning-scheduler's")
@@ -373,15 +641,53 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the memory profiler and phased tuning are finetuning-scheduler's")
+def test_two_rank_fsdp2_memory_profile_covers_each_iteration_per_phase(phased_global_batch_reference, tmp_path):
+    """The memory profiler's ``FSDP2MemTracker`` profiles a phased fsdp2 run on every rank, one report entry per
+    training iteration, each recording the phase it ran in, without changing the run.
+
+    Each entry spans the whole iteration: the root's module-wise states include the backward pass, which the core
+    loop runs outside ``training_step``, so a profile of ``training_step`` alone would hold forward states only. The
+    phase comes from ``FTSCoreCallback``, and the tracker is rebuilt over the optimizer the transition installs.
+    """
+    _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--memprof-fsdp")
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text()) for rank in range(2)]
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(phased_global_batch_reference["losses"], rel=1e-5)
+    for rank, record in enumerate(records):
+        report = json.loads(Path(record["fsdp_mem_report"]).read_text())
+        assert (report["rank"], report["world_size"]) == (rank, 2)
+        entries = report["entries"]
+        assert [(e["fn_name"], e["iter"], e["phase"]) for e in entries] == [
+            ("training_step", i, 0 if i <= 3 else 1) for i in range(1, 7)
+        ]
+        for entry in entries:
+            root_states = set(entry["modules"][next(iter(entry["modules"]))])
+            assert {"Peak Forward", "Peak Backward"} <= root_states, entry["iter"]
+            assert entry["peak"]["cpu"]["Total"] > 0
+        # optimizer state exists from the first step on, so it is in every later entry's peak
+        assert all(e["peak"]["cpu"]["OptState"] > 0 for e in entries[1:])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.parametrize(
     "placement, extra",
-    [("ddp", ()), ("fsdp2", BLOCK_PLAN)],
-    ids=["ddp", "fsdp2"],
+    [
+        ("ddp", ()),
+        ("fsdp2", BLOCK_PLAN),
+        pytest.param(
+            "tp",
+            FFN_TP_PLAN,
+            marks=pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's"),
+        ),
+    ],
+    ids=["ddp", "fsdp2", "tp"],
 )
 def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra, tmp_path):
     """A run interrupted at an epoch boundary and resumed from its distributed checkpoint reproduces the
-    uninterrupted run's losses exactly: same sharded weights and optimizer state, same per-rank RNG streams, same
-    sampler epoch."""
+    uninterrupted run's losses exactly: same sharded (or split) weights and optimizer state, same per-rank RNG
+    streams, same sampler epoch."""
     checkpoint_dir = tmp_path / "ckpt"
     _launch(placement, tmp_path, *extra, "--max-epochs", "2", "--out-name", "full")
     _launch(
@@ -437,6 +743,109 @@ def test_two_rank_phased_resume_across_the_transition_matches(phased_global_batc
         assert record["trainable"] == reference["trainable"]
 
 
+@pytest.fixture(scope="module")
+def phased_shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_phased_reference")
+    _launch("single", out_dir, "--world-size", "1", "--phased")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_phased_tuning_under_tp_matches_one_process(phased_shared_batch_reference, tmp_path):
+    """Two phases of finetuning-scheduler's ``TuningScheduler`` over a tensor-parallel module match one process on
+    the shared batch, step for step, on every rank.
+
+    Phase 0 thaws the last block, phase 1 the rest, so phase 1 thaws split (``DTensor``) and whole parameters
+    together; the ranks match only if each thaw reaches both kinds and the optimizer rebuilt at the transition steps
+    them.
+    """
+    reference = phased_shared_batch_reference
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased")
+    for rank in range(2):
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        assert len(record["losses"]) == len(reference["losses"]) == 6
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_phased_tp_resume_across_the_transition_matches(phased_shared_batch_reference, tmp_path):
+    """A phased tensor-parallel run resumed from the first epoch's checkpoint crosses the phase transition in the
+    resumed run and still matches the one-process reference on every rank: split weights and their optimizer state
+    load back into the split layout."""
+    checkpoint_dir = tmp_path / "ckpt"
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased", "--out-name", "first",
+            "--save-checkpoint-dir", str(checkpoint_dir))  # fmt: skip
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased", "--out-name", "resumed",
+            "--resume-from", str(checkpoint_dir))  # fmt: skip
+    reference = phased_shared_batch_reference
+    for rank in range(2):
+        record = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text())
+        assert record["losses"] == pytest.approx(reference["losses"][3:], rel=1e-5)
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
+
+
+# a transcoder over the first block's split feed-forward: it reads the block's whole input and replaces the reduced
+# output, while the second block's split feed-forward keeps training
+TRANSCODER = ("--transcoder-site", "model.layers.0.feed_forward")
+
+
+def _phased_transcoder_records(out_dir: Path, devices: tuple[str, str] = ("", "")) -> tuple[dict, list[dict]]:
+    """The one-process reference (on ``devices[0]``) and the two tensor-parallel ranks (on ``devices[1]``) of a
+    phased run that tunes the transcoder first, then everything else."""
+    _launch("single", out_dir, "--world-size", "1", "--phased", *TRANSCODER, devices=devices[0])
+    _launch("tp", out_dir, *FFN_TP_PLAN, "--phased", *TRANSCODER, devices=devices[1])
+    reference = json.loads((out_dir / "single_rank0.json").read_text())
+    return reference, [json.loads((out_dir / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+
+
+def _check_phased_transcoder(reference: dict, records: list[dict]) -> None:
+    transcoder = sorted(reference["latent_params"])
+    assert reference["depth"] == 1 and len(reference["losses"]) == 6
+    # positive control: the transcoder is on the loss's path, so tuning moved it (an inert splice would match too)
+    moved = [n for n in transcoder if reference["latent_params"][n] != pytest.approx(reference["latent_init"][n])]
+    assert moved == transcoder
+    # phase 1 thawed the rest: the transcoder and the model are both trainable at the end
+    assert {f"latent_models.transcoder.{n}" for n in transcoder} < set(reference["trainable"])
+    for record in records:
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["depth"] == reference["depth"] and record["trainable"] == reference["trainable"]
+        assert any(".layers.1.feed_forward." in n for n in record["split_params"])
+        assert sorted(record["latent_params"]) == transcoder
+        for name, values in record["latent_params"].items():
+            assert values == pytest.approx(reference["latent_params"][name], rel=1e-4, abs=1e-6), name
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_tp_tunes_a_spliced_transcoder_in_phases_like_one_process(tmp_path):
+    """Two tensor-parallel ranks tune a transcoder spliced over a split feed-forward, then the whole model, and
+    match one process step for step, with the same transcoder weights on every rank."""
+    _check_phased_transcoder(*_phased_transcoder_records(tmp_path))
+
+
+@RunIf(min_cuda_gpus=2, min_gpu_mem_gb=1.5)
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_gpu_tp_transcoder_tuning_matches_one_gpu(tmp_path):
+    """On two GPUs, two-phase latent tuning with a spliced transcoder matches the one-GPU run.
+
+    The ranks run over NCCL, each on its own device, and the reference on the first device alone. CUDA optimizers
+    default to multi-tensor kernels, which the second phase's group of split and whole parameters would fail (CPU
+    optimizers do not, so only this run can catch it). Measured on an RTX 4090 paired with an RTX 2070 SUPER: losses
+    within 7e-8 relative, transcoder weights within 1e-8.
+    """
+    reference, records = _phased_transcoder_records(tmp_path, devices=("0", "0,1"))
+    assert [record["devices"] for record in records] == [["cuda:0", "cuda:1"]] * 2
+    _check_phased_transcoder(reference, records)
+
+
 def _launch_meta(checkpoint: Path, out_dir: Path, *extra: str) -> list[dict]:
     out_dir.mkdir(exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
@@ -487,6 +896,61 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert record["tied"] and record["source_dropped"]
 
 
+# the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads
+# every head (TransformerLens's attention reshapes q, k and v by the model's head count)
+JOINT_QKV_TP_PLAN = {
+    r"blocks\.\d+\._original_component\.attn\.[qkv]\._original_component": {
+        "style": "colwise",
+        "output_layouts": "replicate",
+    }
+}
+
+
+def _launch_tp_bridge(checkpoint: Path, out_dir: Path, plan: dict, *extra: str) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_BRIDGE_WORKER), "--checkpoint", str(checkpoint), "--out-dir", str(out_dir)]
+    worker += ["--tp-plan", json.dumps(plan), *extra]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp bridge run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_splits_a_bridge_joint_qkv_and_keeps_its_views_aliased(tiny_gpt2_checkpoint, tmp_path):
+    """Splitting a TransformerLens bridge's q, k and v splits its packed ``qkv`` with them: the split bridge
+    computes and steps as the whole one does, and views and packed weight still share storage after an SGD step, so
+    the packed weight's ``full_tensor()`` is the stepped reference's.
+
+    The control leaves the packed weight whole. Its outputs still match (no forward reads the packed weight), but the
+    views stop sharing its storage and it falls behind the step: the silent divergence the split exists to prevent.
+    """
+    for record in _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "split", JOINT_QKV_TP_PLAN):
+        assert record["split_params"] == [
+            f"transformer.h.{i}._original_component.attn.{m}._original_component.{p}"
+            for i in range(2)
+            for m in ("k", "q", "qkv", "v")
+            for p in ("bias", "weight")
+        ]
+        assert record["forward_diff"] == 0.0 and record["packed_diff_before_step"] == 0.0
+        assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-5
+        assert record["aliased_before_step"] and record["aliased_after_step"]
+        assert record["packed_diff_after_step"] < 1e-6
+    control = _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "control", JOINT_QKV_TP_PLAN, "--no-packed-split")
+    for record in control:
+        assert record["step_diff"] < 1e-5 and not record["aliased_after_step"]
+        assert record["packed_diff_after_step"] > 1e-3
+    # a plan splitting only q would cut it from the packed weight k and v still share: refused on every rank
+    only_q = {r"blocks\.\d+\._original_component\.attn\.q\._original_component": {"style": "colwise"}}
+    for record in _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "only_q", only_q):
+        assert "splits only some of the views of" in record["refused"]
+
+
 @pytest.fixture(scope="module")
 def tiny_llama_checkpoint(tmp_path_factory):
     """A Llama checkpoint split over several safetensors files (with an index), whose rotary frequencies are a non-
@@ -507,6 +971,44 @@ def tiny_llama_checkpoint(tmp_path_factory):
     )
     LlamaForCausalLM(config).save_pretrained(path, max_shard_size="20KB")
     return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_checkpoint, tmp_path):
+    """With no ``tp_plan``, a Hugging Face Llama is split by the plan transformers declares for it: each rank
+    computes its own attention heads and its own slice of the MLP, and the split model computes and steps as the
+    whole one does.
+
+    The embedding and LM head stay whole.
+    """
+    out_dir = tmp_path / "hf"
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_HF_WORKER), "--checkpoint", str(tiny_llama_checkpoint), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp hf run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    for rank in range(2):
+        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        assert record["split_params"] == sorted(
+            f"model.model.layers.{i}.{proj}.weight"
+            for i in range(2)
+            for proj in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        )
+        assert record["forward_diff"] < 1e-5
+        assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
 
 
 def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add: str | None = None) -> Path:

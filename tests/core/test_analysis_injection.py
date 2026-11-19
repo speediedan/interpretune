@@ -462,3 +462,37 @@ def test_install_updates_stale_submodule_attributes(tmp_path):
     print("\n" + "=" * 80)
     print("[PASS] Stale submodule attribute test passed!")
     print("=" * 80)
+
+
+@pytest.mark.parametrize(
+    "docstring",
+    [
+        'r"""Raw docstring holding LaTeX: $e(\\alpha)$.\n\nMore text.\n"""\n',
+        'r"""One-line raw docstring."""\n',
+        '"""Plain docstring.\n"""\n',
+    ],
+    ids=["raw-multiline", "raw-single-line", "plain"],
+)
+def test_patched_import_follows_future_import(tmp_path, docstring):
+    """The patcher's HOOK_REGISTRY import must land after a module's docstring and ``from __future__`` import.
+
+    A docstring with a string prefix (``r\"\"\"``, as circuit-tracer's ``head_conductance.py`` opens) was read as the
+    first statement, so the import went above ``from __future__ import annotations`` and the patched module failed to
+    compile, which surfaced only when a notebook enabled a hook in that file.
+    """
+    from interpretune.analysis.injection.analysis_hook_patcher import patch_file_with_hooks
+    from interpretune.analysis.injection.config_parser import FileHook
+
+    source = tmp_path / "prefixed_docstring_module.py"
+    source.write_text(
+        docstring + "\nfrom __future__ import annotations\n\nimport math\n\n\ndef run():\n    value = math.sqrt(4.0)\n"
+        "    return value\n"
+    )
+    hook = FileHook(point_id="ap_after_value", file_path=source, regex_pattern=r"^\s*value = math\.sqrt")
+    patched = patch_file_with_hooks(source, [hook], output_path=tmp_path / "patched.py").read_text()
+
+    compile(patched, "patched.py", "exec")  # raises SyntaxError if the import precedes the __future__ import
+    lines = patched.splitlines()
+    import_line = lines.index("from interpretune.analysis.injection.analysis_hook_patcher import HOOK_REGISTRY")
+    assert import_line > lines.index("from __future__ import annotations")
+    assert "    HOOK_REGISTRY.execute('ap_after_value', locals())" in lines

@@ -1429,33 +1429,67 @@ def _write_gpu_declaration_report(items, path: str) -> None:
     Path(path).write_text(json.dumps(rows, indent=1))
 
 
-def _gpu_selection_prefixes() -> list[str] | None:
-    """The node-id prefixes per-change GPU test selection keeps, or None when every test is kept.
+def _write_gpu_stage_needs(items, directory: str) -> None:
+    """Add this session's GPU tests to ``directory``: one file a session, each test's declared device count, memory
+    and bf16 need.
+
+    The job's collect step runs each phase's collection with it set (narrowed by the run's selection), and
+    ``tests/gpu_ci/stage_needs.py`` sizes the large stage's one device from them and says whether any test needs the
+    whole server, before any lease is taken.
+    """
+    import json
+    import uuid
+
+    rows = [
+        {
+            "nodeid": item.nodeid,
+            "gpus": declared_gpu_count(item),
+            "mem_gb": declared_gpu_mem_gb(item),
+            "bf16": bool(_marked(item, lambda kw: kw.get("bf16_cuda"))),
+        }
+        for item in items
+        if _marked(item, lambda kw: kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
+    ]
+    Path(directory).mkdir(parents=True, exist_ok=True)
+    (Path(directory) / f"session-{uuid.uuid4().hex}.json").write_text(json.dumps(rows))
+
+
+def _gpu_selection_prefixes() -> tuple[list[str], list[str]] | None:
+    """``(kept prefixes, deferred node ids)`` of per-change GPU test selection, or None when every test is kept.
 
     Read from ``IT_GPU_SELECTION_FILE`` (written by ``tests/gpu_ci/select_gpu_tests.py --emit``): the word ``full``,
-    or one prefix per line. Unset means no selection. A named file that does not exist is refused rather than read
-    as "run everything", which would make a broken pipeline step indistinguishable from a full run.
+    or one prefix per line, then ``!<node id>`` for each slow case the change leaves to the full run
+    (``full_run_only`` in ``tests/gpu_ci/areas.yaml``). Unset means no selection. A named file that does not exist is
+    refused rather than read as "run everything", which would make a broken pipeline step indistinguishable from a
+    full run.
     """
     path = os.getenv("IT_GPU_SELECTION_FILE")
     if not path:
         return None
     lines = [ln.strip() for ln in Path(path).read_text().splitlines() if ln.strip()]
-    return None if lines == ["full"] else lines
+    if lines == ["full"]:
+        return None
+    return [ln for ln in lines if not ln.startswith("!")], [ln[1:] for ln in lines if ln.startswith("!")]
 
 
 def _gpu_mem_class() -> tuple[str, float] | None:
     """The memory class a GPU phase is narrowed to, as ``(class, small_max_gb)``, or None when it is not narrowed.
 
-    Two-stage device placement runs each GPU phase twice: ``IT_GPU_MEM_CLASS=small`` keeps the single-device tests
-    declaring at most ``IT_GPU_SMALL_MAX_GB``, for the smallest device that fits them, and ``large`` keeps the rest
-    (larger declarations and multi-device tests). The two classes partition the phase, so together they run it whole.
-    A class without its threshold, or an unknown class, is refused: guessing either would silently drop tests.
+    Staged device placement runs each GPU phase once per class: ``IT_GPU_MEM_CLASS=small`` keeps the single-device
+    tests declaring at most ``IT_GPU_SMALL_MAX_GB``, for the smallest device that fits them; ``large`` the other
+    single-device tests (larger declarations, bf16), for one device that fits the largest of them; ``multi`` the
+    multi-device tests, for the whole server. ``rest`` is ``large`` and ``multi`` together, for a run that has no
+    per-test declarations to size the large stage by (it takes the whole server, as two-stage placement did). The
+    classes partition the phase (small, large, multi; or small, rest), so together they run it whole. A class without
+    its threshold, or an unknown class, is refused: guessing either would silently drop tests.
     """
     cls = os.getenv("IT_GPU_MEM_CLASS")
     if not cls:
         return None
-    if cls not in ("small", "large"):
-        raise pytest.UsageError(f"IT_GPU_MEM_CLASS={cls!r} is not a memory class; expected 'small' or 'large'")
+    if cls not in GPU_MEM_CLASSES:
+        raise pytest.UsageError(
+            f"IT_GPU_MEM_CLASS={cls!r} is not a memory class; expected one of {', '.join(GPU_MEM_CLASSES)}"
+        )
     raw = os.getenv("IT_GPU_SMALL_MAX_GB")
     try:
         small_max = float(raw)  # type: ignore[arg-type]
@@ -1467,15 +1501,27 @@ def _gpu_mem_class() -> tuple[str, float] | None:
     return cls, small_max
 
 
-def gpu_mem_class_of(item, small_max_gb: float) -> str:
-    """``small`` when ``item`` needs one device and declares at most ``small_max_gb``, else ``large``.
+GPU_MEM_CLASSES = ("small", "large", "multi", "rest")
 
-    A ``bf16_cuda`` test is ``large`` whatever it declares: the small device may lack bf16 (the CI host's 2070 SUPER
-    does), and there the test would be skipped rather than run, a coverage loss nothing reports.
+
+def gpu_mem_class_of(item, small_max_gb: float) -> str:
+    """``multi`` when ``item`` needs more than one device; else ``small`` when it declares at most
+    ``small_max_gb``, else ``large``.
+
+    A ``bf16_cuda`` single-device test is ``large`` whatever it declares: the small device may lack bf16 (the CI host's
+    2070 SUPER does), and there the test would be skipped rather than run, a coverage loss nothing reports.
     """
+    if declared_gpu_count(item) > 1:
+        return "multi"
     if _marked(item, lambda kw: kw.get("bf16_cuda")):
         return "large"
-    return "small" if declared_gpu_count(item) <= 1 and declared_gpu_mem_gb(item) <= small_max_gb else "large"
+    return "small" if declared_gpu_mem_gb(item) <= small_max_gb else "large"
+
+
+def _in_mem_class(item, cls: str, small_max_gb: float) -> bool:
+    """Whether ``item`` runs in pass ``cls``: its own class, or ``rest`` for large and multi together."""
+    own = gpu_mem_class_of(item, small_max_gb)
+    return own == cls or (cls == "rest" and own in ("large", "multi"))
 
 
 def _gpu_phase_active() -> bool:
@@ -1493,6 +1539,8 @@ def pytest_collection_finish(session):
     # (calibrate.py does) leave the phase flags unset, which leaves the phase filter a no-op.
     if report := os.getenv("IT_GPU_DECLARATION_REPORT"):
         _write_gpu_declaration_report(session.items, report)
+    if needs := os.getenv("IT_GPU_STAGE_NEEDS_DIR"):
+        _write_gpu_stage_needs(session.items, needs)
 
 
 def pytest_collection_modifyitems(items):
@@ -1521,12 +1569,20 @@ def pytest_collection_modifyitems(items):
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("benchmark"))]
     # Per-change GPU test selection narrows a GPU phase to the tests the change can affect; inert when unset and
     # outside the GPU phases, so the CPU suite is never narrowed.
-    if _gpu_phase_active() and (prefixes := _gpu_selection_prefixes()) is not None:
-        items[:] = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
+    if _gpu_phase_active() and (selection := _gpu_selection_prefixes()) is not None:
+        prefixes, deferred = selection
+        kept = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
+        items[:] = [item for item in kept if item.nodeid not in deferred]
+        if len(items) < len(kept):
+            # said in the run's own output, so a gate's report shows what it left to the full run
+            reporter = items[0].config.pluginmanager.get_plugin("terminalreporter") if items else None
+            note = f"per-change selection deferred {len(kept) - len(items)} slow case(s) to the full run (areas.yaml)"
+            if reporter is not None:
+                reporter.write_line(note)
     # Two-stage device placement: one memory class per pass, so each pass can lease the smallest device that fits it.
     if _gpu_phase_active() and (mem_class := _gpu_mem_class()) is not None:
         cls, small_max = mem_class
-        items[:] = [item for item in items if gpu_mem_class_of(item, small_max) == cls]
+        items[:] = [item for item in items if _in_mem_class(item, cls, small_max)]
     # The hosted matrix runs the suite with the Hub client offline against a warmed cache (see
     # docs/ci_hub_cache.md); a test that must reach the live Hub declares it and runs in the online pass.
     if _hub_offline():
