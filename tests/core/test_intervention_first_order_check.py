@@ -78,6 +78,7 @@ class _GradBackend:
             _hook, specs = list(canonical.items())[0]
             assert len(specs) == 1
             spec = specs[0]
+            self.last_spec = spec
 
             def edit_hook(_m, _i, out):
                 return apply_intervention(out.clone(), spec, last_pos=out.shape[1] - 1)
@@ -230,6 +231,38 @@ class TestAllModesReport:
         assert checked.concept_basis == "jlens_folded"
         for field in ("fo_predicted_delta", "fo_measured_delta", "fo_residual"):
             assert torch.isfinite(getattr(checked, field)), (mode, field)
+
+
+def _span_fields(mode, operand):
+    """``reject`` by shorthand; ``clamp`` by mapping, with a zero band so every span coordinate is clamped."""
+    base = {
+        "intervention_hook_pattern": SITE,
+        "intervention_position_scope": "last_token",
+        "logit_target_ids": [3, 7],
+    }
+    if mode == "clamp":
+        spec = {"intervention_tensor": operand, "op": "clamp", "clamp_min": 0.0, "clamp_max": 0.0}
+        return {**base, "interventions": {SITE: spec}}
+    return {**base, "intervention_tensor": operand, "intervention_op": "reject", "intervention_scale_factor": 1.0}
+
+
+class TestStackedSpanOperands:
+    """``reject`` and ``clamp`` take a ``(k, d)`` stack, so the check must see the whole span, not one row."""
+
+    @pytest.mark.parametrize("mode", ["reject", "clamp"])
+    def test_stacked_operand_reaches_the_edit_and_the_check(self, mode):
+        torch.manual_seed(3)
+        module, raw = _module(), {"input_ids": _ids()}
+        stack = torch.randn(2, D)
+        stacked = _run_check(module, _span_fields(mode, stack), raw)
+        assert tuple(module._model_backend.last_spec.intervention_tensor.shape) == (2, D)
+        for field in ("fo_predicted_delta", "fo_measured_delta", "fo_residual"):
+            assert torch.isfinite(getattr(stacked, field)), (mode, field)
+
+        # positive control: the span of both rows removes more than the first row's span alone, so a path that
+        # dropped the second row would measure the one-row delta and fail here
+        one_row = _run_check(module, _span_fields(mode, stack[:1]), raw)
+        assert not torch.allclose(stacked.fo_measured_delta, one_row.fo_measured_delta), mode
 
 
 class TestRefusals:
