@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from interpretune.hub.cache import IT_ANALYSIS_HUB_CACHE
+from interpretune.hub.cache import IT_ANALYSIS_HUB_CACHE, IT_ANALYSIS_HUB_CACHE_SETTING, ensure_writable_cache_root
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, ComponentManifestError, load_component_manifest
 
 
@@ -103,7 +103,7 @@ def pull_op_collection(
     from interpretune.hub.components import _TELEMETRY, _explain_404, _snapshot_revision, enforce_component_requires
     from interpretune.hub.manifest import validate_component_manifest
 
-    root = str(cache_dir or IT_ANALYSIS_HUB_CACHE)
+    root = str(cache_dir or ensure_writable_cache_root(IT_ANALYSIS_HUB_CACHE, IT_ANALYSIS_HUB_CACHE_SETTING))
     try:
         manifest_path = Path(
             hf_hub_download(

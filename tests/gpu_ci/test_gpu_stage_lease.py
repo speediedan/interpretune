@@ -326,3 +326,50 @@ def test_a_timed_out_wait_is_recorded_and_no_release_is_invented(tmp_path):
     assert _run(tmp_path, "acquire", "small", tool_rc=75, **telemetry)[0].returncode == 1
     _run(tmp_path, "release", "small", **telemetry)
     assert [e["action"] for e in _events(tmp_path)] == ["wait", "timeout"]
+
+
+def test_the_large_stage_reads_declarations_from_its_default_directory(tmp_path):
+    """The pipeline leaves ``IT_GPU_STAGE_NEEDS_DIR`` unset and the collect step writes the evidence directory's
+    default.
+
+    The other cases set the variable, so none reached the default, and the stage passed the unset variable
+    rather than the directory it had resolved: under ``set -u`` the sizing step aborted and the stage took the whole
+    server. A copy of the script whose default points into ``tmp_path`` runs that path, with the variable unset.
+    """
+    default = tmp_path / "evidence" / "it-phases" / "stage-needs"
+    scripts = tmp_path / ".azure-pipelines" / "scripts"
+    scripts.mkdir(parents=True)
+    source = SCRIPT.read_text()
+    assert source.count("/evidence/it-phases/stage-needs") == 1, "the default directory moved; update this case"
+    for sibling in SCRIPT.parent.iterdir():  # the scripts it sources, beside the copy and two levels up
+        if sibling.name != SCRIPT.name:
+            (scripts / sibling.name).symlink_to(sibling)
+    copy = scripts / SCRIPT.name
+    copy.write_text(source.replace("/evidence/it-phases/stage-needs", str(default)))
+    for top in ("tests", "scripts"):
+        (tmp_path / top).symlink_to(ROOT / top)
+    default.mkdir(parents=True)
+    (default / "session-0.json").write_text('[{"nodeid": "b", "gpus": 1, "mem_gb": 14.2, "bf16": false}]')
+    tool, log = tmp_path / "tool.sh", tmp_path / "tool.log"
+    tool.write_text(STUB.format(log=log, rc=0))
+    tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+    (tmp_path / "leases").mkdir()
+    env = {
+        **{k: v for k, v in os.environ.items() if k != "IT_GPU_STAGE_NEEDS_DIR"},
+        "GPU_STAGE_LEASE_DIR": str(tmp_path / "leases"),
+        "GPU_STAGE_LEASE_TOOL": str(tool),
+        "GPU_STAGE_LEASE_PIDDIR": str(tmp_path),
+        "GPU_LEASE_DEVICES": DEVICES,
+        "BUILD_BUILDID": "42",
+        "IT_GPU_LEASE_WAIT": "30",
+        "IT_GPU_LEASE_ON_TIMEOUT": "fail",
+        "IT_GPU_TWO_STAGE": "1",
+        "IT_GPU_SMALL_MAX_GB": "8",
+    }
+    proc = subprocess.run(
+        ["bash", str(copy), "acquire", "large"], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "unbound variable" not in proc.stderr, proc.stderr
+    calls = log.read_text().splitlines()
+    assert len(calls) == 1 and "--gpus 1 --min-vram 15" in calls[0], calls

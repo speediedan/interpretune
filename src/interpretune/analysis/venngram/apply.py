@@ -81,7 +81,7 @@ from typing import Any
 import torch
 
 from interpretune.analysis.backends.capabilities import FLOWS, FeatureTargetSupport, PositionScope
-from interpretune.analysis.backends.interventions import InterventionSpec
+from interpretune.analysis.backends.interventions import LATENT_SUBHOOK, InterventionSpec
 from interpretune.analysis.venngram.values import Statistic, member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
 
@@ -116,9 +116,6 @@ GRAPH_TUPLE_TRANSFORMS = frozenset(_GRAPH_TRANSFORMS)
 
 _LAYERED_SITE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 
-#: The sub-hook a latent model's feature activations are written at.
-_LATENT_SUBHOOK = "hook_sae_acts_post"
-
 
 def split_site(site: str) -> tuple[int | None, str]:
     """A stage site's layer (``None`` when it names none) and its layer-free spelling."""
@@ -148,8 +145,8 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
         return f"a {kind[:-1]}-targeted op takes a dose, not an operand"
     if layer is not None:
         return f"a {kind[:-1]} set names its own layers, so its stage names the layer-free site, not `{stage.site}`"
-    if kind == "features" and site.endswith(_LATENT_SUBHOOK):
-        return f"a feature target's stage names the hooked site; `{_LATENT_SUBHOOK}` is implied, not `{site}`"
+    if kind == "features" and site.endswith(LATENT_SUBHOOK):
+        return f"a feature target's stage names the hooked site; `{LATENT_SUBHOOK}` is implied, not `{site}`"
     return member_refusal(recipe, op)
 
 
@@ -510,7 +507,7 @@ def recipe_interventions(
                 specs = {layer: _activation_spec(recipe, op, site_widths.get(site), scope, where)}
                 hooked = site
             else:
-                hooked = f"{site}.{_LATENT_SUBHOOK}" if kind == "features" else site
+                hooked = f"{site}.{LATENT_SUBHOOK}" if kind == "features" else site
                 width = _require_width(site_widths, hooked, i, stage)
                 values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
                 specs = _member_specs(op, values, width, scope, where)
