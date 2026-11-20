@@ -145,7 +145,7 @@ jobs:
           python -c "import interpretune; import sae_lens; import sae_dashboard; import torch; print(f'interpretune={interpretune.__version__} sae_lens={sae_lens.__version__} torch={torch.__version__} cuda_available={torch.cuda.is_available()}')"
           # from-source packages must be editable installs pointing at the local checkouts.
           # sae-lens is deliberately NOT among them: it installs from its released floor
-          # (pyproject `sae_lens >= 6.49.0`), so the import above is what validates it.
+          # (pyproject `sae-lens >=6.55.0,<7`), so the import above is what validates it.
           uv pip show sae-dashboard | grep -i "editable project location"
           python requirements/utils/collect_env_details.py
 

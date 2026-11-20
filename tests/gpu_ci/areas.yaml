@@ -211,6 +211,7 @@ areas:
       - src/interpretune/analysis/ops/bundled/*.py
       - src/interpretune/analysis/ops/bundled/*.yaml
       - src/interpretune/analysis/ops/bundled/core/**
+      - src/interpretune/analysis/ops/bundled/latent/**
       - src/interpretune/config/analysis.py
       - src/interpretune/runners/analysis.py
       - src/interpretune/hub/opcollections.py

@@ -19,11 +19,26 @@ from tests.runif import RunIf
 pytest_plugins = ["interpretune.testing.conformance.plugin"]
 
 
+def _raw_bridge(inputs):
+    """The bridge seed's session config on raw HF weights, whatever weight processing the seed config enables.
+
+    The seed is the rte component's ``rte_demo.gpt2.sae_lens``, which turns on compatibility mode for the SAEs it
+    attaches. The `hf_native` cases compare captures with the HF forward, so a target in that family states its raw
+    weights itself rather than inheriting the processing from whichever seed revision is pinned.
+    """
+
+    def _raw(_dm_cfg, it_cfg):
+        it_cfg.tl_cfg.enable_compatibility_mode = False
+
+    return inputs.session_cfg(("core", "sae_lens"), flavour="bridge", prepare=_raw)
+
+
 class TestBridgeConformance(ModelBackendConformance):
     """TransformerBridge over gpt2: executes the HF forward in place, so the value cases apply."""
 
     target = ConformanceTarget(
         composition=("core", "sae_lens"),
+        session_cfg_factory=_raw_bridge,
         forward_family="hf_native",
         datamodule_flavour="bridge",
         # a declared field, so the composition-survival case fires on an in-tree target rather than only downstream
@@ -42,7 +57,10 @@ class TestConceptCollectionOnBridge(OpCollectionConformance):
     """The bundled `concept` family, validated as a collection against the bridge target."""
 
     target = ConformanceTarget(
-        composition=("core", "sae_lens"), forward_family="hf_native", datamodule_flavour="bridge"
+        composition=("core", "sae_lens"),
+        session_cfg_factory=_raw_bridge,
+        forward_family="hf_native",
+        datamodule_flavour="bridge",
     )
     collection = "concept"
 

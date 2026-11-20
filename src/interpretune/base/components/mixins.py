@@ -10,7 +10,13 @@ from transformers import AutoConfig, PreTrainedModel, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE, _resolve_env_auth_token
+from interpretune.utils import (
+    rank_zero_warn,
+    _import_class,
+    _BNB_AVAILABLE,
+    _resolve_env_auth_token,
+    check_gpu_device_map,
+)
 from interpretune.config import (
     HFFromPretrainedConfig,
     HFGenerationConfig,
@@ -544,6 +550,10 @@ class HFFromPretrainedMixin:
                 )  # mixin provides it_cfg
             if self.hf_cfg.meta_init:
                 return self._hf_meta_model_init(cust_config, access_token)
+            # checked here, not when the config is built: an adapter may still rewrite the map before the load (the
+            # TransformerLens adapter loads on the CPU whatever the map said), so only the map loaded with is a request
+            if (device_map := self.hf_cfg.pretrained_kwargs.get("device_map")) is not None:
+                check_gpu_device_map(device_map, field="pretrained_kwargs.device_map")
             model = self.it_cfg.model_class.from_pretrained(  # mixin provides it_cfg
                 **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )

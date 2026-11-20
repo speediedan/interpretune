@@ -46,6 +46,10 @@ import torch
 if TYPE_CHECKING:
     from interpretune.analysis.backends.interventions import InterventionSpec
 
+#: A tensor op's probe, for an executor that reads context from ``spec.params``: ``generator -> (region, operand,
+#: params)``, with ``region`` of shape ``(rows, width)`` and ``operand`` the spec's tensor.
+OpProbe = Callable[[torch.Generator], tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]]
+
 #: An op's execution: ``(region, operand, spec) -> edited region``. ``region`` is what the spec's scope selected,
 #: flattened so its leading axis indexes independent rows; ``operand`` is the spec's tensor on the region's device and
 #: dtype; ``spec`` carries the op's scalar parameters (``scale_factor``, ``clamp_min``, ``clamp_max``, ...).
@@ -206,13 +210,17 @@ def _probe_operand(operand_kinds: tuple[str, ...], generator: torch.Generator) -
     return torch.randn(shape, generator=generator)
 
 
-def check_tensor_op(name: str, executor: OpExecutor, *, operand_kinds: tuple[str, ...] = ("vector",)) -> None:
+def check_tensor_op(
+    name: str, executor: OpExecutor, *, operand_kinds: tuple[str, ...] = ("vector",), probe: OpProbe | None = None
+) -> None:
     """Hold an executor to the tensor-op contract on a probe, refusing it by name when it breaks one.
 
     The contract is what makes a tensor op safe inside a training forward pass: the result has the region's shape
     (shape-preserving), neither the region nor the operand is written (out of place, checked by value and by autograd's
     version counter, which an in-place write bumps even when it restores the values), and the result carries a gradient
-    to both the region and the operand (differentiable). The probe is seeded, so a refusal reproduces.
+    to both the region and the operand (differentiable). The probe is seeded, so a refusal reproduces. An executor that
+    reads its context from ``spec.params`` cannot run on a bare probe, so its definition names a ``probe`` supplying
+    the region, operand and params it runs on.
 
     Raises:
         ValueError: Naming the op and the clause of the contract it broke, or the exception it raised on the probe.
@@ -221,13 +229,18 @@ def check_tensor_op(name: str, executor: OpExecutor, *, operand_kinds: tuple[str
     from interpretune.analysis.backends.interventions import InterventionSpec
 
     generator = torch.Generator().manual_seed(952)
-    region_leaf = torch.randn(_PROBE_ROWS, _PROBE_WIDTH, generator=generator).requires_grad_()
-    operand_leaf = _probe_operand(operand_kinds, generator).requires_grad_()
+    params: Mapping[str, Any] | None = None
+    if probe is None:
+        region_leaf = torch.randn(_PROBE_ROWS, _PROBE_WIDTH, generator=generator).requires_grad_()
+        operand_leaf = _probe_operand(operand_kinds, generator).requires_grad_()
+    else:
+        region_leaf, operand_leaf, params = probe(generator)
+        region_leaf, operand_leaf = region_leaf.detach().requires_grad_(), operand_leaf.detach().requires_grad_()
     # non-leaf views, so an in-place write is permitted (and detected) rather than refused by autograd first
     region, operand = region_leaf * 1.0, operand_leaf * 1.0
     region_before, operand_before = region.detach().clone(), operand.detach().clone()
     versions = (region._version, operand._version)
-    spec = InterventionSpec(operand, op=name, position_scope=PositionScope.ALL_POSITIONS)
+    spec = InterventionSpec(operand, op=name, position_scope=PositionScope.ALL_POSITIONS, params=params)
     where = f"tensor op {name!r}"
     try:
         result = executor(region, operand, spec)
@@ -268,10 +281,12 @@ def load_tensor_op(
     collection: str | None = None,
     version: str | None = None,
     revision: str | None = None,
+    probe: OpProbe | None = None,
 ) -> RegisteredExecutor:
     """Register a tensor op an op collection defines: its ``OpSpec`` with venngram and its executor here.
 
-    The implementation is checked on a probe first (:func:`check_tensor_op`), so nothing is registered for an op that
+    The implementation is checked on a probe first (:func:`check_tensor_op`, on ``probe`` when the definition names
+    one), so nothing is registered for an op that
     breaks the contract. A name another source already registered (a core op, another collection's) is refused rather
     than replaced; a re-load of the same collection (a re-pull at another revision) replaces its own registration.
 
@@ -290,7 +305,7 @@ def load_tensor_op(
         raise ValueError(
             f"{where}: tensor op {name!r} is already registered with venngram by another source; rename it"
         )
-    check_tensor_op(name, executor, operand_kinds=tuple(spec.operand))
+    check_tensor_op(name, executor, operand_kinds=tuple(spec.operand), probe=probe)
     register_op(spec, replace=existing is not None)
     register_executor(
         name,
@@ -306,6 +321,7 @@ def load_tensor_op(
 
 __all__ = [
     "OpExecutor",
+    "OpProbe",
     "RegisteredExecutor",
     "check_tensor_op",
     "executor_for",
