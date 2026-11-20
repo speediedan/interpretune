@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from interpretune.utils.neuronpedia_dashboard_hub import download_dashboard_run
+from interpretune.utils.neuronpedia_db_utils import _redact_connection_url
 from interpretune.utils.neuronpedia_source_conflicts import (
     ConflictPolicy,
     describe_source_set,
@@ -31,6 +32,7 @@ __all__ = [
     "DEFAULT_CORPUS_COLLECTIONS",
     "CorpusListing",
     "CorpusPlan",
+    "DashboardDatabaseUnreachableError",
     "dashboards_present",
     "default_corpus_dest",
     "ensure_dashboards",
@@ -105,6 +107,23 @@ def default_corpus_dest() -> Path:
     return Path(hf_home) / "interpretune/neuronpedia/hub_downloads"
 
 
+class DashboardDatabaseUnreachableError(ConnectionError):
+    """The local Neuronpedia database could not be queried, so whether its dashboards are present is unknown."""
+
+
+def _probe_dashboards(db_url: str, *, model_id: str, source_set_id: str, min_sources: int) -> bool:
+    """:func:`dashboards_present`, raising :class:`DashboardDatabaseUnreachableError` when it cannot ask."""
+    try:
+        occupancy = describe_source_set(db_url, model_id=model_id, source_set_id=source_set_id)
+    except Exception as exc:
+        raise DashboardDatabaseUnreachableError(
+            f"Cannot query the local Neuronpedia database at {_redact_connection_url(db_url)} to check for the"
+            f" {model_id}/{source_set_id} dashboards: {exc}. Start the database, or fix the URL, and retry. Downloading"
+            " the corpus would not help: it is imported into this same database."
+        ) from exc
+    return occupancy.source_count >= min_sources and occupancy.neuron_count > 0
+
+
 def dashboards_present(
     db_url: str,
     *,
@@ -120,14 +139,14 @@ def dashboards_present(
     work with missing layers.
 
     Returns False rather than raising when the database cannot be reached, so a caller can decide
-    whether that is fatal; the subsequent import reports the connection failure properly.
+    whether that is fatal. :func:`ensure_dashboards` does not take that reading, since only an absent
+    corpus is fixed by a download.
     """
     try:
-        occupancy = describe_source_set(db_url, model_id=model_id, source_set_id=source_set_id)
-    except Exception as exc:
-        log.warning("could not probe %s/%s (%s); treating as absent", model_id, source_set_id, exc)
+        return _probe_dashboards(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources)
+    except DashboardDatabaseUnreachableError as exc:
+        log.warning("could not probe %s/%s (%s); treating as absent", model_id, source_set_id, exc.__cause__)
         return False
-    return occupancy.source_count >= min_sources and occupancy.neuron_count > 0
 
 
 def find_dashboard_corpora(
@@ -395,8 +414,12 @@ def ensure_dashboards(
 
     ``allow_fetch=False`` turns this into an assertion -- useful where an automatic multi-GiB
     download would be a surprise (CI, for instance) -- raising with the command to run instead.
+
+    A database that cannot be queried raises :class:`DashboardDatabaseUnreachableError` rather than
+    reading as absent: a download cannot fix it, and starting one hides the connection failure behind
+    a long transfer into a database that will then refuse the import.
     """
-    if dashboards_present(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources):
+    if _probe_dashboards(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources):
         log.info("dashboards for %s/%s already present", model_id, source_set_id)
         return True
 
