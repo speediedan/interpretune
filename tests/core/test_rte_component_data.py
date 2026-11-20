@@ -1,4 +1,4 @@
-"""The ``rte`` component's data path honours its datamodule configuration (#858, #861).
+"""The ``rte`` component's data path honours its datamodule configuration (#858, #861, #923).
 
 ``dataloader_kwargs`` reach the training loader alone (evaluation splits score every example, in order), and
 ``max_seq_length`` bounds every encoded example by trimming its context field rather than the template or question.
@@ -43,6 +43,45 @@ def test_dataloader_kwargs_shuffle_and_drop_last_apply_to_train_only(rte_datamod
     for loader in (dm.val_dataloader(), dm.test_dataloader(), dm.predict_dataloader()):
         assert isinstance(loader.sampler, SequentialSampler) and not loader.drop_last
         assert len(loader) == 3
+
+
+def test_the_training_split_shuffles_unless_a_config_says_otherwise(rte_datamodule_cls):
+    # an unshuffled training split reads one fixed order every epoch, so seeds change nothing for a model without
+    # dropout (#923): shuffling is the default, and an explicit `shuffle: false` still reads in order
+    dm = _bare_datamodule(rte_datamodule_cls, {"num_workers": 0, "pin_memory": False})
+    assert isinstance(dm.train_dataloader().sampler, RandomSampler)
+    assert isinstance(dm.val_dataloader().sampler, SequentialSampler)
+    dm = _bare_datamodule(rte_datamodule_cls, {"num_workers": 0, "pin_memory": False, "shuffle": False})
+    assert isinstance(dm.train_dataloader().sampler, SequentialSampler)
+
+
+def test_every_task_prompt_puts_a_space_between_the_premise_and_the_question(rte_datamodule_cls):
+    from tests.rte_component import RTEBoolqPromptConfig
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token  # the encoder pads its batch
+    prompt_cfg = RTEBoolqPromptConfig()
+    encoded = rte_datamodule_cls.encode_for_rteboolq(
+        {"premise": ["The cat sat."], "hypothesis": ["a cat sat"], "label": [0]},
+        tokenizer,
+        ["premise", "hypothesis"],
+        prompt_cfg,
+        lambda task_prompt, tokenization_pattern=None: task_prompt.strip(),
+    )
+    text = tokenizer.decode(encoded["input_ids"][0])
+    assert (
+        text
+        == "The cat sat. Does the previous passage imply that a cat sat? Answer with only one word, either Yes or No."
+    )
+
+
+def test_a_chat_template_tokenizes_with_one_bos():
+    from tests.rte_component import RTE_ENTRYPOINT_MODULE
+
+    tokenizer = SimpleNamespace(bos_token="<bos>")
+    assert RTE_ENTRYPOINT_MODULE.single_bos("<bos><start_of_turn>user\n", tokenizer) == "<start_of_turn>user\n"
+    assert RTE_ENTRYPOINT_MODULE.single_bos("no bos here", tokenizer) == "no bos here"
+    assert RTE_ENTRYPOINT_MODULE.single_bos("<bos>x", SimpleNamespace(bos_token=None)) == "<bos>x"
 
 
 def _sequence_for(field1: str, field2: str) -> str:
