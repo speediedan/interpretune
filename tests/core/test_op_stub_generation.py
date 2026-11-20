@@ -43,6 +43,14 @@ class TestLoadBundledDefinitions:
         merged = stub_script.load_bundled_definitions(sorted(tmp_path.glob("*.yaml")))
         assert set(merged) == {"op_a", "op_b"}
 
+    def test_tensor_ops_are_not_stubbed(self, stub_script, tmp_path):
+        """A tensor op is an executor a hook calls by name, with no top-level wrapper, so it gets no stub."""
+        (tmp_path / "a.yaml").write_text(
+            "op_a:\n  description: fixture\n  implementation: x.y\n"
+            "tensor_a:\n  description: fixture\n  implementation: x.z\n  op_spec:\n    operand: [vector]\n"
+        )
+        assert set(stub_script.load_bundled_definitions([tmp_path / "a.yaml"])) == {"op_a"}
+
     def test_genuine_duplicate_op_names_still_raise(self, stub_script, tmp_path):
         """The duplicate check is load-bearing: two families must not silently claim one op name."""
         for name in ("a.yaml", "b.yaml"):
