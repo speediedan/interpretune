@@ -194,7 +194,10 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     its source layer, position and feature index with its activation, anchored `from_end` by default (or `absolute`,
     `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
     the source prompt, attribution targets and pruning settings are its provenance. `.write(path)` writes it, its
-    table in a sidecar when it is large.
+    table in a sidecar when it is large. `graph_subset_overlap` measures a transfer: it places a subset in the prompt
+    of another attribution graph (attribute the destination prompt, then compare) and reports which placements that
+    graph selects, with their activations there, the fraction it selects, and, given the graph's per-feature influence
+    scores, the share of its influence the matched features carry.
 
   What each recipe op is honoured as, per surface and target:
 

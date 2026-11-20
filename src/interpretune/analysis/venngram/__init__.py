@@ -18,7 +18,13 @@ venngram is imported on first use, so importing interpretune does not import it.
 .. warning:: This is an experimental API and may change in a future release.
 """
 
-from interpretune.analysis.venngram.apply import recipe_feature_interventions, recipe_interventions, unit_interventions
+from interpretune.analysis.venngram.apply import (
+    GraphSubsetOverlap,
+    graph_subset_overlap,
+    recipe_feature_interventions,
+    recipe_interventions,
+    unit_interventions,
+)
 from interpretune.analysis.venngram.charts import (
     ChartKind,
     LatentChart,
@@ -58,6 +64,7 @@ from interpretune.analysis.venngram.values import normalized_unit_doses
 __all__ = [
     "ChartKind",
     "FetchedRecipe",
+    "GraphSubsetOverlap",
     "LatentBinding",
     "LatentCatalog",
     "LatentChart",
@@ -75,6 +82,7 @@ __all__ = [
     "executed_readouts",
     "export_book",
     "export_graph_subset",
+    "graph_subset_overlap",
     "load_recipe",
     "normalized_unit_doses",
     "recipe_feature_interventions",
