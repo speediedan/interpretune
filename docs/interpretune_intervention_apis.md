@@ -179,6 +179,17 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
     (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
     passes it as `clean_activations`.
+  - **Graph subsets, on the analysis backend:** an op that targets a venngram graph subset (`target: {graph: <name>}`,
+    a pruned piece of an attribution graph as a `graph_subset` document) applies the reasoning it describes in
+    another prompt. `recipe_feature_interventions(..., token_ids=, tokenizer=)` places each transcoder or CLT node at
+    the stage's site by its anchor in the destination prompt (an absolute position, an offset from the end, a
+    token-matched span, or every position), refusing the whole plan if any node does not resolve or two land on one
+    coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
+    activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
+    A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
+    feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
+    scalar) are not yet supported on this path and are refused by name
+    ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
 
@@ -365,6 +376,45 @@ A gradient target is translated with `flow="grad"` for the backward surface
   evidence behind them by reference rather than re-deriving indices, with registered examples for supported models.
 
 Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
+
+## Latent addresses: blocks, frames, charts and linear spaces
+
+`interpretune.analysis.venngram` resolves a latent address against an explicit catalog of loaded latent models
+(`LatentCatalog`). This is the addressing and coordinate layer: it reads and edits coordinates of tensors it is
+given. Executing a frame or chart edit natively through a backend's hooks is not part of it yet
+([#865](https://github.com/speediedan/interpretune/issues/865)).
+
+**One address form for every dictionary.** A `LatentBinding` declares a loaded model at one layer and activation point,
+its decoder rows, and its block size $b$: $b = 1$ for an SAE or transcoder, and block $g$ of a block-sparse featurizer
+is the latent range $[gb, (g+1)b)$. So `features:bsf_l17 & point:resid_post & layers:17 & units:[412]` selects one
+block exactly as `features:sae & units:[1234]` selects one feature, and unit slices and negative units count blocks.
+A named basis at a site is a `SubspaceBinding`, addressed as `subspace:<name>`, and is indivisible. External ids
+(a Neuronpedia id, an SAE Lens pair, a circuit-tracer feature) resolve only through aliases the catalog is given to
+canonical addresses; nothing is downloaded or inferred from an id's spelling.
+
+**Frames.** A block's internal basis is arbitrary (any rotation in $O(b)$ preserves its span), so an address never
+names a coordinate inside a block. Coordinate reads and edits name a frame: a `LatentFrame` is a named, exactly
+versioned orthonormal basis for one target, checked against the target's current decoder rows for equal rank and
+span each time it is used. Replacing framed coordinates changes only the target's span and keeps the orthogonal
+complement and autograd.
+
+**Charts.** A `LatentChart` is a named, versioned coordinate system fitted in one frame version: its kind, intrinsic
+dimension, periodic dimensions with their periods, and fitted parameters. Each kind is a registered handler
+(`register_chart_kind`); `affine` (a flat chart, no periodic dimension) and `pca_plane` (a plane read as a radius and
+an angle of period $2\pi$) are built in, and any other kind, such as a spline or a flow, is refused by name until a
+caller registers it. Edits are made in chart coordinates: `set`, `path` (piecewise linear through waypoints, the
+shorter way round each periodic dimension), `rotate` (periodic dimensions only) and `scale_norm`. An edit moves the
+frame coordinates by exactly the chart's change, so the part off the chart is kept. Charts can travel in an address
+book's top-level `charts` key, which venngram keeps without changing what the book's sets select
+(`charts_from_book`).
+
+**Linear spaces.** Features trained on $J_\ell h$ rather than on $h$ have decoder rows in that space. A `LinearSpace`
+carries the map $M$ and writes an edit back through its declared inverse or its pseudoinverse; the map composed with
+the inverse must be the identity on the space, so a write lands the requested space coordinates exactly and leaves
+the null space of $M$ as it was. A map whose rank is below its dimension is refused rather than written in least
+squares. A binding names its space (`space="jlens"`), the address qualifier `space:jlens` selects by it, and the
+catalog's `site_coordinates`, `replace_site_coordinates` and `apply_site_chart` read and write site activations
+through it.
 
 ## Gradient interventions
 

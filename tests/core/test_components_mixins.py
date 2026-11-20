@@ -103,6 +103,19 @@ class TestClassMixins:
             cust_config, _ = hf_from_pretrained_mixin._hf_gen_cust_config()
             _ = hf_from_pretrained_mixin.hf_configured_model_init(cust_config)
 
+    @pytest.mark.parametrize("num_labels", [None, 3], ids=["task_neutral", "task_declares_labels"])
+    def test_hf_configured_model_init_applies_only_a_declared_label_count(self, num_labels):
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
+        test_it_cfg["defer_model_init"] = True
+        mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
+        del mixin.it_cfg.num_labels
+        if num_labels is not None:
+            mixin.it_cfg.num_labels = num_labels
+        cust_config, _ = mixin._hf_gen_cust_config()
+        pretrained_count = cust_config.num_labels
+        model = mixin.hf_configured_model_init(cust_config)
+        assert model.config.num_labels == (pretrained_count if num_labels is None else num_labels)
+
     def test_hf_from_pretrained_lora_without_quantization(self):
         """``lora_cfg`` alone wraps an unquantized model with LoRA (it was once applied only alongside
         ``bitsandbytesconfig``, and silently ignored without it)."""
