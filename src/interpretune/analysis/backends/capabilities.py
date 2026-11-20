@@ -698,25 +698,12 @@ class ModuleCapabilities:
         return next(iter(by_slot.items()))
 
 
-#: Spellings that once named a capability and no longer do, each with the spelling that replaced it. Refused by
-#: name rather than translated: a caller carrying the old spelling has a manifest or a config to update, and a
-#: silent translation would leave it carrying a name nothing else in the vocabulary recognizes.
-_RETIRED_CAPABILITY_SPELLINGS: dict[str, str] = {
-    "activation_intervention": Capability.INTERVENTION.value,
-    "feature_intervention": Capability.INTERVENTION.value,
-    "attribution": "the attribution_graph technique",
-    "attribution_graph": "the attribution_graph technique",
-    "head_attribution": "the head_attribution technique",
-}
-
-
 def normalize_backend_capability(capability: Any) -> Capability:
     """Normalize a capability-like value to a :class:`Capability` member.
 
     Accepts a member, a member's value, or a dotted spelling whose last segment is a member name
     (``"Capability.GRADIENTS"``). Compared by value, so a member of a second load of this module normalizes to this
-    one's. A retired spelling is refused by name with its replacement; an unknown one is refused with the vocabulary
-    listed.
+    one's. Any other spelling is refused with the vocabulary listed.
     """
     if isinstance(capability, Capability):
         return capability
@@ -724,13 +711,6 @@ def normalize_backend_capability(capability: Any) -> Capability:
     raw_value = getattr(capability, "value", capability)
     spelling = str(raw_value)
     candidate = spelling.split(".")[-1].lower() if "." in spelling else spelling
-    if candidate in _RETIRED_CAPABILITY_SPELLINGS:
-        raise ValueError(
-            f"{spelling!r} is a retired capability spelling; what it named is now"
-            f" {_RETIRED_CAPABILITY_SPELLINGS[candidate]!r}. Update the declaration rather than relying on a"
-            " translation (an op names a technique in its `technique` field, and a component declares it in"
-            " `technique_support`)."
-        )
     try:
         return Capability(candidate)
     except ValueError:

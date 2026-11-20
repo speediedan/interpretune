@@ -1835,18 +1835,16 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
 
 class TestCapabilitySpellings:
-    """The normalizer refuses a retired spelling by name with its replacement, and accepts each vocabulary's
-    own."""
+    """The normalizer accepts each vocabulary's own spellings and refuses any other by name, with the vocabulary
+    listed."""
 
-    def test_a_retired_spelling_is_refused_with_its_replacement(self):
+    def test_a_spelling_outside_the_vocabulary_is_refused_with_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        for retired in ("activation_intervention", "feature_intervention"):
-            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*'intervention'"):
-                normalize_backend_capability(retired)
-        for retired in ("attribution", "attribution_graph", "head_attribution"):
-            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*technique"):
-                normalize_backend_capability(retired)
+        # former spellings get no special handling: they are refused like any other unknown name
+        for spelling in ("activation_intervention", "attribution", "attribution_graph", "head_attribution", "nope"):
+            with pytest.raises(ValueError, match=f"'{spelling}' is not a capability: spellings are .*'intervention'"):
+                normalize_backend_capability(spelling)
 
     def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
         from interpretune.analysis.backends import (

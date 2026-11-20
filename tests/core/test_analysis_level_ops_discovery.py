@@ -337,8 +337,8 @@ class TestTechniquesBindToProviders:
         with pytest.raises(ValueError, match=match):
             get_module_capabilities(module)
 
-    def test_a_retired_technique_capability_spelling_points_at_the_technique_field(self):
-        with pytest.raises(ValueError, match="'attribution_graph' is a retired capability spelling.*`technique"):
+    def test_a_technique_named_as_a_capability_is_refused(self):
+        with pytest.raises(ValueError, match="'attribution_graph' is not a capability"):
             _op(capabilities=["attribution_graph"])
 
     def test_a_composite_refuses_a_missing_technique_before_its_first_part_runs(self):
