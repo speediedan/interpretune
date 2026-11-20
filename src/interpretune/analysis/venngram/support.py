@@ -39,7 +39,10 @@ backend already publishes, never restated by hand:
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
 ``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
 feature tuples express, and a feature ``add`` and ``scale`` where the target's detail declares a clean capture to
-compute them from.
+compute them from. :func:`venngram_feature_subsets` derives, from the same record, the graph-subset treatments that
+path applies (venngram's ``circuits.subsets`` section): ``replace``, and ``add`` with a clean capture, on transcoder
+and CLT nodes with scalar values, by any anchor, through the transforms that act on each value alone, and no
+restriction.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -50,7 +53,15 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
-from interpretune.analysis.venngram.apply import APPLIED_OPS, FEATURE_TUPLE_OPS, feature_op_refusal, op_refusal
+from interpretune.analysis.venngram.apply import (
+    APPLIED_OPS,
+    FEATURE_TUPLE_OPS,
+    GRAPH_TUPLE_FEATURIZERS,
+    GRAPH_TUPLE_OPS,
+    GRAPH_TUPLE_TRANSFORMS,
+    feature_op_refusal,
+    op_refusal,
+)
 from interpretune.analysis.venngram.readouts import executed_readouts
 from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
@@ -177,6 +188,39 @@ def venngram_feature_support(
     )
 
 
+def venngram_feature_subsets(intervention: InterventionSupport) -> Any:
+    """Derive a ``venngram.support.SubsetSupport`` for the analysis-backend path: the treatments over graph subsets
+    that :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` applies.
+
+    Its ops are those of :func:`venngram_feature_support` a graph target admits, so a backend that does not honour
+    ``constant`` applies none, and ``add`` needs the clean capture. Every anchor kind is resolved, by venngram's
+    ``GraphSubset.plan``.
+
+    Args:
+        intervention: The provider's record, as :func:`venngram_feature_support` takes it.
+
+    Returns:
+        A ``venngram.support.SubsetSupport``. Typed ``Any`` so importing this module needs no venngram install.
+
+    Raises:
+        MisconfigurationException: If venngram is not installed.
+    """
+    return _feature_subsets(venngram_feature_support(intervention))
+
+
+def _feature_subsets(features: Any) -> Any:
+    """The graph-subset declaration of the analysis-backend path whose feature declaration is ``features``."""
+    graphs = importlib.import_module("venngram.graphs")
+    return importlib.import_module("venngram.support").SubsetSupport(
+        ops=frozenset(features.ops & GRAPH_TUPLE_OPS) if features.values else frozenset(),
+        anchors=frozenset(graphs.ANCHORS),
+        featurizers=GRAPH_TUPLE_FEATURIZERS,
+        values=frozenset({"scalar"}),
+        transforms=GRAPH_TUPLE_TRANSFORMS,
+        complement=False,
+    )
+
+
 def support_mapping(support: Any) -> dict[str, Any]:
     """A derived ``venngram.ops.Support`` as its publishable ``support_record`` document.
 
@@ -206,14 +250,19 @@ def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False, f
     parameter no native translation expresses yet. With ``analysis_backend``, the refusals are those of
     :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` instead. ``flow`` is the flow the
     caller will apply (``value`` through ``fwd_w_intervention``, ``grad`` through ``bwd_w_intervention``), and an op on
-    the other flow is a refusal.
+    the other flow is a refusal. On the analysis backend, an op on a graph subset is checked against the derived
+    graph-subset declaration (:func:`venngram_feature_subsets`), which venngram's ``check_support`` leaves to it.
 
     Evidence is supplied when the recipe is applied, so whether it has what a value reads is decided then.
     """
     vg_ops = _require_venngram()
     refusals = list(vg_ops.check_support(recipe, support))
+    if analysis_backend:
+        refusals += _feature_subsets(support).check_recipe(recipe)
     for i, stage in enumerate(recipe.stages):
         for j, op in enumerate(stage.ops):
+            if analysis_backend and getattr(op, "graph", None) is not None:
+                continue  # checked against the graph-subset declaration above
             refusal = feature_op_refusal(recipe, stage, op) if analysis_backend else op_refusal(recipe, stage, op, flow)
             if refusal is not None:
                 refusals.append(f"stage {i} ({stage.site}) op {j} (`{op.op}`): {refusal}")

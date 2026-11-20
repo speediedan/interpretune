@@ -48,6 +48,7 @@ from interpretune.analysis.venngram.support import (
     check_recipe,
     require_supported,
     support_mapping,
+    venngram_feature_subsets,
     venngram_feature_support,
     venngram_support,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "resolve_sites",
     "resolve_unit_sites",
     "support_mapping",
+    "venngram_feature_subsets",
     "venngram_feature_support",
     "venngram_support",
     "unit_interventions",
