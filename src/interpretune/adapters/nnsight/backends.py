@@ -36,6 +36,7 @@ from interpretune.analysis.backends import (
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    require_attached_latent_models,
     resolve_readout_sites,
     track_gradient,
 )
@@ -1193,6 +1194,7 @@ class NNsightModelBackend:
             hook_names = [hook_name for matches in expanded_matches.values() for hook_name in matches]
             intervention_dict = None
 
+        require_attached_latent_models(interventions, expanded_matches, latent_model_handles, flow="value")
         names_filter: str | list[str] = hook_names[0] if len(hook_names) == 1 else hook_names
 
         # --- Baseline forward pass (pre-intervention) ---
@@ -1289,6 +1291,7 @@ class NNsightModelBackend:
             expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
         else:
             expanded = expand_intervention_patterns(list(interventions.keys()), available, flow="grad")
+        require_attached_latent_models(interventions, expanded, latent_model_handles, flow="grad")
         sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
         if capture is None:
             captured_names = sites
