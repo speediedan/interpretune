@@ -264,8 +264,8 @@ def _orthonormal_rows(chart: LatentChart, key: str, rows: int, rank: int) -> Non
     value = chart.params.get(key)
     if value is None or value.shape != (rows, rank):
         raise MisconfigurationException(f"chart {chart.name!r} needs {key!r} with shape ({rows}, {rank})")
-    value = value.to(torch.float64)
-    error = float((value @ value.T - torch.eye(rows, dtype=value.dtype)).abs().max())
+    value = value.detach().to(device="cpu", dtype=torch.float64)
+    error = float((value @ value.T - torch.eye(rows, dtype=value.dtype, device=value.device)).abs().max())
     if error > 1e-6:
         raise MisconfigurationException(f"chart {chart.name!r}: {key!r} rows are not orthonormal (error {error:g})")
 

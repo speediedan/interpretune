@@ -388,3 +388,36 @@ class TestBothBackends:
         impostor = types.SimpleNamespace(cfg=handle.cfg, W_dec=handle.W_dec)
         with pytest.raises(ValueError, match="is not the loaded model the target resolved to"):
             backend.fwd_w_intervention(module.model, batch, {hook: spec}, latent_model_handles=[impostor])
+
+
+class TestValidationRunsOnTheCheckedTensorsDevice:
+    """A frame, chart or linear space checks its tensors on their own device, not the default one (#1096).
+
+    A meta default device stands in for a GPU on a CPU-only host: every tensor here is on the CPU, so a check that
+    builds its identity on the default device compares a CPU tensor with a meta one and fails.
+    """
+
+    def test_a_frame_a_chart_and_a_space_register_whatever_the_default_device(self, synthetic):
+        from interpretune.analysis.venngram import LinearSpace
+
+        cpu = dict(dtype=torch.float64, device="cpu")
+        rows = torch.linalg.qr(synthetic.decoder[list(COLUMNS)].to(**cpu).T).Q.T.contiguous()
+        matrix = torch.tensor([[2.0, 0.0, 0.0], [0.0, 0.5, 0.0]], **cpu)
+        with torch.device("meta"):
+            frame = LatentFrame("f", "2", synthetic.target, rows)
+            chart = LatentChart(
+                "ring",
+                "2",
+                "pca_plane",
+                synthetic.target,
+                "f",
+                "2",
+                2,
+                {1: 2 * torch.pi},
+                {"origin": torch.zeros(2, **cpu), "axes": torch.eye(2, **cpu)},
+            )
+            binding = synthetic.catalog.binding(synthetic.target)
+            catalog = LatentCatalog([binding], frames=[frame], charts=[chart])
+            space = LinearSpace("jlens", "1", matrix)
+        assert catalog.chart(synthetic.target, name="ring", version="2").frame_version == "2"
+        assert space.dim == 2
