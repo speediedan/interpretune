@@ -807,14 +807,16 @@ def test_gradient_readouts_notebook(tmp_path: Path):
         if output.output_type == "error"
     ]
     assert not errors, f"error outputs in executed notebook: {errors}"
-    text = "".join(
-        o.get("text", "") if isinstance(o.get("text"), str) else "".join(o.get("text", []))
+    shown = "".join(
+        "".join(html) if isinstance(html := o.get("data", {}).get("text/html", ""), list) else html
         for cell in nb.cells
         if cell.cell_type == "code"
         for o in cell.get("outputs", [])
-        if o.output_type == "stream"
+        if o.output_type == "display_data"
     )
-    assert "gradient kept at" in text, "the notebook did not reach its last move (the op path under each readout)"
+    # the results are notebook UI tables (HTML), so the check reads the last two moves' table titles
+    assert "Rejecting the probe direction from the gradient" in shown, "the notebook did not reach the op path"
+    assert "Declared and callable probe readouts" in shown, "the notebook did not reach the declared readout"
     _cleanup_notebook_artifacts()
 
 

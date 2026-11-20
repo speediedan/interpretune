@@ -47,34 +47,72 @@ class NotebookLink:
     url: str
 
 
+#: The repository's sign colours: green for a positive value, red for a negative one.
+POSITIVE_COLOUR, NEGATIVE_COLOUR = "#1a7f37", "#d1242f"
+#: The legend for :class:`Signed` cells, for tables that colour by sign.
+SIGN_LEGEND = ((POSITIVE_COLOUR, "positive"), (NEGATIVE_COLOUR, "negative"))
+
+
+@dataclass(frozen=True)
+class Signed:
+    """A number shown with its sign and coloured by it (:data:`SIGN_LEGEND`); zero is uncoloured."""
+
+    value: float
+    fmt: str = "+.2f"
+
+
+def _cell_html(value: Any) -> str:
+    """One escaped ``<td>``: links and signed numbers render as such, numbers right-aligned, anything else as
+    text."""
+    if isinstance(value, NotebookLink):
+        parsed = urlsplit(value.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("notebook table links require an absolute HTTP(S) URL")
+        return f'<td><a href="{html.escape(value.url, quote=True)}">{html.escape(value.label)}</a></td>'
+    if isinstance(value, Signed):
+        v = float(value.value)
+        colour = POSITIVE_COLOUR if v > 0 else (NEGATIVE_COLOUR if v < 0 else "inherit")
+        return f'<td class="num" style="color:{colour};font-weight:600">{v:{value.fmt}}</td>'
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f'<td class="num">{html.escape(str(value))}</td>'
+    return f"<td>{html.escape(str(value))}</td>"
+
+
 def build_notebook_table_html(
     rows: Sequence[Sequence[Any]],
     columns: Sequence[str],
     *,
     title: str,
     caption: str = "",
+    legend: Sequence[tuple[str, str]] = (),
+    emphasize: Sequence[int] = (),
 ) -> str:
     """Build a scrollable, accessible report table from already formatted cells.
 
     Callers own numerical precision and units, so the same helper can show probabilities, logits, checks or
-    configuration. Ordinary cells are escaped text, never HTML; use :class:`NotebookLink` for a feature reference.
-    A caption can state the denominator or limitation alongside the measurement. No notebook kernel is required.
+    configuration. Ordinary cells are escaped text, never HTML; numbers are right-aligned, :class:`Signed` values are
+    coloured by sign, and :class:`NotebookLink` renders a feature reference. A caption can state the denominator or
+    limitation alongside the measurement, ``legend`` lists ``(colour, meaning)`` swatches under the table (pass
+    :data:`SIGN_LEGEND` with :class:`Signed` cells), and ``emphasize`` bolds the rows (by index) the reader should look
+    at, such as a held-out target. No notebook kernel is required.
     """
-
-    def cell(value: Any) -> str:
-        if isinstance(value, NotebookLink):
-            parsed = urlsplit(value.url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError("notebook table links require an absolute HTTP(S) URL")
-            return f'<a href="{html.escape(value.url, quote=True)}">{html.escape(value.label)}</a>'
-        return html.escape(str(value))
-
     if not columns:
         raise ValueError("a notebook table needs at least one column")
     if any(len(row) != len(columns) for row in rows):
         raise ValueError("every notebook table row must match the column count")
+    if bad := sorted(i for i in emphasize if not 0 <= i < len(rows)):
+        raise ValueError(f"emphasized rows {bad} are outside the table's {len(rows)} rows")
     header = "".join(f'<th scope="col">{html.escape(c)}</th>' for c in columns)
-    body = "".join("<tr>" + "".join(f"<td>{cell(v)}</td>" for v in row) + "</tr>" for row in rows)
+    body = "".join(
+        ('<tr class="em">' if i in emphasize else "<tr>") + "".join(_cell_html(v) for v in row) + "</tr>"
+        for i, row in enumerate(rows)
+    )
+    swatches = "".join(
+        f'<span class="sw"><span style="background:{html.escape(colour, quote=True)}"></span>'
+        f"{html.escape(meaning)}</span>"
+        for colour, meaning in legend
+    )
+    legend_html = f'<div class="legend">{swatches}</div>' if legend else ""
     return f"""<style>
     .it-report {{font-family:system-ui,sans-serif; font-size:14px; margin:12px 0; overflow-x:auto;}}
     .it-report table {{border-collapse:collapse; width:max-content; min-width:55%; max-width:none;}}
@@ -82,17 +120,30 @@ def build_notebook_table_html(
     .it-report th {{background:#2471a3; color:white; text-align:left;}}
     .it-report th,.it-report td {{padding:7px 10px; border:1px solid #aaa6; vertical-align:top;}}
     .it-report tr:nth-child(even) {{background:#78b4f018;}}
+    .it-report tr.em td {{font-weight:700; background:#f0c03a2e;}}
     .it-report td {{font-variant-numeric:tabular-nums; max-width:36em; white-space:pre-wrap;}}
+    .it-report td.num {{text-align:right;}}
+    .it-report .legend {{margin-top:6px; font-size:12px;}}
+    .it-report .sw {{margin-right:14px; white-space:nowrap;}}
+    .it-report .sw span {{display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle;}}
     </style><div class="it-report"><table>
     <caption><strong>{html.escape(title)}</strong><br>{html.escape(caption)}</caption>
-    <thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"""
+    <thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>{legend_html}</div>"""
 
 
 def display_notebook_table(
-    rows: Sequence[Sequence[Any]], columns: Sequence[str], *, title: str, caption: str = ""
+    rows: Sequence[Sequence[Any]],
+    columns: Sequence[str],
+    *,
+    title: str,
+    caption: str = "",
+    legend: Sequence[tuple[str, str]] = (),
+    emphasize: Sequence[int] = (),
 ) -> None:
     """Display :func:`build_notebook_table_html` in a notebook or its rendered documentation."""
-    display(HTML(build_notebook_table_html(rows, columns, title=title, caption=caption)))
+    display(
+        HTML(build_notebook_table_html(rows, columns, title=title, caption=caption, legend=legend, emphasize=emphasize))
+    )
 
 
 def get_topk(

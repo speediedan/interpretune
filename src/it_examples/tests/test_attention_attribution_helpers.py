@@ -191,6 +191,33 @@ def test_notebook_table_escapes_cells_and_renders_only_http_links():
         build_notebook_table_html([[1, 2]], ["only one"], title="t")
 
 
+def test_notebook_table_colours_signed_cells_aligns_numbers_and_shows_a_legend():
+    from it_examples.utils.nb_ui_utils import (
+        NEGATIVE_COLOUR,
+        POSITIVE_COLOUR,
+        SIGN_LEGEND,
+        Signed,
+        build_notebook_table_html,
+    )
+
+    html_out = build_notebook_table_html(
+        [["up", Signed(1.5), 3], ["down", Signed(-0.25, "+.3f"), 2.5], ["flat", Signed(0.0), "n/a"]],
+        ["row", "shift", "count"],
+        title="t",
+        legend=SIGN_LEGEND,
+        emphasize=[1],
+    )
+    assert f'style="color:{POSITIVE_COLOUR};font-weight:600">+1.50</td>' in html_out
+    assert f'style="color:{NEGATIVE_COLOUR};font-weight:600">-0.250</td>' in html_out
+    assert 'style="color:inherit;font-weight:600">+0.00</td>' in html_out
+    assert '<td class="num">3</td>' in html_out and "<td>n/a</td>" in html_out
+    assert html_out.count('<tr class="em">') == 1 and '<tr class="em"><td>down</td>' in html_out
+    assert 'class="legend"' in html_out and "positive" in html_out and "negative" in html_out
+    assert 'class="legend"' not in build_notebook_table_html([["a"]], ["c"], title="t")
+    with pytest.raises(ValueError, match="outside the table"):
+        build_notebook_table_html([["a"]], ["c"], title="t", emphasize=[1])
+
+
 def test_feature_context_links_quotes_tokens_and_marks_missing_explanations():
     ctx = aah.FeatureContext(
         tokens=["<bos>", " is"],
