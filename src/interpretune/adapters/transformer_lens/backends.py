@@ -22,6 +22,7 @@ from interpretune.analysis.backends import (
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    require_attached_latent_models,
     resolve_readout_sites,
     track_gradient,
 )
@@ -542,6 +543,7 @@ class TLModelBackend:
             hook_names = [hook_name for matches in expanded_matches.values() for hook_name in matches]
             intervention_dict = None
 
+        require_attached_latent_models(interventions, expanded_matches, latent_model_handles, flow="value")
         names_filter = hook_names[0] if len(hook_names) == 1 else hook_names
 
         # --- Baseline forward pass ---
@@ -607,6 +609,7 @@ class TLModelBackend:
             expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
         else:
             expanded = expand_intervention_patterns(list(interventions.keys()), available, flow="grad")
+        require_attached_latent_models(interventions, expanded, latent_model_handles, flow="grad")
         sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
         matched = expanded if capture is None else expand_intervention_patterns(list(capture), available, flow="grad")
         captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
