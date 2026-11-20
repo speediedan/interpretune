@@ -346,6 +346,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - Circuit-tracer adapter significantly expanded from TL-only to multi-backend architecture (381+ lines added)
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
+- sae-lens installs from a released floor (`sae-lens >=6.55.0,<7` in the `examples` extra) instead of a git pin to the head of decoderesearch/SAELens#739: 6.55.0 is the first release that imports under transformer-lens 4.0. The Neuronpedia dashboard pipeline's generation subprocess therefore imports the installed release: a SAELens checkout goes on its `PYTHONPATH` only when `--saelens-repo-root` names one, as the preserved-baseline benchmark legs do. It used to prepend `SAELENS_REPO_ROOT` (default `~/repos/SAELens`) whenever that directory existed, so a stale checkout silently shadowed the release while benchmark lineage recorded the release version. The benchmark setup installs the preserved baseline's missing dependencies with uv rather than pip, and under `--skip-env-build` names any it finds missing. ([#652](https://github.com/speediedan/interpretune/issues/652))
+
 ### Fixed
 
 - A latent frame, chart or linear space fitted on a GPU registers: their orthonormality and exactness checks built each identity on the default device, so a chart's GPU axes, a GPU map, or any check under a changed default device raised a device mismatch. Each identity is now built on the device of the tensor it is compared with, and chart axes are checked on the CPU in double precision, as frames are ([#1096](https://github.com/speediedan/interpretune/issues/1096))
@@ -403,6 +405,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - Dataset cache reset handling to prevent cache-dependent expected value divergence
 - Tokenizer usage pattern fix for `force_prepare_data` enabled scenarios
 - The `sae_lens_test` delta pair compares equal work: the native SAELens arm receives interpretune's generate kwargs, which the root wrapper's `*args, **kwargs` signature had hidden, so it generated the bridge's default 10 tokens against interpretune's one and its retained attention patterns differed by about 24 MiB. Its bounds are now frozen on both vendors ([#838](https://github.com/speediedan/interpretune/issues/838))
+
+- The Neuronpedia dashboard pipeline passes the configured model wrapper (and the bridge's compatibility mode) to the legacy runner when the runner accepts `--model-wrapper`. It passed neither, so the legacy runner fell back to its hooked wrapper, which TransformerLens 4.0 cannot build, and every legacy-runner leg of the dashboard benchmark failed at model initialization. A preserved baseline that predates the option keeps its own default. ([#652](https://github.com/speediedan/interpretune/issues/652))
 
 ## [0.1.0] - 2025-XX-XX
 
