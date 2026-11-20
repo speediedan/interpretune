@@ -19,6 +19,7 @@ from interpretune.analysis.venngram import (
     recipe_interventions,
     require_supported,
     support_mapping,
+    venngram_feature_subsets,
     venngram_feature_support,
     venngram_support,
 )
@@ -514,3 +515,180 @@ class TestSupport:
         steering = support_mapping(support)["sections"]["steering"]
         assert "features" in steering["targets"] and "from" in steering["values"]
         assert "sign_aware_scale" in steering["transforms"]
+
+
+GRAPH_SITE = "transcoder.features"
+GRAPH_MODEL = {"id": "m", "revision": "r1"}
+GRAPH_TOKENIZER = {"id": "m-tokenizer", "revision": "t1"}
+
+
+def _node(node_id, feature, anchor, activation, baseline=0.0, space="tc"):
+    index = {"feature": feature} if space == "tc" else {"block": feature}
+    return {
+        "id": node_id,
+        "kind": "feature",
+        "site": GRAPH_SITE,
+        "space": space,
+        "layer": 1,
+        "position": 0,
+        "index": index,
+        "activation": activation,
+        "baseline": baseline,
+        "anchor": anchor,
+    }
+
+
+#: Two transcoder nodes: one on the prompt's last token, one on the token id 22 wherever it falls.
+NODES = [
+    _node("f0", 7, {"kind": "from_end", "offset": 0}, 3.0, 1.0),
+    _node("f1", 8, {"kind": "token_match", "token_ids": [22]}, 2.0, 0.5),
+]
+
+
+def _graph_recipe(tmp_path, ops, nodes=NODES, value_shape=None):
+    """A book carrying one graph subset and a treatment applying ``ops`` to it, read as that treatment's recipe."""
+    import hashlib
+
+    import yaml
+    from venngram.book import AddressBook
+
+    spaces = {"tc": {"id": "dict/transcoders", "revision": "p", "kind": "transcoder"}}
+    if value_shape is not None:
+        spaces["bsf"] = {"id": "dict/bsf", "revision": "p", "kind": "block_sparse", "index": ["block"]}
+        spaces["bsf"]["value_shape"] = value_shape
+    graph = {
+        "schema_version": 1,
+        "kind": "graph_subset",
+        "name": "reasoning",
+        "model": GRAPH_MODEL,
+        "spaces": spaces,
+        "source": {"tokenizer": GRAPH_TOKENIZER, "token_ids": [11, 22, 33]},
+        "nodes": nodes,
+    }
+    path = tmp_path / "reasoning.yaml"
+    path.write_text(yaml.safe_dump(graph))
+    book = {
+        "schema_version": 5,
+        "name": "transfer",
+        "sets": {"universe": {"features": "tc", "layers": [1], "units": [7, 8, 9]}},
+        "graphs": {"reasoning": {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}},
+        "treatments": {"transfer": {"model": GRAPH_MODEL, "stages": [{"site": GRAPH_SITE, "ops": ops}]}},
+    }
+    return AddressBook.from_mapping(book, base_dir=tmp_path).treatments["transfer"]
+
+
+def _graph_op(op="replace", column="activation", baseline=None, transform=()):
+    source = {"graph": "reasoning", "column": column, **({"baseline": baseline} if baseline else {})}
+    return {"op": op, "target": {"graph": "reasoning"}, "value": {"from": source, "transform": list(transform)}}
+
+
+RESTRICTION = {
+    "op": "replace",
+    "target": {"graph": "reasoning", "outside": {"set": "universe", "tokens": "prompt"}},
+    "value": {"dose": 0.0},
+}
+
+#: The destination prompt: token 22 falls at position 1, and the last token is at position 3.
+PROMPT = [5, 22, 9, 4]
+
+
+class TestGraphSubsets:
+    """#966: a graph subset distilled from one prompt, placed by its anchors in another as feature tuples."""
+
+    def test_a_replace_places_each_node_by_its_anchor_with_its_column(self, tmp_path):
+        recipe = _graph_recipe(tmp_path, [_graph_op()])
+        tuples = recipe_feature_interventions(recipe, support=TRANSCODER, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
+        assert tuples == [(1, 3, 7, 3.0), (1, 1, 8, 2.0)]
+
+    def test_an_add_of_a_baseline_delta_is_relative_to_the_clean_activation(self, tmp_path):
+        recipe = _graph_recipe(tmp_path, [_graph_op("add", baseline="baseline", transform=[{"scale": {"factor": 2}}])])
+        clean = torch.arange(2 * 4 * 10, dtype=torch.float32).reshape(2, 4, 10)
+        tuples = recipe_feature_interventions(
+            recipe, support=CAPTURING, clean_activations=clean, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER
+        )
+        assert tuples == [(1, 3, 7, float(clean[1, 3, 7]) + 4.0), (1, 1, 8, float(clean[1, 1, 8]) + 3.0)]
+
+    def test_anchors_that_need_no_tokenizer_resolve_without_one(self, tmp_path):
+        nodes = [_node("f0", 7, {"kind": "absolute", "position": 2}, 1.5), _node("f1", 8, {"kind": "all"}, -1.0)]
+        tuples = recipe_feature_interventions(
+            _graph_recipe(tmp_path, [_graph_op()], nodes=nodes), support=TRANSCODER, token_ids=[1, 2, 3]
+        )
+        assert tuples == [(1, 2, 7, 1.5)] + [(1, p, 8, -1.0) for p in range(3)]
+
+    @pytest.mark.parametrize(
+        "kwargs, match",
+        [
+            pytest.param({}, "pass `token_ids`", id="no-prompt"),
+            pytest.param({"token_ids": [5, 9, 4]}, "node `f1`", id="unresolved-anchor"),
+            pytest.param({"token_ids": PROMPT}, "pinned tokenizer", id="no-tokenizer-for-a-token-match"),
+        ],
+    )
+    def test_a_graph_that_cannot_be_placed_is_refused_whole(self, tmp_path, kwargs, match):
+        recipe = _graph_recipe(tmp_path, [_graph_op()])
+        kwargs = {"tokenizer": GRAPH_TOKENIZER, **kwargs} if match != "pinned tokenizer" else kwargs
+        with pytest.raises(MisconfigurationException, match=match):
+            recipe_feature_interventions(recipe, support=TRANSCODER, **kwargs)
+
+    @pytest.mark.parametrize(
+        "ops, support, match, value_shape",
+        [
+            pytest.param([RESTRICTION], TRANSCODER, "would enumerate each one", None, id="restriction"),
+            pytest.param([_graph_op("add")], TRANSCODER, "clean capture", None, id="add-without-a-capture"),
+            pytest.param(
+                [_graph_op(transform=[{"statistic": {"name": "median"}}])],
+                TRANSCODER,
+                r"\['statistic'\] are not applied",
+                None,
+                id="statistic",
+            ),
+            pytest.param([_graph_op()], TRANSCODER, "`block_sparse` featurizer", [2], id="block-sparse"),
+        ],
+    )
+    def test_what_feature_tuples_cannot_express_is_refused_by_name(self, tmp_path, ops, support, match, value_shape):
+        nodes = NODES
+        if value_shape is not None:
+            nodes = NODES + [{**_node("b0", 4, {"kind": "absolute", "position": 0}, [0.5, -1.0], space="bsf")}]
+            nodes[-1]["baseline"] = [0.0, 0.0]
+        recipe = _graph_recipe(tmp_path, ops, nodes=nodes, value_shape=value_shape)
+        with pytest.raises(MisconfigurationException, match=match):
+            recipe_feature_interventions(recipe, support=support, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
+
+    def test_the_model_backend_refuses_a_graph_target_by_name(self, tmp_path):
+        recipe = _graph_recipe(tmp_path, [_graph_op()])
+        refusals = check_recipe(recipe, venngram_support(InterventionSupport.every(), latent_models=True))
+        assert any("analysis-backend path" in r for r in refusals), refusals
+        with pytest.raises(MisconfigurationException, match="analysis-backend path"):
+            recipe_interventions(recipe, site_widths={})
+
+    @pytest.mark.parametrize(
+        "detail, ops", [(TRANSCODER, {"replace"}), (CAPTURING, {"replace", "add"})], ids=["plain", "capturing"]
+    )
+    def test_the_subset_declaration_follows_the_feature_record(self, detail, ops):
+        from venngram.graphs import ANCHORS
+
+        subsets = venngram_feature_subsets(_feature_record(detail))
+        assert subsets.ops == ops and subsets.anchors == frozenset(ANCHORS) and not subsets.complement
+        assert subsets.featurizers == {"transcoder", "clt"} and subsets.values == {"scalar"}
+
+    def test_a_backend_without_constants_declares_no_subset_ops(self):
+        scores_only = FeatureTargetSupport(value_sources=frozenset({"top_feature_scores"}))
+        assert venngram_feature_subsets(_feature_record(scores_only)).ops == frozenset()
+
+    @pytest.mark.parametrize(
+        "ops, refused",
+        [([_graph_op()], False), ([RESTRICTION], True), ([_graph_op("add", baseline="baseline")], True)],
+        ids=["replace", "restriction", "add"],
+    )
+    def test_the_declaration_and_the_apply_path_agree(self, tmp_path, ops, refused):
+        """Venngram's check of the declaration refuses what the apply path refuses, so a recipe passing one passes
+        the other."""
+        recipe = _graph_recipe(tmp_path, ops)
+        declared = venngram_feature_subsets(_feature_record(TRANSCODER)).check_recipe(recipe)
+        assert bool(declared) is refused, declared
+        checked = check_recipe(recipe, venngram_feature_support(_feature_record(TRANSCODER)), analysis_backend=True)
+        assert checked == declared
+        if refused:
+            with pytest.raises(MisconfigurationException):
+                recipe_feature_interventions(recipe, support=TRANSCODER, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
+        else:
+            recipe_feature_interventions(recipe, support=TRANSCODER, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
