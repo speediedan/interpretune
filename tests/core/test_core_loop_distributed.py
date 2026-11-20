@@ -689,11 +689,13 @@ def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra,
     uninterrupted run's losses exactly: same sharded (or split) weights and optimizer state, same per-rank RNG
     streams, same sampler epoch."""
     checkpoint_dir = tmp_path / "ckpt"
-    _launch(placement, tmp_path, *extra, "--max-epochs", "2", "--out-name", "full")
+    # shuffled, as the training split is by default: the resumed run must also restore where the sampler's order was
+    _launch(placement, tmp_path, *extra, "--shuffle", "--max-epochs", "2", "--out-name", "full")
     _launch(
         placement,
         tmp_path,
         *extra,
+        "--shuffle",
         "--max-epochs",
         "2",
         "--out-name",
@@ -705,6 +707,7 @@ def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra,
         placement,
         tmp_path,
         *extra,
+        "--shuffle",
         "--max-epochs",
         "2",
         "--out-name",

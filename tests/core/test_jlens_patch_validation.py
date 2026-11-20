@@ -582,3 +582,23 @@ def test_nnsight_interventions_apply_in_forward_order_whatever_order_they_are_li
     assert torch.equal(torch.as_tensor(listed), torch.as_tensor(reversed_listing))
     # positive control: the edits changed the output, so the equality compares two applied interventions
     assert not torch.allclose(torch.as_tensor(listed)[0, -1], torch.as_tensor(pre)[0, -1])
+
+
+def test_position_set_gradient_operands_leave_other_gradient_rows_unchanged(nnsight_setup):
+    lm, _model, backend = nnsight_setup
+    point = f"blocks.{HOOK_LAYER}.hook_resid_post"
+    payload = {
+        point: {
+            "op": "replace",
+            "position_scope": "positions",
+            "positions": [2, 0],
+            "intervention_tensor": torch.stack([torch.zeros(D_MODEL), torch.ones(D_MODEL)]),
+        }
+    }
+    pre, post, _metric = backend.bwd_w_intervention(
+        lm, {"input_ids": torch.tensor([PROMPT_IDS])}, payload, lambda logits: logits[:, -1, 0].sum(), capture=[point]
+    )
+    assert torch.count_nonzero(pre[point][:, 2]) > 0
+    torch.testing.assert_close(post[point][:, 2], torch.zeros_like(post[point][:, 2]))
+    torch.testing.assert_close(post[point][:, 0], torch.ones_like(post[point][:, 0]))
+    torch.testing.assert_close(post[point][:, [1, 3, 4]], pre[point][:, [1, 3, 4]])

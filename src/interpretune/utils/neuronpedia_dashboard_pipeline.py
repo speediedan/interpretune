@@ -189,7 +189,11 @@ class NeuronpediaDashboardPipelineConfig:
     saedashboard_repo_root: Path = field(
         default_factory=lambda: _default_repo_root("SAEDASHBOARD_REPO_ROOT", "repos", "SAEDashboard")
     )
-    saelens_repo_root: Path = field(default_factory=lambda: _default_repo_root("SAELENS_REPO_ROOT", "repos", "SAELens"))
+    # sae-lens is a released dependency, so the generation subprocess imports the installed package. A SAELens
+    # checkout goes on its PYTHONPATH only when named here, as the preserved-baseline legs do: a default checkout
+    # on disk would silently shadow the release, and benchmark lineage (which resolves the installed package)
+    # would credit the release with a run that imported the checkout.
+    saelens_repo_root: Path | None = None
     neuronpedia_utils_root: Path = field(
         default_factory=lambda: _default_repo_root(
             "NEURONPEDIA_UTILS_ROOT", "repos", "neuronpedia", "utils", "neuronpedia-utils"
@@ -324,7 +328,8 @@ class NeuronpediaDashboardPipelineConfig:
         self.run_root = Path(self.run_root)
         self.export_root = Path(self.export_root)
         self.saedashboard_repo_root = Path(self.saedashboard_repo_root)
-        self.saelens_repo_root = Path(self.saelens_repo_root)
+        if self.saelens_repo_root is not None:
+            self.saelens_repo_root = Path(self.saelens_repo_root)
         self.neuronpedia_utils_root = Path(self.neuronpedia_utils_root)
         if self.run_name_suffix is not None:
             self.run_name_suffix = str(self.run_name_suffix).strip()
@@ -1075,7 +1080,9 @@ def _build_generation_env(config: NeuronpediaDashboardPipelineConfig) -> dict[st
     if config.cuda_visible_devices is not None:
         env["CUDA_VISIBLE_DEVICES"] = config.cuda_visible_devices
 
-    pythonpath_entries = [str(config.saelens_repo_root), str(config.saedashboard_repo_root)]
+    pythonpath_entries = [str(config.saedashboard_repo_root)]
+    if config.saelens_repo_root is not None:
+        pythonpath_entries.insert(0, str(config.saelens_repo_root))
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:
         pythonpath_entries.append(existing_pythonpath)
@@ -1695,19 +1702,7 @@ def _layer_runner_command(
             command.append(f"--clt-dtype={config.clt_dtype}")
         if config.clt_weights_filename:
             command.append(f"--clt-weights-filename={config.clt_weights_filename}")
-    if config.model_wrapper == "bridge":
-        command.append(
-            "--bridge-enable-compatibility-mode"
-            if config.bridge_enable_compatibility_mode
-            else "--no-bridge-enable-compatibility-mode"
-        )
-        if config.bridge_compatibility_mode_kwargs:
-            bridge_compatibility_kwargs_json = json.dumps(
-                config.bridge_compatibility_mode_kwargs,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            command.append(f"--bridge-compatibility-mode-kwargs-json={bridge_compatibility_kwargs_json}")
+    command.extend(_bridge_wrapper_args(config))
     if config.runner_log_resource_snapshots:
         command.append("--log-resource-snapshots")
     if config.runner_log_hook_aliases:
@@ -1799,6 +1794,21 @@ def _layer_runner_command(
     return command
 
 
+def _bridge_wrapper_args(config: NeuronpediaDashboardPipelineConfig) -> list[str]:
+    """The bridge wrapper's compatibility-mode arguments, for a runner told ``--model-wrapper=bridge``."""
+    if config.model_wrapper != "bridge":
+        return []
+    args = [
+        "--bridge-enable-compatibility-mode"
+        if config.bridge_enable_compatibility_mode
+        else "--no-bridge-enable-compatibility-mode"
+    ]
+    if config.bridge_compatibility_mode_kwargs:
+        kwargs_json = json.dumps(config.bridge_compatibility_mode_kwargs, sort_keys=True, separators=(",", ":"))
+        args.append(f"--bridge-compatibility-mode-kwargs-json={kwargs_json}")
+    return args
+
+
 def _legacy_layer_runner_command(
     config: NeuronpediaDashboardPipelineConfig,
     layer_num: int,
@@ -1869,6 +1879,12 @@ def _legacy_layer_runner_command(
                 "saedashboard_repo_root at a checkout that supports the option."
             )
         command.append(f"--capture-hook-name={config.capture_hook_name.format(layer=layer_num)}")
+    # The legacy runner defaults to the hooked wrapper, which TransformerLens 4.0 cannot build, so a runner that
+    # accepts the choice is given the configured one. A frozen baseline that predates the option keeps its hooked
+    # default: it runs under the transformer-lens 3.x interpreter it is measured with.
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--model-wrapper"):
+        command.append(f"--model-wrapper={config.model_wrapper}")
+        command.extend(_bridge_wrapper_args(config))
     if config.runner_log_resource_snapshots and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-resource-snapshots"
     ):
