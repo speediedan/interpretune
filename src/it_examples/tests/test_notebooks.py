@@ -870,6 +870,32 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
     _cleanup_notebook_artifacts()
 
 
+# The block-sparse featurizer notebook loads Mistral-7B in bf16 and streams Pile-10k documents for the group gate and
+# the screen's background, so it runs in the optional tier rather than a pull-request phase.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=19.5, optional=True)
+def test_sasa_blocks_notebook(tmp_path: Path):
+    """Execute the SASA blocks notebook on a few prompts and check its payload control ran, the paper's month group
+    was selected, and the frames and charts section reached its edits."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "sasa_blocks" / "sasa_blocks_frames_charts.ipynb",
+        parameters={"max_edit_prompts": 12, "n_background_docs": 16},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "features:sasa &amp; units:[3810]" in tables or "features:sasa & units:[3810]" in tables, "month group"
+    assert "principal cosines, block vs named subspace" in text, "the frames and charts section did not run"
+    assert "Moving a member one step around its ring" in tables, "the chart edits did not run"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -898,6 +924,7 @@ def test_notebook_discovery():
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "quickstart/cpu_quickstart.ipynb",
         "runners/runner_flexibility_demo.ipynb",
+        "sasa_blocks/sasa_blocks_frames_charts.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
     }
