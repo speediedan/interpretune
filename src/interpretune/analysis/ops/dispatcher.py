@@ -689,6 +689,9 @@ class AnalysisOpDispatcher:
             for name, definition in tensor_ops.items():
                 try:
                     executor = self._import_tensor_op_implementation(name, definition, source, revision)
+                    probe = None
+                    if "probe" in definition:
+                        probe = self._import_tensor_op_implementation(name, definition, source, revision, key="probe")
                     load_tensor_op(
                         name,
                         definition["op_spec"],
@@ -697,6 +700,7 @@ class AnalysisOpDispatcher:
                         collection=collection.name if collection else None,
                         version=collection.version if collection else None,
                         revision=revision,
+                        probe=probe,
                     )
                 except OpLoadError:
                     raise
@@ -704,12 +708,13 @@ class AnalysisOpDispatcher:
                     op_load_failure(f"Skipping tensor op {name!r} from {yaml_file}: {exc}")
 
     def _import_tensor_op_implementation(
-        self, name: str, definition: dict[str, Any], source: str, revision: str | None
+        self, name: str, definition: dict[str, Any], source: str, revision: str | None, key: str = "implementation"
     ) -> Callable:
-        """Import a tensor op's executor: from the collection's own revision for a hub op, by path otherwise."""
-        implementation = definition.get("implementation")
+        """Import a tensor op's executor (or, with ``key="probe"``, its contract probe): from the collection's own
+        revision for a hub op, by path otherwise."""
+        implementation = definition.get(key)
         if not isinstance(implementation, str) or "." not in implementation:
-            raise ValueError(f"tensor op {name!r} names no implementation (`module.function`): {implementation!r}")
+            raise ValueError(f"tensor op {name!r} names no {key} (`module.function`): {implementation!r}")
         if not source.startswith("hub:"):
             return self._import_callable(implementation)
         from interpretune.hub.trust import ensure_remote_code_trusted
