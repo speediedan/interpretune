@@ -259,16 +259,21 @@ class BaseSAELensModule(BaseITModule):
                     yield param
 
     def tunable_roles(self) -> dict[str, str]:
-        """Spliced SAEs' parameters take the ``latent:sae`` role (#758), or ``artifact`` for one configured
-        ``frozen`` (#812)."""
+        """Spliced SAEs take the ``latent:sae`` role (#758), or ``artifact`` for one configured ``frozen`` (#812),
+        declared by address (``module:attached_saes.<key>``, #875)."""
+        from interpretune.tuning.views import merge_roles, module_address
+
         roles = super().tunable_roles()  # cooperative, provided by BaseITModule
         attached = self._attached_saes()
-        if attached is not None:
-            frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
-            for key, sae in attached.items():
+        if attached is None:
+            return roles
+        frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
+        declared: dict[str, list[str]] = {}
+        for key, sae in attached.items():
+            if [*sae.parameters(), *sae.buffers()]:  # venngram refuses an address that selects nothing
                 role = "artifact" if key in frozen_keys else "latent:sae"
-                roles.update({f"attached_saes.{key}.{n}": role for n, _ in sae.named_parameters()})
-        return roles
+                declared.setdefault(role, []).append(f"attached_saes.{key}")
+        return merge_roles(roles, {role: module_address(*paths) for role, paths in declared.items()})
 
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}

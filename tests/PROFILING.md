@@ -77,17 +77,17 @@ Example sample output (for `torch`):
 Sample stacks for package: torch
 | # | pct total | pct package | stack                                                                                                |
 |---|-----------|-------------|------------------------------------------------------------------------------------------------------|
-| 1 | 3.31%     | 9.1%        | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)       |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                  |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/__init__.py:21)                       |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/protocol.py:27)                       |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/torch/__init__.py:416)      |
-| 2 | 0.11%     | 0.3%        | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)       |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                  |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/__init__.py:21)                       |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/protocol.py:27)                       |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/torch/__init__.py:1837)     |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/torch/_tensor.py:21)        |
+| 1 | 3.31%     | 9.1%        | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)       |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                  |
+|   |           |             | <module> (<repo>/src/interpretune/__init__.py:21)                       |
+|   |           |             | <module> (<repo>/src/interpretune/protocol.py:27)                       |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/torch/__init__.py:416)      |
+| 2 | 0.11%     | 0.3%        | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)       |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                  |
+|   |           |             | <module> (<repo>/src/interpretune/__init__.py:21)                       |
+|   |           |             | <module> (<repo>/src/interpretune/protocol.py:27)                       |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/torch/__init__.py:1837)     |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/torch/_tensor.py:21)        |
 ```
 
 6) Filter unique stacks by a substring that appears in the stack lines (e.g. to focus on the various `transformer_lens` init codepaths for both for `transformer_lens` and `sae_lens`):
@@ -115,88 +115,88 @@ Example output excerpt:
 Sample stacks for package: transformer_lens
 | # | pct total | pct package | stack                                                                                                                              |
 |---|-----------|-------------|------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | 6.52%     | 50.8%       | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/__init__.py:2)                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/import_utils.py:176)                                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/__init__.py:21)                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/train.py:12)                             |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/__init__.py:22)                                     |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/__init__.py:25)                                 |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/artifacts/artifact.py:30)                       |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/data_types.py:16)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/audio.py:11)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/media.py:13)              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/wb_value.py:4)            |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/wandb_setup.py:38)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/wandb_settings.py:23)                           |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pydantic/main.py:36)                                      |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pydantic/_internal/_decorators.py:29)                     |
-| 2 | 2.99%     | 23.3%       | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/__init__.py:2)                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/import_utils.py:176)                                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/__init__.py:1)                           |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/hook_points.py:20)                       |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/utils.py:23)                             |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/__init__.py:17)                                  |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/arrow_dataset.py:75)                             |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/arrow_reader.py:30)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/download/__init__.py:9)                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/download/download_manager.py:32)                 |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/utils/file_utils.py:48)                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/aiohttp/__init__.py:6)                                    |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/aiohttp/client.py:38)                                     |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/yarl/__init__.py:2)                                       |
-| 3 | 2.46%     | 19.2%       | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+| 1 | 6.52%     | 50.8%       | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/__init__.py:2)                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/import_utils.py:176)                                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/__init__.py:21)                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/train.py:12)                             |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/__init__.py:22)                                     |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/__init__.py:25)                                 |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/artifacts/artifact.py:30)                       |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/data_types.py:16)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/audio.py:11)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/media.py:13)              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/wb_value.py:4)            |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/wandb_setup.py:38)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/wandb_settings.py:23)                           |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/pydantic/main.py:36)                                      |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/pydantic/_internal/_decorators.py:29)                     |
+| 2 | 2.99%     | 23.3%       | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/__init__.py:2)                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/import_utils.py:176)                                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/__init__.py:1)                           |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/hook_points.py:20)                       |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/utils.py:23)                             |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/__init__.py:17)                                  |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/arrow_dataset.py:75)                             |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/arrow_reader.py:30)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/download/__init__.py:9)                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/download/download_manager.py:32)                 |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/datasets/utils/file_utils.py:48)                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/aiohttp/__init__.py:6)                                    |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/aiohttp/client.py:38)                                     |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/yarl/__init__.py:2)                                       |
+| 3 | 2.46%     | 19.2%       | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
 ...
 
 Sample stacks for package: sae_lens
 | # | pct total | pct package | stack                                                                                                                              |
 |---|-----------|-------------|------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | 6.52%     | 45.9%       | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/__init__.py:2)                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/import_utils.py:176)                                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/__init__.py:21)                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/train.py:12)                             |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/__init__.py:22)                                     |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/__init__.py:25)                                 |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/artifacts/artifact.py:30)                       |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/data_types.py:16)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/audio.py:11)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/media.py:13)              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/wb_value.py:4)            |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/wandb_setup.py:38)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/wandb/sdk/wandb_settings.py:23)                           |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pydantic/main.py:36)                                      |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pydantic/_internal/_decorators.py:29)                     |
-| 2 | 2.99%     | 21.1%       | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+| 1 | 6.52%     | 45.9%       | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/__init__.py:2)                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/import_utils.py:176)                                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/__init__.py:21)                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/train.py:12)                             |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/__init__.py:22)                                     |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/__init__.py:25)                                 |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/artifacts/artifact.py:30)                       |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/data_types.py:16)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/audio.py:11)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/media.py:13)              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/data_types/base_types/wb_value.py:4)            |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/wandb_setup.py:38)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/wandb/sdk/wandb_settings.py:23)                           |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/pydantic/main.py:36)                                      |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/pydantic/_internal/_decorators.py:29)                     |
+| 2 | 2.99%     | 21.1%       | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
 |...
-| 5 | 0.21%     | 1.5%        | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/tests/__init__.py:17)                                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/__init__.py:2)                                                |
-|   |           |             | <module> (/home/speediedan/repos/interpretune/src/interpretune/utils/import_utils.py:176)                                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/__init__.py:14)                          |
-|   |           |             | <module> (/mnt/cache/speediedan/.venvs/it_latest/lib/python3.12/site-packages/transformer_lens/SVDInterpreter.py:20)                    |
+| 5 | 0.21%     | 1.5%        | <module> (<venv>/lib/python3.12/site-packages/pytest/__main__.py:9)                                     |
+|   |           |             | <module> (<repo>/tests/__init__.py:17)                                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/__init__.py:2)                                                |
+|   |           |             | <module> (<repo>/src/interpretune/utils/import_utils.py:176)                                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/__init__.py:8)                                   |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/__init__.py:1)                              |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/batchtopk_sae.py:8)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/jumprelu_sae.py:10)                         |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/sae_lens/saes/sae.py:27)                                  |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/__init__.py:14)                          |
+|   |           |             | <module> (<venv>/lib/python3.12/site-packages/transformer_lens/SVDInterpreter.py:20)                    |
 ```

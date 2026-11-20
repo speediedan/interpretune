@@ -103,10 +103,11 @@ backend's own intervention path (`fwd_w_intervention`), and records the greatest
 exact weight form is refused with the reason before any forward runs. Unit ops need the unit axis of `mlp.out`'s weight
 (an output span needs only its output side), so the weight form resolves through the module's view when that view places
 units, else through venngram's registry map for the model the module carries, and a model whose map records no `layout`
-is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps, so no
-published map describes it and the op refuses it (resolving maps through the modules the bridge wraps is tracked in
-[#1055](https://github.com/speediedan/interpretune/issues/1055)); an nnsight composition registers the model's own
-modules and is described by its map. The model-backend conformance suite runs the same comparison for a per-neuron
+is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps but keeps
+the modules themselves, so its view resolves the wrapped model's map through them: each tensor takes the layer,
+component and unit axis of the same tensor in the wrapped model, and the op runs on a TransformerLens composition as on
+the others ([#1055](https://github.com/speediedan/interpretune/issues/1055)). An nnsight composition registers the
+model's own modules and is described by its map directly. The model-backend conformance suite runs the same comparison for a per-neuron
 recipe on every target whose view places units, and for an output rejection on every target whose view resolves
 `mlp.out`, each together with a check that taking the weight form back restores the base logits exactly.
 
@@ -178,6 +179,17 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
     (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
     passes it as `clean_activations`.
+  - **Graph subsets, on the analysis backend:** an op that targets a venngram graph subset (`target: {graph: <name>}`,
+    a pruned piece of an attribution graph as a `graph_subset` document) applies the reasoning it describes in
+    another prompt. `recipe_feature_interventions(..., token_ids=, tokenizer=)` places each transcoder or CLT node at
+    the stage's site by its anchor in the destination prompt (an absolute position, an offset from the end, a
+    token-matched span, or every position), refusing the whole plan if any node does not resolve or two land on one
+    coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
+    activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
+    A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
+    feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
+    scalar) are not yet supported on this path and are refused by name
+    ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
 
@@ -365,21 +377,93 @@ A gradient target is translated with `flow="grad"` for the backward surface
 
 Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
 
+## Latent addresses: blocks, frames, charts and linear spaces
+
+`interpretune.analysis.venngram` resolves a latent address against an explicit catalog of loaded latent models
+(`LatentCatalog`). This is the addressing and coordinate layer: it reads and edits coordinates of tensors it is
+given. A frame or chart edit also runs natively inside a backend's forward pass (see "Native latent edits" below).
+
+**One address form for every dictionary.** A `LatentBinding` declares a loaded model at one layer and activation point,
+its decoder rows, and its block size $b$: $b = 1$ for an SAE or transcoder, and block $g$ of a block-sparse featurizer
+is the latent range $[gb, (g+1)b)$. So `features:bsf_l17 & point:resid_post & layers:17 & units:[412]` selects one
+block exactly as `features:sae & units:[1234]` selects one feature, and unit slices and negative units count blocks.
+A named basis at a site is a `SubspaceBinding`, addressed as `subspace:<name>`, and is indivisible. External ids
+(a Neuronpedia id, an SAE Lens pair, a circuit-tracer feature) resolve only through aliases the catalog is given to
+canonical addresses; nothing is downloaded or inferred from an id's spelling.
+
+**Frames.** A block's internal basis is arbitrary (any rotation in $O(b)$ preserves its span), so an address never
+names a coordinate inside a block. Coordinate reads and edits name a frame: a `LatentFrame` is a named, exactly
+versioned orthonormal basis for one target, checked against the target's current decoder rows for equal rank and
+span each time it is used. Replacing framed coordinates changes only the target's span and keeps the orthogonal
+complement and autograd.
+
+**Charts.** A `LatentChart` is a named, versioned coordinate system fitted in one frame version: its kind, intrinsic
+dimension, periodic dimensions with their periods, and fitted parameters. Each kind is a registered handler
+(`register_chart_kind`); `affine` (a flat chart, no periodic dimension) and `pca_plane` (a plane read as a radius and
+an angle of period $2\pi$) are built in, and any other kind, such as a spline or a flow, is refused by name until a
+caller registers it. Edits are made in chart coordinates: `set`, `path` (piecewise linear through waypoints, the
+shorter way round each periodic dimension), `rotate` (periodic dimensions only) and `scale_norm`. An edit moves the
+frame coordinates by exactly the chart's change, so the part off the chart is kept. Charts can travel in an address
+book's top-level `charts` key, which venngram keeps without changing what the book's sets select
+(`charts_from_book`).
+
+**Linear spaces.** Features trained on $J_\ell h$ rather than on $h$ have decoder rows in that space. A `LinearSpace`
+carries the map $M$ and writes an edit back through its declared inverse or its pseudoinverse; the map composed with
+the inverse must be the identity on the space, so a write lands the requested space coordinates exactly and leaves
+the null space of $M$ as it was. A map whose rank is below its dimension is refused rather than written in least
+squares. A binding names its space (`space="jlens"`), the address qualifier `space:jlens` selects by it, and the
+catalog's `site_coordinates`, `replace_site_coordinates` and `apply_site_chart` read and write site activations
+through it.
+
+### Native latent edits
+
+`latent_edit_spec(catalog, target, op, name=..., version=..., **args)` compiles one frame or chart edit of one
+feature block into a hook name and an `InterventionSpec` for `model_fwd_intervention` or a backend's
+`fwd_w_intervention`. The hook is the latent sub-hook of the model the block belongs to,
+`blocks.<layer>.<site>.hook_sae_acts_post`, so the edit runs on both CPU backends with the latent model attached
+(`use_latent_models`), and its token scope (`position_scope`) is independent of the block it selects.
+
+| op | catalog edit | arguments |
+| --- | --- | --- |
+| `frame_replace` | `replace_coordinates` in frame `name` | `coordinates` |
+| `chart_set` | `apply_chart(op="set")` in chart `name` | `value` |
+| `chart_path` | `apply_chart(op="path")` | `waypoints`, `t` |
+| `chart_rotate` | `apply_chart(op="rotate")` | `by` |
+| `chart_scale_norm` | `apply_chart(op="scale_norm")` | `factor` |
+
+At the latent sub-hook the activations are the block's latent coefficients $a_B$, and the values the catalog edits
+are the block's decoded contribution $v = a_B D_B$, with $D_B$ the block's decoder rows. The executor computes the
+catalog's own edit $v'$ and writes back the minimum-norm change of the coefficients,
+$a_B' = a_B + d\left(v' - v\right) D_B^{+}$, where $d$ is the spec's operand, the dose (1 applies the edit, 0 is the
+identity). The frame spans the rows of $D_B$, so the decoded contribution moves by exactly $d\left(v' - v\right)$, and
+the other blocks and the latent model's error term are untouched.
+
+The ops are tensor ops in the bundled `latent` op collection, each with its `OpSpec` and an executor registered by
+name. Before any pass, both backends refuse an edit whose latent sub-hook has no attached model, whose attached model
+is not the object the target resolved to, or whose decoder rows have changed since the catalog was built, and an edit
+on the gradient flow. An unknown or stale frame or chart version is refused when the spec is compiled.
+
+A frame-free edit of a whole block needs no new op: `block_edit_spec(catalog, target, op, value=...)` writes `set` (the
+block's activations from a source run) and `ablate` as a core `replace` on the block's columns, and `scale_norm` as a
+core `scale`, which scales the block's decoded contribution, and so its norm, by the same factor.
+
 ## Gradient interventions
 
 `model_bwd_intervention` takes the payload `model_fwd_intervention` takes, and applies each spec to the gradient at its
-hook point while a backward pass runs. The gradient at a point is the gradient of the metric with respect to the
-activation there, summed over every consumer of that activation, so it is what flows on to earlier points: an edit
-replaces it before it does, and every point upstream of the edit sees the effect. The forward pass is not edited, so
-the metric is the same with and without the interventions. Specs at one point fold in declaration order, as on the
-forward pass.
+hook point while a backward pass runs. The gradient at a point is the gradient of the readout (the scalar the backward
+pass starts from) with respect to the activation there, summed over every consumer of that activation, so it is what
+flows on to earlier points: an edit replaces it before it does, and every point upstream of the edit sees the effect.
+The forward pass is not edited, so the readout is the same with and without the interventions. Specs at one point fold
+in declaration order, as on the forward pass.
 
-- **The metric** is the summed last-token logit of `logit_target_ids` (else the concept groups' token ids), or, with
-  neither, of each row's own top prediction.
+- **The readout** is `readout` when given (see [Readouts](#readouts)); otherwise the summed last-token logit of
+  `logit_target_ids` (else the concept groups' token ids), or, with neither, of each row's own top prediction. A
+  `readout` beside `logit_target_ids` is refused, since only the default reads the ids.
 - **What is stored**: the gradient at every `grad_capture` site from a baseline backward pass and from the intervened
   one (`pre_intervention_grad_values`, `post_intervention_grad_values`, flattened beside `grad_shape` and
-  `grad_point_names`), the metric, and `intervention_grad_position_effect`, the largest change in any captured gradient
-  at each position. Without `grad_capture`, the intervention sites are captured, each after its own edit.
+  `grad_point_names`), the readout's value (`bwd_intervention_metric`), and `intervention_grad_position_effect`, the
+  largest change in any captured gradient at each position. Without `grad_capture`, the intervention sites are
+  captured, each after its own edit.
 - **Sites by address**: `grad_capture` takes hook names or patterns, or one venngram site address, which
   `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
   `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
@@ -464,7 +548,131 @@ cfg = AnalysisCfg(
 ```
 
 Each stored row holds both gradients at every captured site, flattened beside `grad_shape` (the shape code) and
-`grad_point_names`, the metric, and `intervention_grad_position_effect`.
+`grad_point_names`, the readout's value, and `intervention_grad_position_effect`.
+
+### Readouts
+
+Which scalar a gradient is taken of decides what an edit to it means, since a vector added to a gradient is scaled by
+it. A `Readout` names that scalar as `fn(logits, activations)`, where `activations` holds the activation at each site
+in `sites` from the same forward pass the backward runs from, so the scalar can be a logit difference, an intermediate
+activation's projection onto a probe or concept direction, or a latent model's feature activation
+(`<hook>.hook_sae_acts_post`, with the latent model attached). It must return a scalar tensor, and use only standard
+PyTorch ops, so a traced backend can apply it to its proxies. A plain callable of the logits is a readout reading no
+sites, as `metric` is in the example above. Sites are hook names or `*` patterns: an exact name is handed back under
+the name as written, and each match of a pattern under its concrete name.
+
+```python
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+
+from interpretune.adapters.transformer_lens.backends import TLModelBackend
+from interpretune.analysis.backends import Readout
+
+model = TransformerBridge.boot_transformers("gpt2", device="cpu")
+tokens = model.to_tokens("The Eiffel Tower is in the city of")
+paris, london = model.to_single_token(" Paris"), model.to_single_token(" London")
+# the unembedding direction that separates the two answers, read at block 8's output instead of at the logits
+direction = (model.W_U[:, paris] - model.W_U[:, london]).detach()
+
+
+def logit_difference(logits, activations):
+    return (logits[:, -1, paris] - logits[:, -1, london]).sum()
+
+
+def block_8_projection(logits, activations):
+    return (activations["blocks.8.hook_out"][:, -1] @ direction).sum()
+
+
+readouts = {
+    "logit difference": Readout(logit_difference),
+    "block 8 projection": Readout(block_8_projection, sites=("blocks.8.hook_out",)),
+}
+for name, readout in readouts.items():
+    pre, _, value = TLModelBackend().bwd_w_intervention(
+        model, {"input": tokens}, {}, readout, capture=["blocks.2.hook_out", "blocks.8.hook_out"]
+    )
+    norms = "  ".join(f"{site} {pre[site][:, -1].norm():.2f}" for site in pre)
+    print(f"{name:<19} value {value.item():6.2f}  last-position gradient norm: {norms}")
+```
+
+```text
+logit difference    value  -0.16  last-position gradient norm: blocks.2.hook_out 0.51  blocks.8.hook_out 0.37
+block 8 projection  value  -9.79  last-position gradient norm: blocks.2.hook_out 3.51  blocks.8.hook_out 3.02
+```
+
+The projection's gradient at block 8's output is the direction itself (its norm is the direction's), since nothing
+after block 8 reaches it; below block 8 the two readouts differ by everything blocks 9 to 11 and the final norm do to
+the difference. A gradient captured at a site the readout reads includes the readout's own contribution, beside what
+flows back from the logits.
+
+In an analysis session, pass the readout as the op's `readout` input:
+
+```python
+cfg = AnalysisCfg(
+    target_op=it.model_bwd_intervention,
+    run_inputs={"interventions": payload, "grad_capture": ["blocks.2.hook_out"], "readout": readouts["block 8 projection"]},
+)
+```
+
+### A readout declared in a treatment
+
+A venngram treatment whose stages act on gradients (`of: grad`) declares the readout they are gradients of, as a
+weighted sum of terms, each a registered reduction of the activations a book set addresses at a token scope; a stage
+may declare its own in place of the treatment's. `recipe_readout` (`interpretune.analysis.venngram`) executes that
+declaration as a `Readout`, which goes beside the payload `recipe_interventions(..., flow="grad")` translates:
+
+```yaml
+readout:                                              # a logit difference plus a block-8 projection
+  terms:
+    - {reduce: sum, set: answer_logit, tokens: last, weight: 1.0}     # point:unembed.hook_out & units:[1000]
+    - {reduce: sum, set: foil_logit, tokens: last, weight: -1.0}      # point:unembed.hook_out & units:[2000]
+    - {reduce: project, set: block8, tokens: last, operand: probe}    # point:hook_out & layers:8
+```
+
+```python
+from interpretune.analysis.venngram import recipe_interventions, recipe_readout
+
+payload = recipe_interventions(recipe, site_widths=widths, flow="grad")
+readout = recipe_readout(recipe, n_layers=model.cfg.n_layers)  # None: the recipe predates readouts; the default applies
+cfg = AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs={"interventions": payload, "readout": readout})
+```
+
+- **What a term reads.** A block site is read from the forward pass the backward runs from, as a callable readout's
+  sites are, and a set selecting several sites reads their addressed units side by side in layer order.
+  `point:unembed.hook_out` is the logits, whose units are the vocabulary. Units are resolved against the activation's
+  width when the readout runs, and a term without `units` reads every unit of its sites.
+- **Token scopes:** `last`, `all`, and explicit `positions` (columns of the padded batch). `prompt`, `generated` and
+  `slice` are refused.
+- **Reductions:** `sum`, `project` (each token's values dotted with the operand, a vector over the addressed units in
+  their order) and `norm`, each summed over the term's tokens; the readout is the weighted sum of the terms, summed over
+  the batch's rows, as the default readout is. The executors are checked against venngram's conformance vectors, and
+  `register_readout_executor` adds one for a reduction registered in venngram only if it passes them. The support record
+  declares the reductions executed here (`readouts`), so `check_recipe` refuses a treatment using any other.
+- **One scalar per backward pass.** Gradient stages declaring different readouts are refused rather than applied under
+  one of them; apply the stages that share a readout together.
+
+### Changing the readout, or editing its gradient
+
+Two things move the gradient an upstream site receives, and they answer different questions:
+
+- **Changing the readout** changes which scalar is differentiated: a loss, a logit difference in place of one logit, a
+  probe's projection in place of the logits. Every gradient then follows from the new scalar through the unchanged
+  graph. It answers "what drives this quantity?".
+- **Editing the gradient at a site** keeps the scalar, and changes how its derivative propagates past that site, at
+  the positions the edit's scope selects, with the forward pass untouched. It answers "what reaches the earlier sites
+  through this one, and what changes if it does not?".
+
+The two coincide in one case. An `add` edit of a vector $v$ at site $s$ gives every site upstream of $s$ the gradient
+of $R + \langle v, h_s \rangle$, the readout $R$ plus a linear term in the activation $h_s$, with $v$ held constant: on
+the example's prompt the two agree at `blocks.2.hook_out` to float32 rounding. A zeroing (`replace` with zeros),
+`scale` or `project` edit has no such counterpart. Zeroing the gradient at $s$ for the last token is a stop-gradient on
+that position's activation: it removes every path from the readout through it and keeps every other path. For one
+input that equals the gradient of $R - \langle g_s, h_s \rangle$, where $g_s$ is that input's own gradient at $s$, so it
+takes the backward pass to state; across inputs the edited gradient is not the gradient of any single function, so no
+readout reproduces it. With the logit difference as the readout, zeroing the
+gradient at `blocks.5.hook_in` for the last token takes the last position's gradient at `blocks.2.hook_out` from 0.51
+to 0, while the earlier positions' falls only from 0.94 to 0.89: what attention at block 5 and above carried from them
+to the last token still reaches them.
 
 ## Intervention ops
 

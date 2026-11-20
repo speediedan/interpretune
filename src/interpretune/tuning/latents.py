@@ -361,3 +361,20 @@ def latent_model_roles(root: nn.Module) -> dict[str, str]:
         tensors = [*latent.named_parameters(), *latent.named_buffers()]
         roles.update({f"{LATENT_MODELS_ATTR}.{name}.{n}": role for n, _ in tensors})
     return roles
+
+
+def latent_model_role_addresses(root: nn.Module) -> dict[str, str]:
+    """The roles of :func:`latent_model_roles`, declared by address: each role mapped to the modules it covers
+    (``{"latent:sae": "module:latent_models.sae"}``), as venngram views take them (``roles=``)."""
+    from interpretune.tuning.views import merge_roles, module_address
+
+    held = _latent_models(root)
+    if held is None:
+        return {}
+    sites = root.__dict__.get(_SITES_ATTR, {})
+    declared = []
+    for name, latent in held.items():
+        if [*latent.parameters(), *latent.buffers()]:  # venngram refuses an address that selects nothing
+            role = "artifact" if sites.get(name, (None, False))[1] else f"latent:{name}"
+            declared.append({role: module_address(f"{LATENT_MODELS_ATTR}.{name}")})
+    return merge_roles(*declared)

@@ -212,7 +212,7 @@ nightly
 # Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
   --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \
-  --venv-dir=/mnt/cache/speediedan/.venvs/it_latest \
+  --venv-dir=${IT_VENV_BASE} \
   --from-source="finetuning_scheduler:~/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
 ```
 

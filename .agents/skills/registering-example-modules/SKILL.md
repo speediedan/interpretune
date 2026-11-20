@@ -209,8 +209,8 @@ FIXTURE_CFGS = {
 Test that the registry lookup works:
 
 ```bash
-cd /home/speediedan/repos/interpretune && \
-source /mnt/cache/speediedan/.venvs/it_latest/bin/activate && \
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 python -c "
 from tests.module_registry import TEST_MODULE_REGISTRY
 from interpretune.protocol import Adapter
