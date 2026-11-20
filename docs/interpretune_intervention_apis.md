@@ -179,6 +179,17 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
     (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
     passes it as `clean_activations`.
+  - **Graph subsets, on the analysis backend:** an op that targets a venngram graph subset (`target: {graph: <name>}`,
+    a pruned piece of an attribution graph as a `graph_subset` document) applies the reasoning it describes in
+    another prompt. `recipe_feature_interventions(..., token_ids=, tokenizer=)` places each transcoder or CLT node at
+    the stage's site by its anchor in the destination prompt (an absolute position, an offset from the end, a
+    token-matched span, or every position), refusing the whole plan if any node does not resolve or two land on one
+    coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
+    activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
+    A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
+    feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
+    scalar) are not yet supported on this path and are refused by name
+    ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
 

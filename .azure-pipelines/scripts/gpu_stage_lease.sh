@@ -193,7 +193,7 @@ case "$ACTION/$STAGE" in
         found=0 large_gb=0 multi=0
         needs_dir=${IT_GPU_STAGE_NEEDS_DIR:-/evidence/it-phases/stage-needs}  # written by the collect step
         if [[ -d "$needs_dir" ]]; then
-            eval "$(python3 "$(dirname "$0")/../../tests/gpu_ci/stage_needs.py" "$IT_GPU_STAGE_NEEDS_DIR" \
+            eval "$(python3 "$(dirname "$0")/../../tests/gpu_ci/stage_needs.py" "$needs_dir" \
                 "${IT_GPU_SMALL_MAX_GB:?the small stage exports it}" 2>/dev/null || echo found=0)"
         fi
         if [[ "$found" != 1 ]]; then
