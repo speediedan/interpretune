@@ -246,6 +246,34 @@ def test_compute_attribution_graph_impl_decomposes_graph() -> None:
     assert torch.equal(result.logit_target_ids, graph.logit_token_ids.cpu())
 
 
+class TestOnePromptPerAttribution:
+    """A batch of several prompts is refused, never attributed from its first row with the rest dropped."""
+
+    @pytest.mark.parametrize(
+        "analysis_batch, batch",
+        [
+            pytest.param(AnalysisBatch(prompts=["Paris Austin", "Dallas London"]), None, id="prompts"),
+            pytest.param(AnalysisBatch(), {"input": torch.tensor([[0, 3], [2, 1]])}, id="token_ids"),
+        ],
+    )
+    def test_a_batch_of_two_prompts_is_refused(self, analysis_batch: AnalysisBatch, batch) -> None:
+        module = _FakeModule(graph=_make_graph())
+        with pytest.raises(ValueError, match="carries 2 prompts; run it at batch size 1"):
+            compute_attribution_graph_impl(module, analysis_batch, batch=batch, batch_idx=0)
+
+    @pytest.mark.parametrize(
+        "analysis_batch, batch",
+        [
+            pytest.param(AnalysisBatch(prompts=["Paris Austin"]), None, id="prompts"),
+            pytest.param(AnalysisBatch(), {"input": torch.tensor([[0, 3]])}, id="token_ids"),
+            pytest.param(AnalysisBatch(), {"input": torch.tensor([0, 3])}, id="unbatched_token_ids"),
+        ],
+    )
+    def test_a_single_prompt_resolves(self, analysis_batch: AnalysisBatch, batch) -> None:
+        resolved = DEFAULT_CT_ANALYSIS_BACKEND.resolve_prompt(_FakeModule(), analysis_batch, batch)
+        assert resolved == "Paris Austin"
+
+
 def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direction() -> None:
     graph = _make_graph()
     module = _FakeModule(graph=graph)

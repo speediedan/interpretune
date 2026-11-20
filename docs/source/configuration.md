@@ -40,6 +40,69 @@ tensors — token IDs, attention masks, embedding indices (`LongTensor`) — pas
 which is exactly what embedding layers require. If you see mixed-precision surprises, audit the
 float tensors in your batch; the integer inputs are not the issue.
 
+## PyTorch profiling: `profiler_cfg` and `--trainer.profiler`
+
+Each training-loop interface configures the PyTorch profiler its own way, and the two accept the same summary options.
+
+**Core loop.** A module's `profiler_cfg` runs the core runners' train, test and analysis loops under
+`torch.profiler.profile`, stepped once per batch:
+
+```yaml
+profiler_cfg:
+  which: pytorch
+  pytorch_profiler_cfg:
+    activities: [cpu, cuda]
+    schedule: {wait: 1, warmup: 1, active: 3}  # torch.profiler.schedule's arguments
+    record_shapes: true
+    profile_memory: true
+    trace_dir: profiler_logs        # default: <core_log_dir>/pytorch_profiler
+    filename: rte_profile           # write <trace_dir>/<phase>-rte_profile.txt
+    sort_by_key: cpu_time_total
+    row_limit: 50
+    max_name_column_width: 100
+```
+
+Every window the schedule records is written as a TensorBoard trace to `trace_dir`. With `filename` set, the loop also
+writes a table of the last recorded window's operators to `<trace_dir>/<phase>-<filename>.txt`, where `<phase>` is
+`train`, `test` or `analysis` (a distributed run appends `-<rank>`). `sort_by_key` (default `cpu_time_total`),
+`row_limit` (default 20) and `max_name_column_width` (default 55) shape that table, and setting them without
+`filename` is refused. They are the names Lightning's `PyTorchProfiler` and finetuning-scheduler's example
+`ExtendedPyTorchProfiler` use, so a configuration moves between the two interfaces unchanged, with one difference:
+Lightning accepts a fixed set of sort keys (`cpu_time_total`, `cuda_time_total`, `count` and the memory columns among
+them), while the core loop accepts any column of the table, `self_cpu_time_total` included. The core CLI takes the
+same settings as flags:
+
+```bash
+interpretune --run_command test --config <session config> \
+  --profiler_cfg.which pytorch \
+  --profiler_cfg.pytorch_profiler_cfg '{"activities": ["cpu"], "filename": "rte_profile", "row_limit": 50}'
+```
+
+**Lightning.** A Lightning `Trainer` runs its own loops, so a Lightning composition refuses `profiler_cfg` and uses
+Lightning's own profiler argument, in a configuration's `trainer` block or as `--trainer.profiler`:
+
+```yaml
+trainer:
+  profiler:
+    class_path: lightning.pytorch.profilers.PyTorchProfiler
+    init_args:
+      dirpath: profiler_logs
+      filename: rte_profile         # write <dirpath>/<stage>-rte_profile.txt
+      sort_by_key: cpu_time_total
+      row_limit: 50
+    dict_kwargs:                    # passed to torch.profiler.profile
+      record_shapes: true
+      profile_memory: true
+```
+
+Lightning's `PyTorchProfiler` takes `schedule` only as a callable, which a configuration file cannot hold. For a
+schedule and `max_name_column_width` from configuration, point `class_path` at
+`fts_examples.profiling.extended_profiler.ExtendedPyTorchProfiler` from finetuning-scheduler's examples, which adds
+`schedule_cfg` (the arguments of `torch.profiler.schedule`) and `max_name_column_width` to the same `init_args`.
+
+Enable one profiler per run: the PyTorch profiler or the memory profiler below, not both. `ITConfig` refuses a
+configuration that enables both.
+
 ## Memory profiling: `memprofiler_cfg`
 
 The `memprofiler` extension runs on finetuning-scheduler's profiling core (`finetuning_scheduler.profiling`), the same

@@ -76,7 +76,8 @@ class AnalysisBackendCore(Protocol):
         """Recover the single prompt string an analysis is operating on.
 
         The prompt may have been carried on the analysis batch or only survive as token ids in the encoding, so
-        implementations resolve from whichever source is populated (decoding if needed).
+        implementations resolve from whichever source is populated (decoding if needed). A batch of several prompts is
+        refused rather than resolved to one of them.
         """
         ...
 
