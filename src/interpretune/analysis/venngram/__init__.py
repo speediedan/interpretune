@@ -28,6 +28,7 @@ from interpretune.analysis.venngram.charts import (
 )
 from interpretune.analysis.venngram.export import export_book
 from interpretune.analysis.venngram.fetch import FetchedRecipe, load_recipe
+from interpretune.analysis.venngram.graphs import export_graph_subset
 from interpretune.analysis.venngram.latents import (
     LatentBinding,
     LatentCatalog,
@@ -73,6 +74,7 @@ __all__ = [
     "evaluate_readout_case",
     "executed_readouts",
     "export_book",
+    "export_graph_subset",
     "load_recipe",
     "normalized_unit_doses",
     "recipe_feature_interventions",
