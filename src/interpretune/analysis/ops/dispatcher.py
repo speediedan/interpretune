@@ -571,8 +571,11 @@ class AnalysisOpDispatcher:
             self.load_definitions()
         self._finish_compilation()
 
-    def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
-        """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
+    def _collection_for(
+        self, yaml_file: Path, yaml_content: dict[str, Any], record: bool = True
+    ) -> CollectionSpec | None:
+        """Parse a YAML's ``collection:`` header, recording it per file for later attribution (``record=False`` for a
+        pass that runs on every load: ``_op_collections`` holds only what compilation parsed).
 
         Fail-soft on a malformed header, matching the surrounding load paths: the ops still load, just without
         collection identity, which surfaces as a missing version in ``op_info`` rather than a dead session.
@@ -582,7 +585,7 @@ class AnalysisOpDispatcher:
         except (ValueError, TypeError) as bad_header:
             op_load_failure(f"Ignoring invalid `{COLLECTION_HEADER_KEY}` header in {yaml_file}: {bad_header}")
             return None
-        if collection is not None:
+        if collection is not None and record:
             self._op_collections[str(yaml_file)] = collection
         return collection
 
@@ -671,8 +674,10 @@ class AnalysisOpDispatcher:
                 # a substring gate before parsing: most files define no tensor op, and this runs on every load,
                 # cache hits included, where nothing else parses YAML
                 yaml_content = yaml.safe_load(text) if "op_spec" in text else None
-            except (OSError, yaml.YAMLError):
-                continue  # `_load_raw_definitions` reports an unreadable file; nothing here to register
+            except Exception:
+                # whatever `_load_raw_definitions` treats as an unreadable file (any failure, fail-soft per file) is
+                # reported there; nothing here to register
+                continue
             if not isinstance(yaml_content, dict):
                 continue
             tensor_ops = {
@@ -683,13 +688,16 @@ class AnalysisOpDispatcher:
             from interpretune.analysis.backends.ops import load_tensor_op
 
             source = self._op_source_for(yaml_file)
-            collection = self._collection_for(yaml_file, yaml_content)
+            collection = self._collection_for(yaml_file, yaml_content, record=False)
             revision = None
             if source.startswith("hub:"):
                 revision = self._cache_manager.hub_commit_for_namespace(source.split(":", 1)[1])
             for name, definition in tensor_ops.items():
                 try:
                     executor = self._import_tensor_op_implementation(name, definition, source, revision)
+                    probe = None
+                    if "probe" in definition:
+                        probe = self._import_tensor_op_implementation(name, definition, source, revision, key="probe")
                     load_tensor_op(
                         name,
                         definition["op_spec"],
@@ -698,6 +706,7 @@ class AnalysisOpDispatcher:
                         collection=collection.name if collection else None,
                         version=collection.version if collection else None,
                         revision=revision,
+                        probe=probe,
                     )
                 except OpLoadError:
                     raise
@@ -705,12 +714,13 @@ class AnalysisOpDispatcher:
                     op_load_failure(f"Skipping tensor op {name!r} from {yaml_file}: {exc}")
 
     def _import_tensor_op_implementation(
-        self, name: str, definition: dict[str, Any], source: str, revision: str | None
+        self, name: str, definition: dict[str, Any], source: str, revision: str | None, key: str = "implementation"
     ) -> Callable:
-        """Import a tensor op's executor: from the collection's own revision for a hub op, by path otherwise."""
-        implementation = definition.get("implementation")
+        """Import a tensor op's executor (or, with ``key="probe"``, its contract probe): from the collection's own
+        revision for a hub op, by path otherwise."""
+        implementation = definition.get(key)
         if not isinstance(implementation, str) or "." not in implementation:
-            raise ValueError(f"tensor op {name!r} names no implementation (`module.function`): {implementation!r}")
+            raise ValueError(f"tensor op {name!r} names no {key} (`module.function`): {implementation!r}")
         if not source.startswith("hub:"):
             return self._import_callable(implementation)
         from interpretune.hub.trust import ensure_remote_code_trusted

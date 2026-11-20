@@ -63,6 +63,7 @@ from interpretune.analysis.backends.feature_selection import (
     select_top_feature_indices,
 )
 from interpretune.analysis.backends.interventions import (
+    LATENT_SUBHOOK,
     InterventionDict,
     InterventionSpec,
     InterventionValue,
@@ -72,6 +73,7 @@ from interpretune.analysis.backends.interventions import (
     normalize_position_scope,
     require_op,
     require_flow,
+    require_attached_latent_models,
     require_intervention_support,
     require_position_scope,
     build_intervention_dict,
@@ -135,8 +137,10 @@ __all__ = [
     "ModuleCapabilities",
     "apply_feature_score_sign_filter",
     "apply_feature_selection_filter",
+    "LATENT_SUBHOOK",
     "apply_intervention",
     "apply_op",
+    "require_attached_latent_models",
     "track_gradient",
     "Readout",
     "ReadoutFn",
