@@ -1,0 +1,66 @@
+# Collection header: versions this family's op contract set, not the interpretune package (see sae_ops.yaml).
+#
+# Tensor ops only: each is a frame or chart edit of one feature block, run at the latent sub-hook of the latent model
+# the block belongs to (compiled by interpretune.analysis.venngram.latent_edit_spec). The shared executor reads the
+# edit from the spec's params, so each op names a `probe` the tensor-op contract is checked on at load. The operand is
+# the dose.
+collection:
+  name: latent
+  version: 0.1.0
+
+frame_replace:
+  description: Set a feature block's coordinates in a named frame version, keeping its orthogonal complement
+  implementation: interpretune.analysis.ops.bundled.latent.latent_ops.latent_edit_executor
+  probe: interpretune.analysis.ops.bundled.latent.latent_ops.probe_latent_edit
+  op_spec:
+    operand: [none]
+    params:
+      frame: {type: str, required: true}
+      version: {type: str, required: true}
+    targets: [features]
+
+chart_set:
+  description: Set a feature block's point in a named chart version, keeping the coordinates off the chart
+  implementation: interpretune.analysis.ops.bundled.latent.latent_ops.latent_edit_executor
+  probe: interpretune.analysis.ops.bundled.latent.latent_ops.probe_latent_edit
+  op_spec:
+    operand: [none]
+    params:
+      chart: {type: str, required: true}
+      version: {type: str, required: true}
+    targets: [features]
+
+chart_path:
+  description: Move a feature block along a piecewise-linear path through chart waypoints, the short way around
+  implementation: interpretune.analysis.ops.bundled.latent.latent_ops.latent_edit_executor
+  probe: interpretune.analysis.ops.bundled.latent.latent_ops.probe_latent_edit
+  op_spec:
+    operand: [none]
+    params:
+      chart: {type: str, required: true}
+      version: {type: str, required: true}
+      t: {type: float, required: true, range: [0.0, 1.0]}
+    targets: [features]
+
+chart_rotate:
+  description: Rotate a feature block along a named chart's periodic dimensions
+  implementation: interpretune.analysis.ops.bundled.latent.latent_ops.latent_edit_executor
+  probe: interpretune.analysis.ops.bundled.latent.latent_ops.probe_latent_edit
+  op_spec:
+    operand: [none]
+    params:
+      chart: {type: str, required: true}
+      version: {type: str, required: true}
+    targets: [features]
+
+chart_scale_norm:
+  description: Scale a feature block's radial chart coordinates by a positive factor
+  implementation: interpretune.analysis.ops.bundled.latent.latent_ops.latent_edit_executor
+  probe: interpretune.analysis.ops.bundled.latent.latent_ops.probe_latent_edit
+  op_spec:
+    operand: [none]
+    params:
+      chart: {type: str, required: true}
+      version: {type: str, required: true}
+      factor: {type: float, required: true, range: [0.0, .inf]}
+    targets: [features]
