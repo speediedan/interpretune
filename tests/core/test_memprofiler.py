@@ -91,6 +91,48 @@ class TestClassMemProfiler:
         assert set(stats) == {"0.test_step.1.start", "0.test_step.1.end"}
         assert "npp_diff" in stats["0.test_step.1.end"] and "rss" in stats["0.test_step.1.end"]
 
+    def test_a_call_inside_a_profiled_call_is_not_profiled_again(self, tmp_path):
+        """The core loop profiles a whole training iteration as one ``training_step`` call, and the step method it
+        runs may be ``memprofilable`` itself: the inner call is measured by the outer one and never reaches the
+        core, which would retake the outer call's snapshots and enter an ``FSDP2MemTracker`` a second time (the
+        two-rank fsdp2 profile in ``test_core_loop_distributed.py`` fails that way without this)."""
+        from finetuning_scheduler.profiling import MemProfiler as CoreMemProfiler
+
+        model = torch.nn.Linear(4, 2)
+        memprofiler_cfg = MemProfilerCfg(
+            enabled=True,
+            collect_funcs=MemProfilerFuncs(default=["training_step"]),
+            schedule=MemProfilerSchedule(warmup_iters=0, max_iter=2),
+        )
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(memprofiler_cfg=memprofiler_cfg), core_log_dir=tmp_path, model=model
+        )
+        memprofiler = MemProfiler()
+        memprofiler.connect(module)
+        with patch.object(CoreMemProfiler, "memprofile_ctx", wraps=CoreMemProfiler.memprofile_ctx) as core_ctx:
+            for _ in range(3):
+                with memprofiler.profile("training_step"):
+                    with memprofiler.profile("training_step"):
+                        model(torch.ones(1, 4)).sum().backward()
+        assert core_ctx.call_count == 3
+        assert set(memprofiler.memory_stats) == {f"0.training_step.{i}.{at}" for i in (1, 2) for at in ("start", "end")}
+
+    def test_the_phase_source_is_the_cores_phase(self):
+        """The loop running a phased schedule (``FTSCoreCallback``) sets ``phase_source``; the core reads the phase
+        through it when it records an FSDP2 report or rebuilds its tracker."""
+        from finetuning_scheduler.profiling.memprofiler import _resolved
+
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(memprofiler_cfg=MemProfilerCfg(enabled=True)), model=torch.nn.Linear(2, 2)
+        )
+        memprofiler = MemProfiler()
+        memprofiler.connect(module)
+        assert _resolved(memprofiler._core._phase) is None
+        depth = [0]
+        memprofiler.phase_source = lambda: depth[0]
+        depth[0] = 1
+        assert _resolved(memprofiler._core._phase) == 1
+
     def test_memprofiler_before_connect_names_the_missing_step(self):
         with pytest.raises(AttributeError, match="before it is connected"):
             MemProfiler().memory_stats

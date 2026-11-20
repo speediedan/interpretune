@@ -38,6 +38,7 @@ from interpretune.analysis.optools import (
     resolve_aggregate_input,
     resolve_embedding_weight,
     resolve_gradient_sites,
+    recipe_weight_equivalence,
     resolve_jlens_layer,
     resolve_tokenizer,
     resolve_unembed_and_norm_scale,
@@ -1486,6 +1487,57 @@ def intervention_first_order_check_impl(
     return analysis_batch
 
 
+def weight_equivalence_check_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Check that a recipe's weight form equals its activation form on this batch.
+
+    The recipe's unit ``scale`` and ``add`` ops at ``mlp.out``'s input, and its whole-activation ``reject`` and
+    ``project`` at ``mlp.out``'s output, at token scope ``all``, are run twice: as the weight edits they equal (a unit
+    scale of ``mlp.out``'s weight, a bias patch, and the span edit of the output side of its weight and bias, resolved
+    through the module's view when it places units, else venngram's registry map for the model it carries) and through
+    the backend's own intervention path. Each form is taken back after its forward. The batch gets the greatest absolute
+    logit difference between the two (``we_max_abs_diff``), the greatest logit magnitude under the activation form
+    (``we_max_abs``) and the verdict (``we_equivalent``: the difference is within ``atol + rtol * max_abs``).
+
+    A recipe with no exact weight form (a token-scoped op, another site, an op other than these) is refused with the
+    reason, before any forward runs, as is a module whose view cannot resolve ``mlp.out`` (no published map describes
+    its module names) or, for unit ops, places no unit axis for it (its component map records no ``layout``).
+    """
+
+    def _input(name: str) -> Any:
+        value = kwargs.get(name)
+        return resolve_aggregate_input(module, analysis_batch, name) if value is None else value
+
+    recipe = _input("recipe")
+    if recipe is None:
+        raise ValueError(
+            "weight_equivalence_check requires `recipe`: a venngram recipe (or a document or reference "
+            "`interpretune.analysis.venngram.load_recipe` reads), whose weight form is compared with its "
+            "activation form."
+        )
+    rtol, atol = _input("we_rtol"), _input("we_atol")
+    rtol = 1e-4 if rtol is None else float(rtol)
+    atol = 1e-5 if atol is None else float(atol)
+    if (
+        getattr(module, "analysis_cfg", None)
+        and module.analysis_cfg.auto_prune_batch_encoding
+        and isinstance(batch, BatchEncoding)
+    ):
+        batch = module.auto_prune_batch(batch, "forward")
+    result = recipe_weight_equivalence(module, batch, recipe, rtol=rtol, atol=atol)
+    analysis_batch.update(
+        we_max_abs_diff=torch.tensor(result.max_abs_diff, dtype=torch.float32),
+        we_max_abs=torch.tensor(result.max_abs, dtype=torch.float32),
+        we_equivalent=bool(result.equivalent),
+    )
+    return analysis_batch
+
+
 __all__ = [
     "CONCEPT_AGGREGATE_ROW_FIELDS",
     "CONCEPT_BASES",
@@ -1504,4 +1556,5 @@ __all__ = [
     "project_context_enhanced_states",
     "reset_concept_streaming_state",
     "resolve_concept_cache_key",
+    "weight_equivalence_check_impl",
 ]

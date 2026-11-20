@@ -6,29 +6,32 @@ from pathlib import Path
 
 import pytest
 
-import it_examples
+from tests.prompt_configs_component import prompt_configs_dir, publish_prompt_configs
 
-PROMPT_COMPONENT_DIR = Path(it_examples.__file__).parent / "examples" / "prompt_configs"
+
+@pytest.fixture()
+def prompt_component_dir():
+    """The warmed ``speediedan/prompt-configs`` snapshot: the component as published."""
+    return prompt_configs_dir()
 
 
 @pytest.fixture()
 def seeded_cache(tmp_path):
     from interpretune.hub.components import local_publish
-    from it_examples.seeds import ensure_local_seeds
     from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
-    ensure_local_seeds(cache_dir=cache)
+    publish_prompt_configs(cache)
     rte_dir = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
     local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
 class TestPromptConfigsKind:
-    def test_seed_manifest_validates(self):
+    def test_seed_manifest_validates(self, prompt_component_dir):
         from interpretune.hub.manifest import load_component_manifest
 
-        manifest = load_component_manifest(PROMPT_COMPONENT_DIR / "it_component.yaml")
+        manifest = load_component_manifest(prompt_component_dir / "it_component.yaml")
         assert manifest["kinds"] == ["promptconfigs"]
         assert set(manifest["promptconfigs"]["definitions"]) == {"GemmaPromptConfig", "Llama3PromptConfig"}
 
@@ -57,11 +60,11 @@ class TestPromptConfigsKind:
         with pytest.raises(ComponentManifestError, match=match):
             validate_component_manifest(mutation)
 
-    def test_card_lists_definitions_and_ref_syntax(self):
+    def test_card_lists_definitions_and_ref_syntax(self, prompt_component_dir):
         from interpretune.hub.cards import generate_component_card
         from interpretune.hub.manifest import load_component_manifest
 
-        manifest = load_component_manifest(PROMPT_COMPONENT_DIR / "it_component.yaml")
+        manifest = load_component_manifest(prompt_component_dir / "it_component.yaml")
         card = generate_component_card(manifest, "speediedan/prompt-configs")
         assert "interpretune-promptconfigs" in card.data.tags
         assert "`GemmaPromptConfig`" in str(card)
@@ -114,7 +117,7 @@ class TestCachedEntrypointResolution:
         with pytest.raises(ValueError, match="Malformed prompt-config reference"):
             resolve_prompt_config_class(ref)
 
-    def test_module_names_are_revision_scoped(self, seeded_cache, tmp_path):
+    def test_module_names_are_revision_scoped(self, seeded_cache, prompt_component_dir, tmp_path):
         """Definitions from different cached revisions must never collide in sys.modules (umbrella spec)."""
         import shutil
         import sys
@@ -125,7 +128,7 @@ class TestCachedEntrypointResolution:
         cls_v1 = resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig", cache_dir=seeded_cache)
         # publish a MODIFIED copy of the component -> new content-derived revision in the same cache
         src_copy = tmp_path / "component"
-        shutil.copytree(PROMPT_COMPONENT_DIR, src_copy)
+        shutil.copytree(prompt_component_dir, src_copy, ignore=shutil.ignore_patterns("__pycache__"))
         ep = src_copy / "prompt_configs.py"
         ep.write_text(ep.read_text(encoding="utf-8").replace('B_TEXT: str = "<bos>"', 'B_TEXT: str = "<BOS2>"'))
         local_publish(src_copy, "speediedan/prompt-configs", cache_dir=seeded_cache)

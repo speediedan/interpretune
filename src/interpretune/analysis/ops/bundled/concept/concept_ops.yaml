@@ -612,3 +612,39 @@ intervention_first_order_check:
       required: true
       non_tensor: true
       sequence_type: false
+
+weight_equivalence_check:
+  description: Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.weight_equivalence_check_impl
+  # The activation form runs through the backend's intervention path. The weight form edits parameters directly and
+  # needs no capability, only a tunable view whose component map records `mlp.out`'s layout (refused by name if not).
+  required_capabilities: [intervention]
+  input_schema:
+    recipe:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    we_rtol:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    we_atol:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+  output_schema:
+    we_max_abs_diff:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    we_max_abs:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    we_equivalent:
+      datasets_dtype: bool
+      required: true
+      non_tensor: true
+      sequence_type: false

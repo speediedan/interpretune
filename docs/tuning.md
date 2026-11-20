@@ -76,18 +76,28 @@ RTE example's tests check this phase by phase). [Phased fine-tuning on the core 
 ## Roles
 
 Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found by venngram's overlay maps and
-become `adapter:<name>`. A composition declares anything else with `tunable_roles()`:
+become `adapter:<name>`. A composition declares anything else with `tunable_roles()`, by address or by name, as
+venngram views take a `roles` mapping: a role mapped to an address is resolved against the view's own names and
+structure when the view is built, and a tensor name mapped to a role names one tensor.
 
 ```python
+from interpretune.tuning.views import merge_roles
+
+
 class MyInterventionMixin:
     def tunable_roles(self) -> dict[str, str]:
-        roles = super().tunable_roles()
-        roles.update({f"steer.{n}": "intervention:steer" for n, _ in self.steer.named_parameters()})
-        return roles
+        return merge_roles(super().tunable_roles(), {"intervention:steer": "module:steer"})
 ```
 
-Overrides are cooperative: each calls `super()` and adds to its result, so a backend's roles and another mixin's
-compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
+Overrides are cooperative: each calls `super()` and merges its declarations into the result, so a backend's roles and
+another mixin's compose; `merge_roles` joins two addresses given for one role into their union, and a later name entry
+replaces an earlier one. An address states no `role` term, since roles are what it assigns, and venngram refuses one
+that selects nothing, or two addresses giving one tensor different roles unless a name entry settles it. The roles
+Interpretune declares itself are addresses: `module:latent_models.<name>` for an attached latent model,
+`module:interventions.<name>` for an intervention, `module:attached_saes.<key>` for a spliced SAE Lens SAE, and a
+`name:` pattern for each LoRA adapter of a TransformerLens composition. The address grammar is venngram's; on a
+mapped model, `{"adapter:lora": "component:attn.* & leaf:lora_*"}` reads the same on every architecture its map
+describes. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
 optimizer never steps `fitted` or `artifact` tensors. A `fitted` tensor is computed in the run and checkpointed; an
 `artifact` is loaded from a published or saved source, so it is reloaded from that source rather than checkpointed.
 
@@ -184,6 +194,8 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
 
 A research example of a phased run on the core loop, with run-fitted state, `artifact` transcoders, gates and per-phase
 `refreeze` and `restore`, is the [sparsity chain on RTE](tuning_sparsity_chain.md).
+A one-phase LoRA run with an auxiliary representation loss and a per-epoch evaluation callback is the
+[Knowing-Using Gap example](tuning_knowing_using.md).
 
 ## Conformance
 
@@ -211,7 +223,7 @@ a fresh session, because cases change parameters and `requires_grad`.
 | [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | LoRA tensors from `lora_cfg` as `adapter:<name>` (see [LoRA adapters](tuning_transformer_lens.md#lora-adapters)); the rest as on its page |
 | [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
 | [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
-| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
+| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; remote compositions train session-created adapter or intervention tensors in [bounded remote sessions](tuning_nnsight.md#remote-ndif-tuning-in-bounded-sessions) instead; local paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) | |
 | [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
 | [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view, which fits `(core, interp_engine)` with no override (measured by the adapter's tuning conformance); its circuit-tracer composition takes the circuit-tracer view | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |

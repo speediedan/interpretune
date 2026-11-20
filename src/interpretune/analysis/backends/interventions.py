@@ -86,6 +86,8 @@ class InterventionSpec(NamedTuple):
             every input and is refused at apply time rather than run.
         clamp_max: Upper bound of the ``"clamp"`` band in pseudoinverse coordinates, or ``None``
             for one-sided clamping from below.
+        unit_indices: Optional ordered indices on the activation's last axis. The op acts on this slice and leaves
+            every other coordinate untouched. Its operand is expressed in the selected coordinates.
     """
 
     intervention_tensor: torch.Tensor
@@ -95,6 +97,7 @@ class InterventionSpec(NamedTuple):
     clamp_min: float | None = None
     clamp_max: float | None = None
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
+    unit_indices: tuple[int, ...] | None = None
 
 
 InterventionValue: TypeAlias = Any
@@ -240,6 +243,11 @@ def _validate_intervention_spec(
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
     op = normalize_op(spec.op)
+    if spec.unit_indices is not None:
+        if not target_shape:
+            raise ValueError(f"Hook {hook_name!r} has no unit axis")
+        _validate_unit_indices(spec.unit_indices, target_shape[-1])
+        target_shape = (*target_shape[:-1], len(spec.unit_indices))
     if op == "patch":
         # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
         # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
@@ -274,14 +282,56 @@ def _validate_intervention_spec(
         clamp_min=spec.clamp_min,
         clamp_max=spec.clamp_max,
         position_scope=normalize_position_scope(spec.position_scope),
+        unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
     )
+
+
+_BLOCK_LAYER = re.compile(r"^blocks\.(\d+)\.")
+
+
+def _address_sites(pattern: str, available_hook_map: Mapping[str, str], flow: str | None) -> list[str] | None:
+    """The sites a venngram site address selects, in layer order, or ``None`` when ``pattern`` is not an address.
+
+    The address is evaluated by :func:`~interpretune.analysis.venngram.sites.resolve_sites` over the model's block
+    stack, whose depth is read from the ``blocks.<layer>.`` hooks the model exposes.
+    """
+    from venngram.address import is_address
+
+    if not is_address(pattern):
+        return None
+    from interpretune.analysis.venngram.sites import resolve_sites
+
+    layers = [int(m.group(1)) for name in available_hook_map if (m := _BLOCK_LAYER.match(name))]
+    if not layers:
+        raise ValueError(
+            f"Intervention address '{pattern}': the model exposes no `blocks.<layer>.` hooks to resolve it"
+        )
+    try:
+        selection = resolve_sites(pattern, n_layers=max(layers) + 1)
+    except Exception as err:  # venngram's and the vocabulary's refusals arrive as several exception types
+        raise ValueError(f"Intervention address '{pattern}': {err}") from err
+    if flow is not None and selection.flow != flow:
+        surface = "gradients (`bwd_w_intervention`)" if flow == "grad" else "activation values (`fwd_w_intervention`)"
+        raise ValueError(
+            f"Intervention address '{pattern}' acts on {'gradients' if selection.flow == 'grad' else 'values'}, and"
+            f" this payload edits {surface}: "
+            + ("write it with `of: grad`" if flow == "grad" else "drop `of: grad`, or apply it through the backward op")
+        )
+    return list(selection.sites)
 
 
 def expand_intervention_patterns(
     patterns: Sequence[str],
     available_hook_map: Mapping[str, str],
+    *,
+    flow: str | None = None,
 ) -> dict[str, list[str]]:
     """Expand raw hook-name patterns to ordered lists of concrete hook names.
+
+    A pattern may also be a venngram site address (``point:hook_resid_post & layers:-4:``), which expands like a layer
+    wildcard to the sites it selects, in layer order, each matched as an exact hook name would be. A site the model
+    does not expose is refused rather than mapped onto a nearby hook. With ``flow`` (``value`` for a forward payload,
+    ``grad`` for a backward one), an address acting on the other flow is refused.
 
     Every spelling of a pattern's point in the vocabulary (the pattern itself, its canonical component form, the
     semantic names of the same slot, and the registered aliases of each) is tried against the backend's available
@@ -305,14 +355,21 @@ def expand_intervention_patterns(
             variants = tuple("blocks.*." + v[len("blocks.0.") :] for v in variants)
         return variants
 
+    def _exact(name: str) -> str | None:
+        return next((available_hook_map[v] for v in _pattern_variants(name) if v in available_hook_map), None)
+
     expanded: dict[str, list[str]] = {}
     for pattern in patterns:
+        if (sites := _address_sites(pattern, available_hook_map, flow)) is not None:
+            actual = {site: _exact(site) for site in sites}
+            if missing := [site for site, name in actual.items() if name is None]:
+                raise ValueError(
+                    f"Intervention address '{pattern}' selects {', '.join(missing)}, which this model does not expose"
+                )
+            expanded[pattern] = list(dict.fromkeys(name for name in actual.values() if name is not None))
+            continue
         if "*" not in pattern:
-            matched_actual = None
-            for candidate_pattern in _pattern_variants(pattern):
-                matched_actual = available_hook_map.get(candidate_pattern)
-                if matched_actual is not None:
-                    break
+            matched_actual = _exact(pattern)
             if matched_actual is None:
                 raise ValueError(f"Intervention pattern '{pattern}' did not match any available hook names")
             expanded[pattern] = [matched_actual]
@@ -391,6 +448,7 @@ def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_sc
         "clamp_min": None if clamp_min is None else float(clamp_min),
         "clamp_max": None if clamp_max is None else float(clamp_max),
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
+        "unit_indices": None if value.get("unit_indices") is None else tuple(value["unit_indices"]),
     }
 
 
@@ -820,7 +878,21 @@ def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> to
     (by a user, or from a hub collection) runs through the same path as the core ones.
     """
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
+    if spec.unit_indices is not None:
+        _validate_unit_indices(spec.unit_indices, input_value.shape[-1])
+        indices = torch.tensor(spec.unit_indices, device=input_value.device, dtype=torch.long)
+        selected = input_value.index_select(-1, indices)
+        edited = executor_for(normalize_op(spec.op))(selected, target, spec)
+        # index_copy preserves the complement and its autograd path, including when the selected op replaces values.
+        return input_value.index_copy(-1, indices, torch.broadcast_to(edited, selected.shape))
     return executor_for(normalize_op(spec.op))(input_value, target, spec)
+
+
+def _validate_unit_indices(indices: Sequence[int], width: int) -> None:
+    if not indices or any(type(index) is not int or not 0 <= index < width for index in indices):
+        raise ValueError(f"unit_indices {indices!r} must be nonempty integer indices in [0, {width})")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"unit_indices {indices!r} repeat a unit; each selected unit must occur once")
 
 
 def track_gradient(value: torch.Tensor) -> torch.Tensor:
@@ -890,7 +962,7 @@ def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
             "which knows the final real token"
         )
     # every leading axis indexes independent rows; the trailing axes the operand spans (at least one) are the units
-    units = max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
+    units = 1 if spec.unit_indices is not None else max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
     if value.ndim < units:
         raise ValueError(
             f"an operand spanning {units} axes cannot apply to an activation of shape {tuple(value.shape)}"
@@ -1044,5 +1116,7 @@ def require_intervention_support(
     """
     require_flow(backend, flow, backend_name=backend_name)
     for _pattern, spec in iter_intervention_axes(interventions):
+        if spec.unit_indices is not None and "units" not in getattr(backend.intervention_support, "targets", {}):
+            raise NotImplementedError(f"backend {backend_name!r} does not declare the 'units' intervention target")
         require_position_scope(backend, spec, backend_name=backend_name)
         require_op(backend, spec, backend_name=backend_name)

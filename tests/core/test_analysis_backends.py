@@ -2006,6 +2006,65 @@ class TestGradientReadouts:
             torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
 
     @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
+        """A treatment's readout, declared as a logit difference plus a block-5 projection, executes as the
+        callable readout that writes the same scalar by hand (the reference test above checks that form)."""
+        pytest.importorskip("venngram", reason="the venngram extra is not installed")
+        from interpretune.analysis.venngram import load_recipe, recipe_readout
+
+        direction = self._unit(0)
+        book_model = {"id": "gpt2", "revision": "main"}
+        doc = {
+            "schema_version": 4,
+            "kind": "recipe",
+            "name": "logit-difference-plus-projection",
+            "model": book_model,
+            "book": {
+                "schema_version": 3,
+                "name": "readout-sets",
+                "portability": "checkpoint",
+                "applies_to": {"models": [book_model]},
+                "sets": {
+                    "answer": {"point": "unembed.hook_out", "units": [self.A]},
+                    "foil": {"point": "unembed.hook_out", "units": [self.B]},
+                    "read": {"point": "hook_in", "layers": [5]},
+                    "edit_grad": {"point": "hook_out", "layers": [3], "units": [0], "of": "grad"},
+                },
+            },
+            "operands": {"direction": {"values": direction.tolist(), "shape": [768], "basis": "jlens_folded"}},
+            "readout": {
+                "terms": [
+                    {"reduce": "sum", "set": "answer", "tokens": "last", "weight": 1.0},
+                    {"reduce": "sum", "set": "foil", "tokens": "last", "weight": -1.0},
+                    {"reduce": "project", "set": "read", "tokens": "last", "operand": "direction"},
+                ]
+            },
+            "stages": [
+                {
+                    "site": "hook_out",
+                    "tokens": "last",
+                    "ops": [{"op": "scale", "target": {"set": "edit_grad"}, "value": {"dose": 1.0}}],
+                }
+            ],
+        }
+        declared = recipe_readout(load_recipe(doc).recipe, n_layers=12)
+        hand = self._readouts()
+
+        def both(logits, activations):
+            return hand["logit_difference"](logits, activations) + hand["projection"](logits, activations)
+
+        points = [self.READ, self.EDIT, self.CAPTURE]
+        backend, model, batch = self._backend(backend_name, request)
+        expected = backend.bwd_w_intervention(
+            model, batch, self._payload(), Readout(both, sites=(self.READ,)), capture=points
+        )
+        got = backend.bwd_w_intervention(model, batch, self._payload(), declared, capture=points)
+        torch.testing.assert_close(got[2], expected[2])
+        for pre_or_post in (0, 1):
+            for point in points:
+                torch.testing.assert_close(got[pre_or_post][point], expected[pre_or_post][point])
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
     def test_an_edit_at_a_branch_does_not_leak_into_its_sibling(self, backend_name, hf, request):
         """At a residual add, autograd hands one gradient tensor to both branches.
 
@@ -2084,3 +2143,85 @@ class TestReadout:
         assert resolve_readout_sites(exact, available) == {"blocks.1.hook_in": "blocks.1.hook_resid_pre"}
         pattern = Readout(lambda logits, activations: logits.sum(), sites=("blocks.*.hook_in",))
         assert resolve_readout_sites(pattern, available) == {name: name for name in available}
+
+
+class TestInterventionAddresses:
+    """An intervention payload key may be a venngram site address, which expands like a layer wildcard to the sites
+    it selects (#876), and is refused where the model has no such site or the address acts on the other flow."""
+
+    AVAILABLE = {f"blocks.{i}.{p}": f"blocks.{i}.{p}" for i in range(4) for p in ("hook_resid_post", "hook_in")}
+
+    def test_an_address_expands_to_its_sites_in_layer_order(self):
+        address = "point:hook_resid_post & layers:-2:"
+        expanded = expand_intervention_patterns([address], self.AVAILABLE)
+        assert expanded == {address: ["blocks.2.hook_resid_post", "blocks.3.hook_resid_post"]}
+
+    def test_a_site_the_model_does_not_expose_is_refused(self):
+        with pytest.raises(ValueError, match=r"selects blocks\.1\.attn\.hook_out, which this model does not expose"):
+            expand_intervention_patterns(["point:attn.hook_out & layers:1"], self.AVAILABLE)
+
+    def test_an_address_on_the_other_flow_is_refused(self):
+        grad, value = "point:hook_in & layers:1 & of:grad", "point:hook_in & layers:1"
+        with pytest.raises(ValueError, match="acts on gradients, and this payload edits activation values"):
+            expand_intervention_patterns([grad], self.AVAILABLE, flow="value")
+        with pytest.raises(ValueError, match="acts on values, and this payload edits gradients"):
+            expand_intervention_patterns([value], self.AVAILABLE, flow="grad")
+        assert expand_intervention_patterns([grad], self.AVAILABLE, flow="grad")[grad] == ["blocks.1.hook_in"]
+
+    def test_an_unresolvable_address_is_refused_with_the_reason(self):
+        with pytest.raises(ValueError, match="Intervention address 'point:hook_resid_post & units:3'"):
+            expand_intervention_patterns(["point:hook_resid_post & units:3"], self.AVAILABLE)
+        with pytest.raises(ValueError, match="exposes no `blocks.<layer>.` hooks"):
+            expand_intervention_patterns(["point:hook_resid_post"], {"hook_embed": "hook_embed"})
+
+    SITE, ADDRESS = "blocks.5.hook_in", "point:hook_in & layers:5"
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    def _payload(self, key: str) -> dict:
+        return {key: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+
+    def _assert_address_matches_hook_name(self, fwd) -> None:
+        by_name_pre, by_name_post = fwd(self._payload(self.SITE))
+        by_address_pre, by_address_post = fwd(self._payload(self.ADDRESS))
+        torch.testing.assert_close(by_address_pre, by_name_pre)
+        torch.testing.assert_close(by_address_post, by_name_post)
+        assert not torch.allclose(by_name_pre, by_name_post), "the positive control: the edit must move the logits"
+
+    def test_transformer_lens_forward_payload_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        self._assert_address_matches_hook_name(
+            lambda payload: TLModelBackend().fwd_w_intervention(bridge, {"input": self.IDS}, payload)
+        )
+
+    def test_nnsight_forward_payload_by_address(self):
+        from nnsight import LanguageModel
+
+        lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        self._assert_address_matches_hook_name(
+            lambda payload: backend.fwd_w_intervention(lm, {"input_ids": self.IDS}, payload)
+        )
+
+    def test_transformer_lens_backward_payload_and_capture_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        backend = TLModelBackend()
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, 1000].sum()
+
+        _, by_name, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(self.SITE), metric, capture=["blocks.2.hook_out"]
+        )
+        capture = "point:hook_out & layers:2 & of:grad"
+        _, by_address, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(f"{self.ADDRESS} & of:grad"), metric, capture=[capture]
+        )
+        torch.testing.assert_close(by_address[capture], by_name["blocks.2.hook_out"])

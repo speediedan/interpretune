@@ -30,6 +30,8 @@ class Selection:
     test_modules: set[str] = field(default_factory=set)
     # path -> what it selected, so every decision is attributable
     reasons: dict[str, str] = field(default_factory=dict)
+    # `full_run_only` node ids this change set leaves to the full run (none of their `unless_changed` paths changed)
+    deferred: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -41,6 +43,7 @@ class Selection:
             "areas": sorted(self.areas),
             "test_modules": sorted(self.test_modules),
             "reasons": self.reasons,
+            "deferred": list(self.deferred),
         }
 
 
@@ -135,7 +138,13 @@ def select(changed: list[str], spec: dict, root: Path | None = None) -> Selectio
         if _matches(path, spec["ignore"]):
             sel.reasons[path] = "ignore"
             continue
-        hit = sorted(name for name, area in spec["areas"].items() if _matches(path, area["paths"]))
+        hit = sorted(
+            name for name, area in spec["areas"].items() if not area.get("fallback") and _matches(path, area["paths"])
+        )
+        if not hit:  # a `fallback` area takes a path only no narrower area names (a new notebook, a new helper)
+            hit = sorted(
+                name for name, area in spec["areas"].items() if area.get("fallback") and _matches(path, area["paths"])
+            )
         sel.areas.update(hit)
         if _is_test_module(path):
             sel.test_modules.add(path)
@@ -157,6 +166,12 @@ def select(changed: list[str], spec: dict, root: Path | None = None) -> Selectio
         # Refuse to guess: a path no rule classifies runs everything, and is named in the output.
         sel.full = True
         sel.reasons[path] = "UNCLASSIFIED (full run)"
+    if not sel.full:
+        # the few slow cases a per-change gate leaves to the full run, unless the change touches what they test
+        # (`full_run_only` in areas.yaml); a full run keeps every one
+        for entry in spec.get("full_run_only") or []:
+            if not any(_matches(p, entry.get("unless_changed") or []) for p in changed):
+                sel.deferred.append(entry["test"])
     return sel
 
 
@@ -168,9 +183,14 @@ def selected_prefixes(sel: Selection, spec: dict) -> list[str] | None:
 
 
 def write_selection_file(sel: Selection, spec: dict, path: Path) -> None:
-    """Write what ``tests/conftest.py`` reads from ``IT_GPU_SELECTION_FILE``: ``full``, or one prefix per line."""
+    """Write what ``tests/conftest.py`` reads from ``IT_GPU_SELECTION_FILE``: ``full``, or one prefix per line,
+    then one ``!<node id>`` line per deferred ``full_run_only`` case the prefixes would otherwise select."""
     prefixes = selected_prefixes(sel, spec)
-    path.write_text("full\n" if prefixes is None else "".join(f"{p}\n" for p in prefixes))
+    if prefixes is None:
+        path.write_text("full\n")
+        return
+    deferred = [d for d in sel.deferred if d.startswith(tuple(prefixes))]
+    path.write_text("".join(f"{p}\n" for p in prefixes) + "".join(f"!{d}\n" for d in deferred))
 
 
 def changed_files(base: str, head: str = "HEAD", cwd: Path | None = None) -> list[str]:

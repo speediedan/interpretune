@@ -25,14 +25,6 @@ CONFIGS = cli_experiment_configs()
 BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text())
 
 
-@pytest.fixture(autouse=True, scope="module")
-def _seed_components():
-    """compose_ref nodes (llama3 prompt definitions) resolve cache-only — seed the components cache."""
-    from it_examples.seeds import ensure_local_seeds
-
-    ensure_local_seeds()
-
-
 def _baseline_for(config_path):
     return BASELINE_SPECS[fixture_key(config_path)]
 
@@ -52,7 +44,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 12, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 19, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -61,6 +53,25 @@ def test_factory_path_capture_baseline(config_path):
     key, registered = capture_registered_cfg_via_factories(config_path)
     spec = registered_spec(registered)
     assert spec["datamodule_cfg"]["__class__"] and spec["module_cfg"]["__class__"]
+
+
+from interpretune.config.datamodule import ITDataModuleConfig  # noqa: E402
+
+
+class _DMCfg(ITDataModuleConfig):
+    """A minimal ``ITDataModuleConfig`` subclass for the ``class_path`` datamodule body."""
+
+
+def test_datamodule_cfg_class_path_names_a_subclass():
+    """A ``class_path`` datamodule body builds that ``ITDataModuleConfig`` subclass, and refuses any other
+    class."""
+    from interpretune.registry import itdm_cfg_factory
+
+    shared = {"task_name": "knowing_using", "model_name_or_path": "gpt2"}
+    built = itdm_cfg_factory({"class_path": f"{__name__}._DMCfg"}, dict(shared))
+    assert type(built) is _DMCfg and built.task_name == "knowing_using"
+    with pytest.raises(TypeError, match="ITDataModuleConfig subclass"):
+        itdm_cfg_factory({"class_path": "dataclasses.Field", "init_args": {}}, dict(shared))
 
 
 def test_autocomp_synthesis_baseline():
@@ -195,12 +206,23 @@ def test_materialized_defaults_present_and_declarative():
     for config_path in EXAMPLE_CONFIGS:
         key, body = load_config_file(config_path)
         loaded = load_session_cfg(body, expected_key=key)
+        if key.startswith(("prompt_analysis.", "capital_states.")):
+            # analysis only: the prompts carry no labels and the datamodule refuses to train, so no optimizer or
+            # schedule is declared, and the prompts are tokenized without a dataset map
+            assert not loaded.module_cfg.optimizer_init and not loaded.module_cfg.lr_scheduler_init, key
+            assert not loaded.datamodule_cfg.prepare_data_map_cfg, key
+            continue
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
         if key.startswith(("rte_ft.", "rte_sparse.")):
             # the fine-tuning variants set their own: no lr scheduler, so a phase's learning rate is what it declares
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
+            continue
+        if key.startswith("kug_lrsd."):
+            # the paper's recipe: a constant learning rate, and a datamodule that tokenizes without a dataset map
+            assert not loaded.module_cfg.lr_scheduler_init, key
+            assert not loaded.datamodule_cfg.prepare_data_map_cfg, key
             continue
         assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True}, key
         assert loaded.module_cfg.lr_scheduler_init["init_args"]["T_mult"] == 2, key
