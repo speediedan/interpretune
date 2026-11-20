@@ -30,7 +30,7 @@ from interpretune.analysis.venngram import (  # noqa: E402
     block_edit_spec,
     latent_edit_spec,
 )
-from interpretune.analysis.venngram import latent_edits  # noqa: E402
+from interpretune.analysis.ops.bundled.latent import latent_ops  # noqa: E402
 from interpretune.utils import MisconfigurationException  # noqa: E402
 
 WIDTH, BLOCK, N_BLOCKS, UNIT = 6, 2, 4, 1
@@ -298,21 +298,21 @@ class TestTheOpsAreTensorOps:
         for op in LATENT_EDIT_OPS:
             record = op_registry.executor_record(op)
             assert (record.source, record.collection) == ("bundled", "latent")
-            assert record.executor is latent_edits.latent_edit_executor
+            assert record.executor is latent_ops.latent_edit_executor
 
     def test_the_executor_passes_the_contract_only_on_its_probe(self):
         check_tensor_op(
             "frame_replace",
-            latent_edits.latent_edit_executor,
+            latent_ops.latent_edit_executor,
             operand_kinds=("none",),
-            probe=latent_edits.probe_frame_replace,
+            probe=latent_ops.probe_latent_edit,
         )
-        with pytest.raises(ValueError, match="raised MisconfigurationException on a probe"):
-            check_tensor_op("frame_replace", latent_edits.latent_edit_executor, operand_kinds=("none",))
+        with pytest.raises(ValueError, match="raised ValueError on a probe"):
+            check_tensor_op("frame_replace", latent_ops.latent_edit_executor, operand_kinds=("none",))
 
     def test_a_spec_without_a_compiled_edit_is_refused_by_name(self, synthetic):
         spec = InterventionSpec(torch.tensor(1.0), op="chart_rotate", unit_indices=COLUMNS)
-        with pytest.raises(MisconfigurationException, match="carries none in params"):
+        with pytest.raises(ValueError, match="carries none in params"):
             apply_intervention(synthetic.acts.clone(), spec, last_pos=4)
 
 

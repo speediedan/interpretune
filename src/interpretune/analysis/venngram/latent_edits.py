@@ -21,7 +21,8 @@ where $d$ is the edit's dose. The frame spans the rows of $D_B$ (the catalog che
 $v' - v$ lies in that row space and the decoded contribution moves by exactly $d\left(v' - v\right)$. The other blocks,
 the latent model's error term and every position outside the token scope are untouched.
 
-The ops (their ``OpSpec`` declared as data in the bundled ``latent`` op collection) are ``frame_replace``, which sets a
+The ops (declared as data in the bundled ``latent`` op collection, which executes this module's
+:class:`LatentEdit` through ``decoder_rows``, ``edit_values`` and ``rank_rtol``) are ``frame_replace``, which sets a
 block's coordinates in a named frame version, and ``chart_set``, ``chart_path``, ``chart_rotate`` and
 ``chart_scale_norm``, which edit them in a named chart version
 (:func:`~interpretune.analysis.venngram.charts.apply_chart_op`). Each spec's operand is the dose, a scalar: 1 applies
@@ -122,6 +123,11 @@ class LatentEdit:
         """The block's decoder rows, in the binding's declared space."""
         return self.catalog.basis(self.target)
 
+    @property
+    def rank_rtol(self) -> float:
+        """The relative singular-value threshold the edit's frame counts the block's rank with."""
+        return self.frame().rank_rtol
+
     def frame(self) -> LatentFrame:
         """The frame the edit writes coordinates in, revalidated against the block's current decoder rows."""
         if self.op == "frame_replace":
@@ -140,37 +146,6 @@ class LatentEdit:
         return self.catalog.apply_chart(
             self.target, values, chart=self.name, version=self.version, op=LATENT_EDIT_OPS[self.op], **self.args
         )
-
-
-def latent_edit_of(spec: InterventionSpec) -> LatentEdit:
-    """The compiled edit a latent edit op's spec carries, refusing a spec without one by name."""
-    edit = (spec.params or {}).get(LATENT_EDIT_PARAM)
-    if not isinstance(edit, LatentEdit):
-        raise MisconfigurationException(
-            f"op {spec.op!r} runs a compiled latent edit, and this spec carries none in params[{LATENT_EDIT_PARAM!r}];"
-            " build it with interpretune.analysis.venngram.latent_edit_spec"
-        )
-    return edit
-
-
-def latent_edit_executor(region: torch.Tensor, operand: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
-    """Every latent edit op's executor: the block's activations ``(rows, block_size)`` moved so their decoded
-    values take the catalog's edit, scaled by the dose ``operand``."""
-    edit = latent_edit_of(spec)
-    rows = edit.decoder_rows().detach()
-    if region.shape[-1] != rows.shape[0]:
-        raise MisconfigurationException(
-            f"latent edit {spec.op!r} on {edit.target} needs the block's {rows.shape[0]} columns, got a region of"
-            f" width {region.shape[-1]}; compile the spec with latent_edit_spec, which selects them"
-        )
-    if operand.numel() != 1:
-        raise MisconfigurationException(
-            f"latent edit {spec.op!r} takes its dose, a scalar, as its operand; got shape {tuple(operand.shape)}"
-        )
-    inverse = torch.linalg.pinv(rows.to(torch.float64), rtol=edit.frame().rank_rtol)
-    rows, inverse = rows.to(region), inverse.to(region)
-    values = region @ rows
-    return region + operand.reshape(()) * ((edit.edit_values(values) - values) @ inverse)
 
 
 def latent_hook_name(binding: LatentBinding) -> str:
@@ -286,73 +261,11 @@ def block_edit_spec(
     return latent_hook_name(binding), spec
 
 
-# --------------------------------------------------------------------------------------------------------------------
-# Contract probes: a catalog small enough to build at load, for each op's executor
-# --------------------------------------------------------------------------------------------------------------------
-
-_PROBE_BLOCK, _PROBE_WIDTH, _PROBE_ROWS = 3, 5, 4
-
-
-def _probe_catalog(generator: torch.Generator) -> tuple[LatentCatalog, LatentTarget]:
-    from interpretune.analysis.venngram.charts import LatentChart
-
-    decoder = torch.randn(2 * _PROBE_BLOCK, _PROBE_WIDTH, generator=generator, dtype=torch.float64)
-    model = types.SimpleNamespace(
-        cfg=types.SimpleNamespace(metadata=types.SimpleNamespace(hook_name="blocks.0.hook_out"))
-    )
-    binding = LatentBinding("probe", 0, "hook_out", model, decoder, _PROBE_BLOCK)
-    target = LatentTarget("feature", "probe", 0, binding.point, 0)
-    rows = torch.linalg.qr(decoder[:_PROBE_BLOCK].T).Q.T.contiguous()
-    frame = LatentFrame("probe", "1", target, rows)
-    axes = torch.eye(_PROBE_BLOCK, dtype=torch.float64)
-    origin = torch.zeros(_PROBE_BLOCK, dtype=torch.float64)
-    plane = LatentChart(
-        "plane", "1", "pca_plane", target, "probe", "1", 2, {1: 2 * torch.pi}, {"origin": origin, "axes": axes[:2]}
-    )
-    return LatentCatalog([binding], frames=[frame], charts=[plane]), target
-
-
-def _probe(
-    op: str, name: str, generator: torch.Generator, **args: Any
-) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    catalog, target = _probe_catalog(generator)
-    region = torch.randn(_PROBE_ROWS, _PROBE_BLOCK, generator=generator)
-    edit = LatentEdit(catalog, target, op, name, "1", args)
-    return region, torch.tensor(0.75), {LATENT_EDIT_PARAM: edit}
-
-
-def probe_frame_replace(generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    """The contract probe for ``frame_replace``."""
-    return _probe("frame_replace", "probe", generator, coordinates=[0.5, -1.0, 2.0])
-
-
-def probe_chart_set(generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    """The contract probe for ``chart_set``."""
-    return _probe("chart_set", "plane", generator, value=[1.5, 0.5])
-
-
-def probe_chart_path(generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    """The contract probe for ``chart_path``."""
-    return _probe("chart_path", "plane", generator, waypoints=[[1.0, 0.0], [2.0, 1.0]], t=0.25)
-
-
-def probe_chart_rotate(generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    """The contract probe for ``chart_rotate``."""
-    return _probe("chart_rotate", "plane", generator, by={1: 0.5})
-
-
-def probe_chart_scale_norm(generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor, Mapping[str, Any]]:
-    """The contract probe for ``chart_scale_norm``."""
-    return _probe("chart_scale_norm", "plane", generator, factor=1.5)
-
-
 __all__ = [
     "LATENT_EDIT_OPS",
     "LATENT_EDIT_PARAM",
     "LatentEdit",
     "block_edit_spec",
-    "latent_edit_executor",
-    "latent_edit_of",
     "latent_edit_spec",
     "latent_hook_name",
 ]
