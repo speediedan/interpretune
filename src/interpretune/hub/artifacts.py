@@ -28,7 +28,7 @@ IT_ARTIFACT_ENVELOPE = "it_artifact.json"
 #: fields never bump it (readers ignore unknown keys by contract), so the only thing a version
 #: change communicates is "a reader that does not understand this cannot be correct". See
 #: `docs/analysis_store_serialization.md` for the policy and the rejected major.minor alternative.
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
 
 #: The oldest schema this code READS. Hub artifacts outlive the code that wrote them, so the
 #: reader accepts a WINDOW, never a single version; raising this floor retires published
@@ -36,6 +36,10 @@ ARTIFACT_SCHEMA_VERSION = 1
 ARTIFACT_SCHEMA_MIN_READABLE = 1
 
 ANALYSIS_STORE_KIND = "analysis-store"
+
+#: The first schema whose envelopes must carry a ``subject`` block. Version 2 made it mandatory, since a store says
+#: nothing usable about what it was computed on without it; a version-1 envelope is still read, with no subject.
+SUBJECT_REQUIRED_FROM_SCHEMA = 2
 
 
 class ArtifactEnvelopeError(ValueError):
@@ -88,6 +92,13 @@ def validate_artifact_envelope(envelope: Any, source: str = "<envelope>") -> dic
         raise ArtifactEnvelopeError(f"{source}: `identity.store_id` is mandatory (and never rewritten).")
     if not isinstance(envelope.get("interpretune"), dict):
         raise ArtifactEnvelopeError(f"{source}: the `interpretune` block (col_cfg carrier) is mandatory.")
+    if envelope["schema"] >= SUBJECT_REQUIRED_FROM_SCHEMA:
+        from interpretune.hub.subject import StoreSubject, StoreSubjectError
+
+        try:
+            StoreSubject.from_dict(envelope.get("subject"), source=source)
+        except StoreSubjectError as e:
+            raise ArtifactEnvelopeError(str(e)) from None
     return envelope
 
 
@@ -192,17 +203,31 @@ def content_fingerprint(store) -> str:
     return digest.hexdigest()
 
 
+def _store_subject(store, subject=None):
+    """The subject to publish: the caller's, else the one stamped at write time, else a refusal naming the fix."""
+    subject = subject if subject is not None else getattr(store, "subject", None)
+    if subject is None:
+        raise ArtifactEnvelopeError(
+            "The store records no subject (the model, tokenizer, component map and dictionaries its columns were"
+            " computed on): it was not written by an op on a module, or the module stated no model id. Pass"
+            " `subject=StoreSubject(model_id=...)` (interpretune.hub.subject) to say what it was computed on."
+        )
+    return subject
+
+
 def build_analysis_store_envelope(
     store,
     identity: dict | None = None,
     provenance: dict | None = None,
     interchange: dict | None = None,
+    subject=None,
 ) -> dict:
     """Build the envelope for an AnalysisStore (descriptive; dataset files remain the truth).
 
     ``identity`` is normally supplied by :func:`push_analysis_store` (preserved from an existing
     envelope on re-push, minted once otherwise); ``provenance`` entries are merged over the
-    defaults derived here.
+    defaults derived here. ``subject`` (a :class:`~interpretune.hub.subject.StoreSubject`) defaults to the one
+    the store was stamped with when an op wrote it; a store with neither is refused by name.
     """
     import uuid
     from datetime import datetime, timezone
@@ -212,6 +237,7 @@ def build_analysis_store_envelope(
     dataset = store.dataset
     if dataset is None:
         raise ArtifactEnvelopeError("Cannot build an envelope for an AnalysisStore with no dataset loaded.")
+    subject = _store_subject(store, subject)
     features = getattr(dataset, "features", None) or {}
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     identity = dict(identity) if identity else {"store_id": str(uuid.uuid4()), "created_utc": now}
@@ -242,6 +268,7 @@ def build_analysis_store_envelope(
         "artifact_kind": ANALYSIS_STORE_KIND,
         "generated_utc": now,
         "identity": identity,
+        "subject": subject.to_dict(),
         "provenance": prov,
         "artifacts": artifacts,
         "interpretune": {
@@ -266,6 +293,7 @@ def push_analysis_store(
     commit_message: str | None = None,
     skip_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
+    subject=None,
 ) -> str:
     """Publish an AnalysisStore as a dataset repo: parquet interchange + envelope + generated card.
 
@@ -277,7 +305,8 @@ def push_analysis_store(
     floor), so no pre-upload check reads it. After the upload the ``range-read`` check reads one published file back
     through ``HfFileSystem`` and raises ``PublishedArtifactCheckError`` if it does not decode: the artifact is then
     already live. ``skip_checks`` / ``add_checks`` name checks to skip or turn on (unknown names are refused before
-    any network call), and skips are recorded in the envelope's ``provenance``.
+    any network call), and skips are recorded in the envelope's ``provenance``. ``subject`` overrides the one the
+    store was stamped with; a store with neither is refused before any network call.
     """
     import io
 
@@ -296,6 +325,7 @@ def push_analysis_store(
     validate_check_names(ANALYSIS_STORE, skip_checks, add_checks)
     if store.dataset is None:
         raise ArtifactEnvelopeError("Cannot push an AnalysisStore with no dataset loaded.")
+    subject = _store_subject(store, subject)  # refused before any network call
     target = PublishTarget(kind=ANALYSIS_STORE, destination=repo_id, store="dataset", token=token)
     run_publish_checks(target, PRE_UPLOAD, skip_checks=skip_checks, add_checks=add_checks)
     skipped = sorted(set(skip_checks))
@@ -319,7 +349,7 @@ def push_analysis_store(
     store.dataset.push_to_hub(repo_id, split=store.split, private=private, token=token, commit_message=commit_message)
     parquet_files = sorted(f for f in api.list_repo_files(repo_id, repo_type="dataset") if f.endswith(".parquet"))
     envelope = build_analysis_store_envelope(
-        store, identity=identity, provenance=provenance, interchange={"files": parquet_files}
+        store, identity=identity, provenance=provenance, interchange={"files": parquet_files}, subject=subject
     )
     api.upload_file(
         path_or_fileobj=io.BytesIO(json.dumps(envelope, indent=1, sort_keys=True).encode("utf-8")),
@@ -397,6 +427,10 @@ def pull_analysis_store(
     if (declared := it_block.get("protocol_cls")) is not None:
         store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
     store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None, **store_kwargs)
+    if (record := envelope.get("subject")) is not None:  # absent only from a version-1 envelope
+        from interpretune.hub.subject import StoreSubject
+
+        store.subject = StoreSubject.from_dict(record, source=repo_id)
     return store
 
 

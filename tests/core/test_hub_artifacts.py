@@ -12,12 +12,34 @@ from interpretune.hub.artifacts import (
     ARTIFACT_SCHEMA_MIN_READABLE,
     ARTIFACT_SCHEMA_VERSION,
     IT_ARTIFACT_ENVELOPE,
+    SUBJECT_REQUIRED_FROM_SCHEMA,
     ArtifactEnvelopeError,
     build_analysis_store_envelope,
     content_fingerprint,
     describe_analysis_store,
     validate_artifact_envelope,
 )
+
+
+def _small_store_subject():
+    from interpretune.hub.subject import StoreSubject
+
+    return StoreSubject(
+        model_id="google/gemma-2-2b",
+        model_revision="c5ebcd40d208330abc697524c919956e692655cf",
+        architecture="Gemma2ForCausalLM",
+        tokenizer_id="google/gemma-2-2b",
+        component_map={"architecture": "Gemma2ForCausalLM", "source": "gemma2.yaml", "schema_version": 1},
+        dictionaries=({"kind": "circuit_tracer", "transcoder_set": "gemma"},),
+    )
+
+
+SMALL_STORE_SUBJECT = _small_store_subject()
+
+
+def _fixture(version: int) -> dict:
+    """A frozen envelope, as the writer of that schema version produced it."""
+    return json.loads((Path(__file__).parent / "fixtures" / f"it_artifact_schema{version}.json").read_text("utf-8"))
 
 
 @pytest.fixture()
@@ -50,7 +72,9 @@ def small_store():
         "active_features": ColCfg(datasets_dtype="int64", array_shape=(None, 3), sequence_type=False).to_dict(),
         "input_tokens": ColCfg(datasets_dtype="int64").to_dict(),
     }
-    return AnalysisStore(dataset=dataset, split="validation", it_format_kwargs={"col_cfg": col_cfg})
+    store = AnalysisStore(dataset=dataset, split="validation", it_format_kwargs={"col_cfg": col_cfg})
+    store.subject = SMALL_STORE_SUBJECT  # as `AnalysisCfg.apply` stamps a store an op writes on a module
+    return store
 
 
 class TestEnvelope:
@@ -107,12 +131,15 @@ class TestSchemaVersionPolicy:
 
     @staticmethod
     def _envelope(schema):
-        return {
+        envelope = {
             "schema": schema,
             "artifact_kind": ANALYSIS_STORE_KIND,
             "identity": {"store_id": "x"},
             "interpretune": {"col_cfg": {}},
         }
+        if isinstance(schema, int) and schema >= SUBJECT_REQUIRED_FROM_SCHEMA:
+            envelope["subject"] = {"model": {"id": "gpt2"}}
+        return envelope
 
     def test_current_schema_reads(self):
         validate_artifact_envelope(self._envelope(ARTIFACT_SCHEMA_VERSION))
@@ -183,6 +210,44 @@ class TestSchemaVersionPolicy:
         assert envelope["identity"]["store_id"] and envelope["artifacts"]["split"] == "validation"
         assert envelope["interpretune"]["analysis_backend"] == "circuit_tracer"
         assert envelope["interpretune"]["col_cfg"]["active_features"]["array_shape"] == [None, 3]
+        assert "subject" not in envelope  # version 1 predates the subject: read without one
+
+    def test_frozen_schema2_envelope_reads_with_its_subject(self):
+        """The first envelope version that says what a store was computed on, pinned as the writer produced it."""
+        from interpretune.hub.subject import StoreSubject
+
+        envelope = validate_artifact_envelope(_fixture(2), source="it_artifact_schema2.json")
+        subject = StoreSubject.from_dict(envelope["subject"])
+        assert subject.model_id == "google/gemma-2-2b" and subject.architecture == "Gemma2ForCausalLM"
+        assert subject.dictionaries == ({"kind": "circuit_tracer", "transcoder_set": "gemma"},)
+
+    def test_a_schema2_envelope_without_a_subject_is_refused(self):
+        envelope = _fixture(2)
+        del envelope["subject"]
+        with pytest.raises(ArtifactEnvelopeError, match="must name the model as `model.id`"):
+            validate_artifact_envelope(envelope, source="me/store")
+
+
+class TestReaderWindowMatrix:
+    """The three reader paths the window makes reachable, each against an envelope a writer produced (#283).
+
+    A reader one version behind, and a reader whose floor was raised, are expressed by narrowing this build's bounds, so
+    every case reads a frozen artifact rather than a hand-written envelope.
+    """
+
+    def test_a_reader_one_version_behind_refuses_the_current_envelope_as_newer(self, monkeypatch):
+        monkeypatch.setattr("interpretune.hub.artifacts.ARTIFACT_SCHEMA_VERSION", 1)
+        with pytest.raises(ArtifactEnvelopeError, match="written by a newer Interpretune"):
+            validate_artifact_envelope(_fixture(2), source="it_artifact_schema2.json")
+
+    def test_an_older_envelope_inside_the_window_reads(self):
+        assert ARTIFACT_SCHEMA_MIN_READABLE <= 1 < ARTIFACT_SCHEMA_VERSION
+        assert validate_artifact_envelope(_fixture(1), source="it_artifact_schema1.json")["schema"] == 1
+
+    def test_raising_the_floor_refuses_the_older_envelope_pointing_at_a_republish(self, monkeypatch):
+        monkeypatch.setattr("interpretune.hub.artifacts.ARTIFACT_SCHEMA_MIN_READABLE", 2)
+        with pytest.raises(ArtifactEnvelopeError, match="older than the minimum readable schema"):
+            validate_artifact_envelope(_fixture(1), source="it_artifact_schema1.json")
 
 
 class TestWriterSideGuard:
@@ -191,6 +256,17 @@ class TestWriterSideGuard:
     def test_build_returns_a_validated_envelope(self, small_store):
         env = build_analysis_store_envelope(small_store)
         assert validate_artifact_envelope(env) is env
+
+    def test_a_store_without_a_subject_is_refused_naming_the_fix(self, small_store):
+        small_store.subject = None
+        with pytest.raises(ArtifactEnvelopeError, match=r"records no subject.*subject=StoreSubject"):
+            build_analysis_store_envelope(small_store)
+
+    def test_an_explicit_subject_overrides_the_stamped_one(self, small_store):
+        from interpretune.hub.subject import StoreSubject
+
+        envelope = build_analysis_store_envelope(small_store, subject=StoreSubject(model_id="gpt2"))
+        assert envelope["subject"]["model"] == {"id": "gpt2", "revision": None}
 
     def test_malformed_preserved_identity_refused_before_upload(self, small_store):
         """The re-push path feeds an EXISTING envelope's identity back in; a bad one must not ship."""
@@ -229,6 +305,18 @@ class TestLocalArtifactRoundTrip:
         monkeypatch.setattr(socket.socket, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
         env = describe_analysis_store("someorg/store", cache_dir=cache)
         assert env["artifact_kind"] == ANALYSIS_STORE_KIND
+
+    def test_pull_restores_the_subject_onto_the_store(self, small_store, tmp_path, monkeypatch):
+        """The subject travels with the store: a pulled store says what it was computed on."""
+        from interpretune.hub.artifacts import pull_analysis_store
+
+        cache = tmp_path / "artifacts"
+        revision = self._materialize_local_artifact(small_store, "someorg/store", cache)
+        snapshot = cache / "datasets--someorg--store" / "snapshots" / revision
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda *a, **k: str(snapshot / IT_ARTIFACT_ENVELOPE))
+        monkeypatch.setattr("huggingface_hub.snapshot_download", lambda *a, **k: str(snapshot / "data"))
+        pulled = pull_analysis_store("someorg/store", cache_dir=cache)
+        assert pulled.subject == SMALL_STORE_SUBJECT
 
     def test_parquet_roundtrip_reattaches_formatter(self, small_store, tmp_path, monkeypatch):
         """Arrow -> parquet -> load -> AnalysisStore with col_cfg re-attach: tensors come back."""
@@ -301,6 +389,7 @@ class TestGraphHydrationRoundTrip:
         store = AnalysisStore(
             dataset=dataset, split="validation", it_format_kwargs={"analysis_backend": "circuit_tracer"}
         )
+        store.subject = SMALL_STORE_SUBJECT  # assembled outside an op, so its subject is stated
 
         # envelope carries the backend NAME (instances are not wire-format)
         env = build_analysis_store_envelope(store)
@@ -354,6 +443,7 @@ class TestGraphHydrationRoundTrip:
             op=DISPATCHER.get_op("compute_attribution_graph"),
             analysis_backend="circuit_tracer",
         )
+        store.subject = SMALL_STORE_SUBJECT  # assembled from batches, so its subject is stated
         env = build_analysis_store_envelope(store)
         assert env["interpretune"]["analysis_backend"] == "circuit_tracer"  # instance mapped back to its name
         cache = tmp_path / "artifacts"
@@ -785,6 +875,22 @@ class TestPushPublishChecks:
         with pytest.raises(UnknownPublishCheckError, match="page-index"):
             push_analysis_store(small_store, "me/store", skip_checks={"page-index"})
         api.create_repo.assert_not_called()
+
+    def test_a_store_without_a_subject_is_refused_before_any_network_call(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        small_store.subject = None
+        with pytest.raises(ArtifactEnvelopeError, match="records no subject"):
+            push_analysis_store(small_store, "me/store")
+        api.create_repo.assert_not_called()
+
+    def test_the_published_envelope_carries_the_subject(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        push_analysis_store(small_store, "me/store")
+        assert self._uploaded_envelope(api)["subject"] == SMALL_STORE_SUBJECT.to_dict()
 
     def test_unreadable_published_copy_raises_after_the_upload(self, small_store, hub, monkeypatch):
         import io
