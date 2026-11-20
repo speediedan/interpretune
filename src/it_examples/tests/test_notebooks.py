@@ -628,9 +628,18 @@ def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch)
     )
     nb = json.loads(output_notebook.read_text(encoding="utf-8"))
     outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
-    text = "".join("".join(out.get("text", [])) for out in outputs)
-    for marker in ("probe examples answered as expected", "readout at unembed.hook_in", "causal steering at"):
-        assert marker in text, f"the notebook printed no {marker!r} line: a section did not run"
+    # the results are notebook UI tables and figures (HTML), so the checks read their titles
+    shown = "".join("".join(out.get("data", {}).get("text/html", "")) for out in outputs)
+    for marker in (
+        "The probe prompts",
+        "probe examples answered as expected",
+        "Readout at unembed.hook_in",
+        "Causal steering at",
+        "features of each stage",
+    ):
+        assert marker in shown, f"the notebook showed no {marker!r} table: a section did not run"
+    # a figure shown as plotly JSON alone is dropped by the docs build, so every figure must be embedded as HTML
+    assert shown.count("Plotly.newPlot") == 3, "the cosine matrix and both projections must render as HTML figures"
     _cleanup_notebook_artifacts()
 
 

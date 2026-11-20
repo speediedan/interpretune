@@ -9,7 +9,7 @@
   "notebooks/dev/circuit_tracer_examples/attention_attribution_injection_config.yaml": "a5daaf37b1c4c441c3fb7d5817313de733bb5621954b323e79271afe27ae6276",
   "notebooks/dev/circuit_tracer_examples/attention_attribution_points.py": "0209bb6dfb4bdbf702fcd66fd01340735bb996167365ea96cf9bbcefa78e3dba",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "cee6315d7a74200aba3f82dedd5d22c88ac560585564e3f7c7f096625cb90545",
-  "notebooks/dev/circuit_tracer_examples/concept_direction_latent_dynamics.ipynb": "b617c0dadb515177e0c5518c8209f7de9e3f5edb0e9a034c90427dca0e87df25",
+  "notebooks/dev/circuit_tracer_examples/concept_direction_latent_dynamics.ipynb": "39ca54479579f0257b21da55049b7f79db028c1185c0d4a0b9ecf0426ed60177",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo.ipynb": "133fcaf3dfef6d8300822a403b134ea7895bf5308d1b3eecc16f4ad059ad0248",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo_gemma2_ref.ipynb": "39989b9b096e4d71e41c6f5c0bb7ce699bbb730975a3cc20e32602b79d7424c7",
   "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo.ipynb": "3be66d806ae0307f3d6be425e12d1f9892e4393110b8cc10a87e18e1ebecd463",
