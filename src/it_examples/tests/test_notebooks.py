@@ -778,7 +778,7 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
 # Trains on the train split, whose arrow read fails on Windows runners (as for the runner demo below).
 @RunIf(skip_windows=True)
 def test_role_kinds_tuning_notebook(tmp_path: Path):
-    """The interpretability role kinds in one phased run (#879): CPU-only, against the local-publish snapshot.
+    """The interpretability role kinds in one staged run (#879): CPU-only, against the local-publish snapshot.
 
     The notebook asserts the guarantees itself (an artifact neither thawed nor optimized until its promotion, the
     steering vector trained then held, the fitted direction saved and never trained); this checks it ran clean and that
