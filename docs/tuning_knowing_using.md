@@ -144,6 +144,9 @@ seed with them. Both use finetuning-scheduler's phases as experimental stages.
 - **Mid-only** (`runs/kug_mid_only.qwen2_5_1_5b.core.yaml`). Training only the adapters of blocks 7 to 20, on
   cross-entropy alone and from the start, tests the misalignment account directly: if composition fails because
   knowledge is stored where later layers cannot use it, confining the update to the middle of the network might help.
+- **Gated, no refreeze** (`runs/kug_gated_all.qwen2_5_1_5b.core.yaml`). The gated arm changes two things at once: when
+  LRSD starts, and which adapters train after the gate. This arm separates them: the same gate turns LRSD on, and every
+  block's adapters keep training.
 
 Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
 
@@ -153,13 +156,17 @@ Two-hop and memorization exact match, averaged over epochs 30 to 50 and then ove
 | LRSD throughout, $\lambda = 1$ | 0.159 | 0.975 | | |
 | gated | 0.110 | 0.992 | +0.032 | -0.049 |
 | mid-only | 0.023 | 0.992 | -0.055 | -0.136 |
+| gated, no refreeze | 0.154 | 0.981 | +0.076 | -0.005 |
 
-The gate opened at epoch 7, 7 and 6. Per seed, the gated arm's differences were +0.023, +0.041 and +0.033 against plain
-and -0.041, -0.059 and -0.046 against LRSD throughout; the mid-only arm's were -0.066, -0.041 and -0.058 against plain.
+The gate opened at epoch 7, 7 and 6 in both gated arms. Per seed, the gated arm's differences were +0.023, +0.041 and
++0.033 against plain and -0.041, -0.059 and -0.046 against LRSD throughout; the mid-only arm's were -0.066, -0.041 and
+-0.058 against plain. The no-refreeze arm's were +0.001, -0.011 and -0.004 against LRSD throughout, and +0.043, +0.048
+and +0.042 against the gated arm.
 
-Both results are negative against the paper's own recipe. Holding LRSD back until memorization saturates keeps about
-40% of its gain over plain fine-tuning while memorizing slightly better, so the alignment term does most of its work
-while the facts are being learned rather than after. Training only the middle blocks memorizes as well as training all
-of them but composes far less than plain fine-tuning: placement alone does not substitute for the loss. The gated arm
-changes two things at once, when LRSD starts and which adapters train after the gate, so it does not say which of the
-two costs the difference; an arm that turns LRSD on at the gate without refreezing would separate them.
+No arm beats the paper's own recipe, and the separating arm says where the gated arm's deficit comes from. Turning LRSD
+on only once memorization saturates, at epoch 6 or 7 of 50, keeps nearly all of its gain: within a seed's spread of
+LRSD throughout. The gated arm's loss of about 60% of that gain is the refreeze: confining the training after the gate
+to blocks 7 to 20 costs about 0.044 of two-hop exact match. Training only the middle blocks from the start memorizes as
+well as training all of them but composes far less than plain fine-tuning. Both placement results point the same way:
+on this model, the alignment term needs the adapters outside the middle band, and placement does not substitute for
+the loss.
