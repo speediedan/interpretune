@@ -1,0 +1,93 @@
+# Derived key: capital_states.gemma3.circuit_tracer+nnsight.neuronpedia
+# The capital-states experiment (circuit-tracer's capital tutorial): its prompt and the two logits it attributes,
+# the answer and the city it is reached through. Named targets replace circuit-tracer's salient-logit selection.
+task_variant: capital_states
+model: gemma3
+composition: [circuit_tracer, nnsight]
+extensions: [neuronpedia]
+descriptor: null
+reg_info:
+  model_src_key: gemma3
+  model_cfg_key: capital_states
+  adapter_combinations:
+    - [core, nnsight, circuit_tracer]
+  description: The capital-states experiment with circuit tracer on the NNsight backend, Gemma3-1b-it, Neuronpedia enabled
+shared_config:
+  task_name: prompt_analysis
+  os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+  model_name_or_path: google/gemma-3-1b-it
+  tokenizer_kwargs:
+      model_input_names: ['input']
+      padding_side: left
+      add_bos_token: true
+registered_cfg:
+  datamodule_cfg:
+    prompt_cfg:
+      class_path: prompt_analysis.ChatTemplatePromptSetConfig
+      init_args:
+        prompts: ['The capital of the state containing Dallas is']
+    signature_columns: ['input']
+    enable_datasets_cache: False
+    eval_batch_size: 1
+  module_cfg:
+    class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
+    init_args:
+      auto_comp_cfg:
+        class_path: interpretune.config.shared.AutoCompConfig
+        init_args:
+          module_cfg_name: PromptAnalysisConfig
+          module_cfg_mixin:
+            class_path: interpretune.harness.sessions.NeutralSessionMixin
+            import_only: True
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cpu
+            dtype: float32
+          model_head: transformers.Gemma3ForCausalLM
+      nnsight_cfg:
+        class_path: interpretune.adapters.nnsight.config.NNsightConfig
+        init_args:
+          model_name: google/gemma-3-1b-it
+          device_map: cuda
+          torch_dtype: float32
+          dispatch: true
+          attn_implementation: eager
+          tokenizer_kwargs:
+            padding_side: left
+            add_bos_token: true
+      circuit_tracer_cfg:
+        class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
+        init_args:
+          backend: "nnsight"
+          transcoder_set: "mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine"
+          max_n_logits: 10
+          analysis_target_tokens: ['▁Dallas', '▁Austin']
+          desired_logit_prob: 0.95
+          max_feature_nodes: 8192
+          batch_size: 256
+          offload: 'cpu'
+          verbose: true
+          use_neuronpedia: true
+      neuronpedia_cfg:
+        class_path: interpretune.extensions.neuronpedia.NeuronpediaConfig
+        init_args:
+          enabled: true
+          auto_transform: true
+          default_metadata:
+            info:
+              creator_name: "interpretune-user"
+              creator_url: "https://github.com/speediedan/interpretune"
+              generator:
+                name: "Interpretune Circuit Tracer Example"
+                version: "0.1.0.dev0"
+                url: "https://github.com/speediedan/interpretune"
+              neuronpedia_model: "gemma-3-1b-it"
+              neuronpedia_source_set: "gemmascope-2-transcoder-16k"
+            feature_details:
+              neuronpedia_source_set: "gemmascope-2-transcoder-16k"
+  datamodule_cls:
+    class_path: prompt_analysis.PromptDataModule
+  module_cls:
+    class_path: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule

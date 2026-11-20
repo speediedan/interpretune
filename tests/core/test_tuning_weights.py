@@ -25,8 +25,10 @@ from interpretune.tuning.weights import (  # noqa: E402
     bias_patch,
     check_weight_equivalence,
     resolve_weight_targets,
+    weight_edit_role_addresses,
     weight_edit_roles,
 )
+from interpretune.tuning.views import expand_declared_roles  # noqa: E402
 from interpretune.utils import MisconfigurationException  # noqa: E402
 
 D, H, LAYERS, VOCAB = 6, 10, 2, 11
@@ -225,6 +227,13 @@ def test_a_trainable_patch_is_an_adapter_and_a_permanent_one_is_written_into_the
     patch = _patch(tmp_path, model, form="sparse")
     handle = apply_weight_patch(model, patch, name="steer", role="adapter", view=_view(model))
     assert set(weight_edit_roles(model).values()) == {"adapter:steer"}
+    # declared by address (#875): the operands, and not the edit's index buffer, which stays `base`
+    by_address = weight_edit_role_addresses(model)
+    assert by_address == {"adapter:steer": "module:layers.1.mlp.down.parametrizations.weight.0 & leaf:values"}
+    assert expand_declared_roles(model, by_address) == weight_edit_roles(model)
+    assert MappedView(model, from_document(MAP), roles=by_address).roles() == _view(model).roles() | {
+        "layers.1.mlp.down.parametrizations.weight.0.values": "adapter:steer"
+    }
     assert handle.edit.values.requires_grad
     # a view built after the edit schedules its operand by role and still places the base tensor
     view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))

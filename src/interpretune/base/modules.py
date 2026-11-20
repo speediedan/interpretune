@@ -7,11 +7,11 @@ from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 from interpretune.tuning.interventions import (
     attach_configured_interventions,
     intervention_placements,
-    intervention_roles,
+    intervention_role_addresses,
 )
-from interpretune.tuning.latents import latent_model_placements, latent_model_roles
-from interpretune.tuning.weights import weight_edit_roles
-from interpretune.tuning.views import attach_tunable_view
+from interpretune.tuning.latents import latent_model_placements, latent_model_role_addresses
+from interpretune.tuning.weights import weight_edit_role_addresses
+from interpretune.tuning.views import attach_tunable_view, merge_roles
 from interpretune.utils import MisconfigurationException
 
 
@@ -172,15 +172,20 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return {**latent_model_placements(self), **intervention_placements(self)}
 
     def tunable_roles(self) -> dict[str, str]:
-        """Roles for this module's parameters and buffers, by name.
+        """Roles for this module's parameters and buffers, as venngram views take them (``roles=``): roles mapped
+        to addresses (``{"latent:sae": "module:latent_models.sae"}``), resolved against the view's own names and
+        structure when it is built, or tensor names mapped to roles (speediedan/venngram#109).
 
-        Cooperative: mixins add theirs to ``super()``'s. This base declares the roles of the latent models and
-        interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact``
-        for a frozen one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the
-        operands of the weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
-        :mod:`interpretune.tuning.weights`).
+        Cooperative: mixins add theirs to ``super()``'s with :func:`~interpretune.tuning.views.merge_roles`, which
+        joins two addresses given for one role. This base declares the roles of the latent models and interventions
+        attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact`` for a frozen one:
+        :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the operands of the
+        weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
+        :mod:`interpretune.tuning.weights`), each by address.
         """
-        return {**latent_model_roles(self), **intervention_roles(self), **weight_edit_roles(self)}
+        return merge_roles(
+            latent_model_role_addresses(self), intervention_role_addresses(self), weight_edit_role_addresses(self)
+        )
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""
