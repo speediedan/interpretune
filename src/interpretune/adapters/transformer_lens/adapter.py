@@ -302,7 +302,8 @@ class BaseITLensModule(BaseITModule):
         # to eliminate need for two copies in memory)
         # TODO: add warning that TransformerLens only specifying a single device via device is supported
         #       (though the model will automatically be moved to multiple devices if n_devices > 1)
-        cust_config.num_labels = self.it_cfg.num_labels
+        if (num_labels := getattr(self.it_cfg, "num_labels", None)) is not None:  # a task-neutral config declares none
+            cust_config.num_labels = num_labels
         assert self.it_cfg.hf_from_pretrained_cfg is not None, (
             "cannot init hf_configured_model if hf_from_pretrained_cfg is None"
         )
