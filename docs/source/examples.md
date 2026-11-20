@@ -22,6 +22,7 @@ use the circuit-tracer adapter and no circuit-tracer release carries the surface
 ```bash
 uv pip install -e ".[examples]"                    # CPU quickstart, SAELens tutorial + the two hub-only notebooks
 uv pip install -e ".[examples,lightning]"           # + runner flexibility demo (its Trainer leg needs Lightning)
+uv pip install -e ".[examples,tune]" --group git-deps  # + role kinds in one phased run (finetuning-scheduler)
 uv pip install -e ".[examples]" --group git-deps   # everything else
 ```
 
@@ -29,6 +30,7 @@ uv pip install -e ".[examples]" --group git-deps   # everything else
 |---|---|---|---|
 | CPU quickstart | `.[examples]` | not required | none — `gpt2` |
 | Runner flexibility | `.[examples,lightning]` | not required | none — `gpt2` |
+| Role kinds in one phased run | `.[examples,tune]` + `git-deps` | not required | none — `gpt2` |
 | Op collections | `.[examples]` | not required | HF token — it publishes a collection to your namespace |
 | Hub op opt-in | `.[examples]` | not required | HF token |
 | SAELens tutorial | `.[examples]` | bf16 CUDA | none — `gpt2` |
@@ -59,6 +61,7 @@ needs neither.
 |---|---|---|---|
 | {doc}`CPU quickstart <notebooks/quickstart/cpu_quickstart>` | `core` | The first run: a CPU-only GPT-2 session, one analysis op over RTE, results in an `AnalysisStore` — no GPU, token, or gated weights. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/quickstart/cpu_quickstart.ipynb) |
 | {doc}`Runner flexibility <notebooks/runners/runner_flexibility_demo>` | `core`, `lightning` | The same tiny workflow three ways: Trainer steps with Lightning, custom analysis steps with the AnalysisRunner, and everything else in a raw loop. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/runners/runner_flexibility_demo.ipynb) |
+| {doc}`Role kinds in one phased run <notebooks/tuning/role_kinds_tuning>` | `core`, finetuning-scheduler | The interpretability role kinds in one CPU-sized schedule: a published SAE as an `artifact` promoted to `latent:sae` and tuned, a steering vector (`intervention:steer`) trained then held, and a fitted mean-difference direction (`fitted`), each selected by address, with what each guarantees read from the run and its checkpoints. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/tuning/role_kinds_tuning.ipynb) |
 | {doc}`SAELens tutorial <notebooks/saelens_adapter_example/saelens_adapter_example>` | `sae_lens` | The SAELens adapter end to end: SAE-spliced forward passes, `logit_diffs_latent` analysis, per-latent attribution. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/saelens_adapter_example/saelens_adapter_example.ipynb) |
 | {doc}`Circuit Tracer tutorial <notebooks/circuit_tracer_examples/circuit_tracer_adapter_example_basic>` | `circuit_tracer` | Attribution-graph generation basics with the circuit-tracer adapter. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb) |
 | {doc}`CT analysis backend demo <notebooks/circuit_tracer_examples/ct_analysis_backend_demo>` | `circuit_tracer`, `nnsight`, `transformer_lens` | The analysis-ops pipeline running a full semantic concept intervention through the circuit-tracer analysis backend. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/circuit_tracer_examples/ct_analysis_backend_demo.ipynb) |

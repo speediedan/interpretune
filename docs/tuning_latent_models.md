@@ -63,6 +63,8 @@ Attached with `frozen=True`, the same transcoder stays an `artifact`, applied an
   promote: {"role:artifact": "latent:mlp3"}
 ```
 
+Splice a latent model the run will tune with `op="replace"`, so the model runs on its reconstruction. Under `"replace_with_error"` the site's value is the original activation whatever the latent model computes, so tuning it against the task loss moves its parameters without changing that loss; the straight-through substitution is for training a latent model to reconstruct its site, with a reconstruction loss of its own. The examples gallery's role-kinds notebook (`tuning/role_kinds_tuning.ipynb`) promotes and tunes a published SAE this way.
+
 `layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them.
 
 sae_lens's own splice (`add_saes_on_init`) keeps registering its SAEs as `attached_saes` with the `latent:sae` role, as [sae_lens](tuning_sae_lens.md) describes. The seam here is for backends without a native splice, and for latent models other than SAEs.
