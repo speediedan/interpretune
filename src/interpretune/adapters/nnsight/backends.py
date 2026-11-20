@@ -242,7 +242,13 @@ def _write_envoy_activation(envoy: Any, resolved: ResolvedHook, value: Any) -> N
     """
     if resolved.io_type == "output":
         if resolved.tuple_output:
-            envoy.output[0] = value
+            # Rebuild the tuple: a module's tuple output (an attention block's ``(output, weights)``) is immutable,
+            # so assigning into its first element raises rather than replacing it.
+            output = envoy.output
+            if isinstance(output, tuple):
+                envoy.output = (value, *output[1:])
+            else:
+                output[0] = value
         else:
             envoy.output = value
     else:
@@ -508,6 +514,34 @@ class NNsightModelBackend:
     def __init__(self, hook_resolver: HookNameResolver, configs_per_pass: int | None = 32) -> None:
         self._resolver = hook_resolver
         self._configs_per_pass = configs_per_pass
+
+    @classmethod
+    def for_model(
+        cls, model: Any, configs_per_pass: int | None = None, *, strict: bool = True
+    ) -> NNsightModelBackend | None:
+        """A backend for an NNsight model, its hook resolver chosen by the model's architecture, with the model's
+        hooks registered.
+
+        Args:
+            model: The NNsight ``TransformersModel`` (or the HF model it wraps).
+            configs_per_pass: As for the constructor; ``None`` takes :func:`get_default_configs_per_pass`.
+            strict: Refuse an architecture the hook mapping does not cover (``ValueError``, from
+                :class:`HookNameResolver`). With ``strict=False`` such a model gets no backend (``None``).
+        """
+        from interpretune.analysis.backends.hook_mapping import _supported_architectures
+
+        hf_model = cls._get_hf_model(model)
+        architectures = getattr(getattr(hf_model, "config", None), "architectures", None)
+        # Fallback: the class name of the underlying HF model
+        model_arch = architectures[0] if architectures else type(hf_model).__name__
+        if not strict and model_arch not in _supported_architectures():
+            return None
+        backend = cls(
+            HookNameResolver(model_arch),
+            configs_per_pass=get_default_configs_per_pass() if configs_per_pass is None else configs_per_pass,
+        )
+        backend.register_model_hooks(model)
+        return backend
 
     # ------------------------------------------------------------------
     # Capabilities

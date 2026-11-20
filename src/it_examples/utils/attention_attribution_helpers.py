@@ -349,6 +349,65 @@ def _hf_causal_lm(model: Any) -> Any:
     return model
 
 
+def module_tokenizer(module: Any) -> Any:
+    """The tokenizer of a composition: the replacement model's under circuit-tracer, else the module's own.
+
+    The residual and intervention helpers below need only a tokenizer and the model backend, so they run on any
+    composition, not only one built around a circuit-tracer replacement model.
+    """
+    tokenizer = getattr(getattr(module, "replacement_model", None), "tokenizer", None)
+    if tokenizer is None:
+        tokenizer = getattr(getattr(module, "it_cfg", None), "tokenizer", None)
+    if tokenizer is None:
+        raise ValueError(f"{type(module).__name__}: no tokenizer on its replacement model or its configuration")
+    return tokenizer
+
+
+#: The intervention arms, written once as venngram site addresses over the sets of :func:`intervention_arm_sets`.
+INTERVENTION_ARMS: dict[str, str] = {
+    "attention, all layers": "@attn",
+    "MLP, all layers": "@mlp",
+    "attention, early half": "@attn & @early",
+    "attention, late half": "@attn & @late",
+    "MLP, early half": "@mlp & @early",
+    "MLP, late half": "@mlp & @late",
+    "both, all layers": "@attn | @mlp",
+}
+
+
+def intervention_arm_sets(n_layers: int) -> dict[str, str]:
+    """The address book sets the arms reference: the attention and MLP writes, and the two halves of the stack.
+
+    The points are spellings of the activation-point vocabulary, so the backend resolves them on any mapped
+    architecture. The halves are the only sets that depend on the model: ``layers::<half>`` and ``layers:<half>:`` for
+    an ``n_layers``-deep stack.
+    """
+    half = n_layers // 2
+    return {
+        "attn": "point:hook_attn_out",
+        "mlp": "point:hook_mlp_out",
+        "early": f"layers::{half}",
+        "late": f"layers:{half}:",
+    }
+
+
+def resolve_intervention_arms(
+    n_layers: int, arms: Mapping[str, str] | None = None, sets: Mapping[str, str] | None = None
+) -> dict[str, tuple[str, ...]]:
+    """Each arm's sites on an ``n_layers``-deep stack, in layer order, from its address and the book's sets.
+
+    Args:
+        n_layers: The model's block count.
+        arms: Arm names and their addresses (default :data:`INTERVENTION_ARMS`).
+        sets: The book's sets (default :func:`intervention_arm_sets` for ``n_layers``).
+    """
+    from interpretune.analysis.venngram import resolve_sites
+
+    arms = INTERVENTION_ARMS if arms is None else arms
+    sets = intervention_arm_sets(n_layers) if sets is None else sets
+    return {name: resolve_sites(address, n_layers=n_layers, sets=sets).sites for name, address in arms.items()}
+
+
 def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Next-token logits and every term of the residual stream for ``prompt``, through the model backend."""
     from interpretune.analysis.optools import require_model_backend
@@ -360,7 +419,7 @@ def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[tor
     )
     model = module.model
     device = next(_hf_causal_lm(model).parameters()).device
-    batch = {k: v.to(device) for k, v in dict(module.replacement_model.tokenizer(prompt, return_tensors="pt")).items()}
+    batch = {k: v.to(device) for k, v in dict(module_tokenizer(module)(prompt, return_tensors="pt")).items()}
     logits, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
     return torch.as_tensor(logits).float(), {h: torch.as_tensor(cache[h]).detach() for h in hooks}
 
@@ -373,7 +432,7 @@ def capture_resid_post(module: Any, prompt: str, n_layers: int) -> torch.Tensor:
     hooks = [f"blocks.{layer}.hook_resid_post" for layer in range(n_layers)]
     model = module.model
     device = next(_hf_causal_lm(model).parameters()).device
-    batch = {k: v.to(device) for k, v in dict(module.replacement_model.tokenizer(prompt, return_tensors="pt")).items()}
+    batch = {k: v.to(device) for k, v in dict(module_tokenizer(module)(prompt, return_tensors="pt")).items()}
     _, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
     return torch.stack([torch.as_tensor(cache[h]).detach()[0] for h in hooks])
 
@@ -494,7 +553,7 @@ def apply_last_token_edits(
 
     hf = _hf_causal_lm(module.model)
     device, dtype = next(hf.parameters()).device, next(hf.parameters()).dtype
-    tokenizer = module.replacement_model.tokenizer
+    tokenizer = module_tokenizer(module)
     batch = tokenizer(prompt, return_tensors="pt").to(device)
     specs = {
         h: InterventionSpec(
