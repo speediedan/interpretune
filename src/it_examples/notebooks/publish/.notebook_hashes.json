@@ -5,7 +5,7 @@
   "notebooks/dev/attribution_analysis/analysis_injection_config.yaml": "f3ef5c9c2bd7faf09d0d2c2e712b6dfbe721e1d38dafab74536a3666d4a12183",
   "notebooks/dev/attribution_analysis/analysis_points.py": "7ccd7198969660fb10b9759b6e418b2d8fcc562ffba9bccba99ae80b071e45c9",
   "notebooks/dev/attribution_analysis/attribution_analysis.ipynb": "56be0e7af78d1d61619807f8961429f9742ba65629b248399c3f8a400f87d935",
-  "notebooks/dev/circuit_tracer_examples/attention_attribution_analysis.ipynb": "dc58515f2ab4d76ab6ee16fe3ae0c6f72f09c9d486a1cf89a3a1b022ba56dc59",
+  "notebooks/dev/circuit_tracer_examples/attention_attribution_analysis.ipynb": "204a9b83e9344427c16b3f6568cb9e9b8de0c586a164bbafe6d0df8154022b52",
   "notebooks/dev/circuit_tracer_examples/attention_attribution_injection_config.yaml": "a5daaf37b1c4c441c3fb7d5817313de733bb5621954b323e79271afe27ae6276",
   "notebooks/dev/circuit_tracer_examples/attention_attribution_points.py": "0209bb6dfb4bdbf702fcd66fd01340735bb996167365ea96cf9bbcefa78e3dba",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "cee6315d7a74200aba3f82dedd5d22c88ac560585564e3f7c7f096625cb90545",
