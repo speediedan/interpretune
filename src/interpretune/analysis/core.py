@@ -164,7 +164,7 @@ class LatentAnalysisDict(dict):
         return result
 
 
-def get_module_dims(module) -> tuple[int, int, int, int, int]:
+def get_module_dims(module) -> tuple[int, int | None, int | None, int, int]:
     """Extract key dimensions from module state.
 
     Args:
@@ -173,17 +173,20 @@ def get_module_dims(module) -> tuple[int, int, int, int, int]:
     Returns:
         Tuple containing:
             batch_size: Current batch size
-            max_answer_tokens: Maximum number of answer tokens
-            num_classes: Number of output classes
+            max_answer_tokens: Maximum number of answer tokens, or ``None`` for a module with no generation step
+            num_classes: Number of output classes, or ``None`` for a module with no labels
             vocab_size: Size of the vocabulary
             max_seq_len: Maximum sequence length
     """
     # TODO: in the future, this will depend on our configured dataloader (e.g. for train modes etc.)
     batch_size = module.datamodule.itdm_cfg.eval_batch_size
-    # TODO: currently only support a single new token, but this will be configurable
-    max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
-    # TODO: abstract this so it's not tied to entailment use case but num_classes
-    num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
+    # A task-neutral module (free-form prompts, no generation step and no labels) has neither an answer-token count nor
+    # a class count. Both are then None, which a schema reads as a variable-length dimension, exactly as it reads a
+    # dimension name it does not know: the stored shape comes from the data rather than from a task setting.
+    generation = getattr(getattr(module.it_cfg, "generative_step_cfg", None), "lm_generation_cfg", None)
+    max_answer_tokens = getattr(generation, "max_new_tokens", None)
+    mapping = getattr(module.it_cfg, "entailment_mapping", None)
+    num_classes = getattr(module.it_cfg, "num_labels", None) or (len(mapping) if mapping else None)
     # Bundled adapters' wrappers carry the tokenizer on `module.model`, and that stays the first choice. A raw
     # HF model (a core-only composition, or a hub adapter whose wrapper cannot take the `module.model` slot)
     # does not carry one, so fall back to resolving it wherever the composition keeps it (the datamodule always

@@ -116,8 +116,11 @@ def target_kind(recipe: Any, op: Any) -> str:
     """``activation``, ``units`` or ``features``, the last for any set naming ``features``.
 
     Venngram's ``Op.target_kind`` reads a set with both ``features`` and ``units`` as units. Here it is a feature
-    target whose ``units`` list the features, so its members are never scattered into the site's own activation.
+    target whose ``units`` list the features, so its members are never scattered into the site's own activation. An op
+    on a graph subset keeps venngram's kind (``graph_nodes``, or ``graph_complement`` for a restriction).
     """
+    if getattr(op, "graph", None) is not None:
+        return op.target_kind(recipe.book)
     if op.target is None:
         return "activation"
     from venngram.address import Term

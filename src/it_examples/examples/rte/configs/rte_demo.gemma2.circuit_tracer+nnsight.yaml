@@ -76,7 +76,6 @@ registered_cfg:
           backend: "nnsight"
           transcoder_set: "gemma"
           max_n_logits: 10
-          analysis_target_tokens: ['▁Dallas','▁Austin']
           desired_logit_prob: 0.95
           max_feature_nodes: 8192
           batch_size: 256
