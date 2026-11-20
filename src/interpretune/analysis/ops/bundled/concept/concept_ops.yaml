@@ -360,6 +360,11 @@ model_fwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false
@@ -451,6 +456,11 @@ model_bwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false
@@ -558,6 +568,11 @@ intervention_first_order_check:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false

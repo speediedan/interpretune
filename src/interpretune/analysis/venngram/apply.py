@@ -86,7 +86,11 @@ from interpretune.analysis.venngram.values import Statistic, member_refusal, mem
 from interpretune.utils import MisconfigurationException
 
 #: Recipe token scopes by their interpretune position-scope names.
-_POSITION_SCOPES = {"all": PositionScope.ALL_POSITIONS, "last": PositionScope.LAST_TOKEN}
+_POSITION_SCOPES = {
+    "all": PositionScope.ALL_POSITIONS,
+    "last": PositionScope.LAST_TOKEN,
+    "positions": PositionScope.POSITIONS,
+}
 
 #: The dense unit ops' identity values; replacement instead preserves its complement through a selected spec.
 _DENSE_UNIT_OPS = {"add": 0.0, "scale": 1.0}
@@ -512,6 +516,14 @@ def recipe_interventions(
                 values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
                 specs = _member_specs(op, values, width, scope, where)
             for spec_layer, spec in specs.items():
+                if scope == PositionScope.POSITIONS:
+                    # A recipe's operand is shared over its token set. Raw hook payloads instead carry one operand
+                    # row per position; stacking explicitly preserves the recipe's broadcast semantics.
+                    positions = tuple(stage.tokens.positions)
+                    spec = spec._replace(
+                        positions=positions,
+                        intervention_tensor=torch.stack([spec.intervention_tensor] * len(positions)),
+                    )
                 payload.setdefault(f"blocks.{spec_layer}.{hooked}", []).append(spec)
     return {pattern: tuple(specs) for pattern, specs in payload.items()}
 
