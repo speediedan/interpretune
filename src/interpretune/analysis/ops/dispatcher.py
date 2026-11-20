@@ -670,8 +670,10 @@ class AnalysisOpDispatcher:
                 # a substring gate before parsing: most files define no tensor op, and this runs on every load,
                 # cache hits included, where nothing else parses YAML
                 yaml_content = yaml.safe_load(text) if "op_spec" in text else None
-            except (OSError, yaml.YAMLError):
-                continue  # `_load_raw_definitions` reports an unreadable file; nothing here to register
+            except Exception:
+                # whatever `_load_raw_definitions` treats as an unreadable file (any failure, fail-soft per file) is
+                # reported there; nothing here to register
+                continue
             if not isinstance(yaml_content, dict):
                 continue
             tensor_ops = {
