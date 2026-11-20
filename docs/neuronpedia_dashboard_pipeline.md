@@ -24,9 +24,11 @@ defaults:
 - `IT_NP_CACHE` is the Neuronpedia cache root (dashboard runs, pretokenized prompt caches, activation caches).
   `IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`, so it only needs to be set when the cache should
   live outside the HuggingFace cache tree. `HF_DATASETS_CACHE` and `HF_HUB_CACHE` derive from `HF_HOME` as usual.
-- Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
+- Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`,
   `NEURONPEDIA_REPO_ROOT` and `NEURONPEDIA_UTILS_ROOT` (the last defaults to
-  `~/repos/neuronpedia/utils/neuronpedia-utils`).
+  `~/repos/neuronpedia/utils/neuronpedia-utils`). sae-lens is imported from the installed release: a SAELens checkout
+  is put on the generation subprocess's `PYTHONPATH` only when `--saelens-repo-root` names one, as the
+  preserved-baseline benchmark legs do.
 
   You usually do not need to set these by hand, `scripts/setup_dashboard_benchmark_env.py` writes all four
   into the `benchmark_env.sh` it generates, pointing at whatever checkouts it actually used — including when it

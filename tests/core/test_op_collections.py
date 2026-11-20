@@ -198,10 +198,14 @@ class TestBundledFamiliesDeclareCollections:
         assertion against it passes cold and fails warm. That is precisely why collection identity is a cache-
         serialized ``OpDef`` field: it has to survive the cache to be reportable at runtime.
         """
+        from interpretune.analysis.backends import ops as op_registry
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         DISPATCHER.load_definitions()
         declared = {op_def.collection_name for op_def in DISPATCHER._op_definitions.values() if op_def.collection_name}
+        # a family of tensor ops only (`latent`) defines no OpDef; its ops carry their collection in the executor
+        # registry
+        declared |= {r.collection for r in op_registry._EXECUTORS.values() if r.source == "bundled" and r.collection}
         assert {p.parent.name for p in _bundled_family_yamls()} <= declared
 
     def test_collection_identity_survives_the_cache(self, tmp_path):

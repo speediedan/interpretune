@@ -179,6 +179,17 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
     (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
     passes it as `clean_activations`.
+  - **Graph subsets, on the analysis backend:** an op that targets a venngram graph subset (`target: {graph: <name>}`,
+    a pruned piece of an attribution graph as a `graph_subset` document) applies the reasoning it describes in
+    another prompt. `recipe_feature_interventions(..., token_ids=, tokenizer=)` places each transcoder or CLT node at
+    the stage's site by its anchor in the destination prompt (an absolute position, an offset from the end, a
+    token-matched span, or every position), refusing the whole plan if any node does not resolve or two land on one
+    coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
+    activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
+    A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
+    feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
+    scalar) are not yet supported on this path and are refused by name
+    ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
 
@@ -370,8 +381,7 @@ Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905
 
 `interpretune.analysis.venngram` resolves a latent address against an explicit catalog of loaded latent models
 (`LatentCatalog`). This is the addressing and coordinate layer: it reads and edits coordinates of tensors it is
-given. Executing a frame or chart edit natively through a backend's hooks is not part of it yet
-([#865](https://github.com/speediedan/interpretune/issues/865)).
+given. A frame or chart edit also runs natively inside a backend's forward pass (see "Native latent edits" below).
 
 **One address form for every dictionary.** A `LatentBinding` declares a loaded model at one layer and activation point,
 its decoder rows, and its block size $b$: $b = 1$ for an SAE or transcoder, and block $g$ of a block-sparse featurizer
@@ -404,6 +414,38 @@ the null space of $M$ as it was. A map whose rank is below its dimension is refu
 squares. A binding names its space (`space="jlens"`), the address qualifier `space:jlens` selects by it, and the
 catalog's `site_coordinates`, `replace_site_coordinates` and `apply_site_chart` read and write site activations
 through it.
+
+### Native latent edits
+
+`latent_edit_spec(catalog, target, op, name=..., version=..., **args)` compiles one frame or chart edit of one
+feature block into a hook name and an `InterventionSpec` for `model_fwd_intervention` or a backend's
+`fwd_w_intervention`. The hook is the latent sub-hook of the model the block belongs to,
+`blocks.<layer>.<site>.hook_sae_acts_post`, so the edit runs on both CPU backends with the latent model attached
+(`use_latent_models`), and its token scope (`position_scope`) is independent of the block it selects.
+
+| op | catalog edit | arguments |
+| --- | --- | --- |
+| `frame_replace` | `replace_coordinates` in frame `name` | `coordinates` |
+| `chart_set` | `apply_chart(op="set")` in chart `name` | `value` |
+| `chart_path` | `apply_chart(op="path")` | `waypoints`, `t` |
+| `chart_rotate` | `apply_chart(op="rotate")` | `by` |
+| `chart_scale_norm` | `apply_chart(op="scale_norm")` | `factor` |
+
+At the latent sub-hook the activations are the block's latent coefficients $a_B$, and the values the catalog edits
+are the block's decoded contribution $v = a_B D_B$, with $D_B$ the block's decoder rows. The executor computes the
+catalog's own edit $v'$ and writes back the minimum-norm change of the coefficients,
+$a_B' = a_B + d\left(v' - v\right) D_B^{+}$, where $d$ is the spec's operand, the dose (1 applies the edit, 0 is the
+identity). The frame spans the rows of $D_B$, so the decoded contribution moves by exactly $d\left(v' - v\right)$, and
+the other blocks and the latent model's error term are untouched.
+
+The ops are tensor ops in the bundled `latent` op collection, each with its `OpSpec` and an executor registered by
+name. Before any pass, both backends refuse an edit whose latent sub-hook has no attached model, whose attached model
+is not the object the target resolved to, or whose decoder rows have changed since the catalog was built, and an edit
+on the gradient flow. An unknown or stale frame or chart version is refused when the spec is compiled.
+
+A frame-free edit of a whole block needs no new op: `block_edit_spec(catalog, target, op, value=...)` writes `set` (the
+block's activations from a source run) and `ablate` as a core `replace` on the block's columns, and `scale_norm` as a
+core `scale`, which scales the block's decoded contribution, and so its norm, by the same factor.
 
 ## Gradient interventions
 
