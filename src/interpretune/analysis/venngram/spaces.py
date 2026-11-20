@@ -65,7 +65,8 @@ class LinearSpace:
                     f"linear space {self.name!r}: inverse shape {tuple(inverse.shape)} is not"
                     f" {(matrix.shape[1], matrix.shape[0])}"
                 )
-        error = float((exact @ inverse.to(torch.float64) - torch.eye(len(matrix), dtype=torch.float64)).abs().max())
+        identity = torch.eye(len(matrix), dtype=torch.float64, device=exact.device)
+        error = float((exact @ inverse.to(exact) - identity).abs().max())
         if error > self.atol:
             rank = int(torch.linalg.matrix_rank(exact))
             raise MisconfigurationException(
