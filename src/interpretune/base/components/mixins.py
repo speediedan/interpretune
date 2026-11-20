@@ -530,8 +530,10 @@ class HFFromPretrainedMixin:
     def hf_configured_model_init(
         self, cust_config: PretrainedConfig, access_token: str | None = None
     ) -> PreTrainedModel:
-        """Instantiate the HF model from a customized config, applying the configured label count."""
-        cust_config.num_labels = self.it_cfg.num_labels  # mixin provides it_cfg
+        """Instantiate the HF model from a customized config, applying the label count a task configuration declares."""
+        # a task configuration declares its label count; a task-neutral one has none and keeps the pretrained count
+        if (num_labels := getattr(self.it_cfg, "num_labels", None)) is not None:  # mixin provides it_cfg
+            cust_config.num_labels = num_labels
         assert self.hf_cfg is not None, "hf_cfg should be set when calling hf_configured_model_init"
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
         # TODO: parameterize the default model head when one not provided in pretrained config
