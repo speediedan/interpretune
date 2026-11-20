@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from interpretune.hub.cache import IT_ARTIFACTS_HUB_CACHE
+from interpretune.hub.cache import IT_ARTIFACTS_HUB_CACHE, IT_ARTIFACTS_HUB_CACHE_SETTING, ensure_writable_cache_root
 
 IT_ARTIFACT_ENVELOPE = "it_artifact.json"
 
@@ -351,7 +351,7 @@ def pull_analysis_store(
     from interpretune.analysis import AnalysisStore
     from interpretune.hub.components import _TELEMETRY
 
-    root = str(cache_dir or IT_ARTIFACTS_HUB_CACHE)
+    root = str(cache_dir or ensure_writable_cache_root(IT_ARTIFACTS_HUB_CACHE, IT_ARTIFACTS_HUB_CACHE_SETTING))
     env_path = hf_hub_download(
         repo_id, IT_ARTIFACT_ENVELOPE, repo_type="dataset", revision=revision, cache_dir=root, token=token, **_TELEMETRY
     )
