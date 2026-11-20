@@ -571,8 +571,11 @@ class AnalysisOpDispatcher:
             self.load_definitions()
         self._finish_compilation()
 
-    def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
-        """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
+    def _collection_for(
+        self, yaml_file: Path, yaml_content: dict[str, Any], record: bool = True
+    ) -> CollectionSpec | None:
+        """Parse a YAML's ``collection:`` header, recording it per file for later attribution (``record=False`` for a
+        pass that runs on every load: ``_op_collections`` holds only what compilation parsed).
 
         Fail-soft on a malformed header, matching the surrounding load paths: the ops still load, just without
         collection identity, which surfaces as a missing version in ``op_info`` rather than a dead session.
@@ -582,7 +585,7 @@ class AnalysisOpDispatcher:
         except (ValueError, TypeError) as bad_header:
             op_load_failure(f"Ignoring invalid `{COLLECTION_HEADER_KEY}` header in {yaml_file}: {bad_header}")
             return None
-        if collection is not None:
+        if collection is not None and record:
             self._op_collections[str(yaml_file)] = collection
         return collection
 
@@ -684,7 +687,7 @@ class AnalysisOpDispatcher:
             from interpretune.analysis.backends.ops import load_tensor_op
 
             source = self._op_source_for(yaml_file)
-            collection = self._collection_for(yaml_file, yaml_content)
+            collection = self._collection_for(yaml_file, yaml_content, record=False)
             revision = None
             if source.startswith("hub:"):
                 revision = self._cache_manager.hub_commit_for_namespace(source.split(":", 1)[1])
