@@ -350,6 +350,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The rte component (`speediedan/rte`, pinned at `b1a920fc`) shuffles its training split by default, renders every task prompt as the sparsity chain does (a space after the premise), and tokenizes chat-template text with one BOS: the template already starts with `<bos>`, so gemma-3 inputs began `[2, 2, ...]`. Test sessions pin shuffling off unless a test asks for it, and prepared test subsets are keyed by entrypoint as well as tokenizer, so a warm cache can no longer serve another entrypoint's rendering ([#923](https://github.com/speediedan/interpretune/issues/923))
+
+- The pinned rte revision carries the gpt2 `sae_lens` configurations that enable the weight processing the `gpt2-small-res-jb` SAEs were trained on, and drops `default_padding_side` from its TransformerLens configurations, where it was never applied ([#1050](https://github.com/speediedan/interpretune/issues/1050))
+
 - circuit-tracer analysis ops (`compute_attribution_graph`, `head_loadings`, `head_conductance` and `feature_intervention_forward`, and the composites built on them such as `attribution_from_concept` and `intervention_from_concept`) refuse a batch carrying more than one prompt, naming its size. They attribute one prompt per call, and resolved a batch to its first prompt (or its first row of token ids) with the rest dropped silently, so a run at `batch_size > 1` produced plausible graphs, features and interventions for a fraction of the dataset. Run them at batch size 1 ([#1080](https://github.com/speediedan/interpretune/issues/1080))
 
 - A latent frame, chart or linear space fitted on a GPU registers: their orthonormality and exactness checks built each identity on the default device, so a chart's GPU axes, a GPU map, or any check under a changed default device raised a device mismatch. Each identity is now built on the device of the tensor it is compared with, and chart axes are checked on the CPU in double precision, as frames are ([#1096](https://github.com/speediedan/interpretune/issues/1096))
