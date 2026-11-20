@@ -421,7 +421,7 @@ def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[tor
     device = next(_hf_causal_lm(model).parameters()).device
     batch = {k: v.to(device) for k, v in dict(module_tokenizer(module)(prompt, return_tensors="pt")).items()}
     logits, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
-    return torch.as_tensor(logits).float(), {h: torch.as_tensor(cache[h]).detach() for h in hooks}
+    return torch.as_tensor(logits).detach().float(), {h: torch.as_tensor(cache[h]).detach() for h in hooks}
 
 
 def capture_resid_post(module: Any, prompt: str, n_layers: int) -> torch.Tensor:
