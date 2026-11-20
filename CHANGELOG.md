@@ -342,6 +342,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - Circuit-tracer adapter significantly expanded from TL-only to multi-backend architecture (381+ lines added)
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
+- The hosted CPU test workflow runs on pull requests and on pushes to main or release branches. Feature and bugfix branch pushes no longer duplicate an open pull request's matrix. The bf16 core-loop and Lightning CLI comparison runs on Linux, including hosted CI, instead of the slower macOS CPU path ([#926](https://github.com/speediedan/interpretune/issues/926))
+
 ### Fixed
 
 - A task-neutral module, one whose configuration declares no labels and no generation step (the `prompt_analysis` component's), can load a Hugging Face model and save an analysis store. Model initialization, on the core path and on TransformerLens, applies `num_labels` only when the configuration declares it, and otherwise keeps the pretrained configuration's count; an analysis store's answer-token and class dimensions are variable for such a module, as an unknown dimension name already is, rather than read from settings only a task has ([#1013](https://github.com/speediedan/interpretune/issues/1013))

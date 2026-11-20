@@ -113,9 +113,8 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
 
 
 @pytest.mark.skipif(
-    sys.platform == "win32" or (sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true"),
-    reason="the bf16 CPU autocast path is the same torch code covered on the macOS leg and on local Linux runs, and "
-    "two full CLI comparisons exceed the Windows and ubuntu hosted legs' 90-minute job timeout",
+    sys.platform != "linux",
+    reason="the bf16 CPU autocast comparison runs on Linux; macOS takes substantially longer for the same torch path",
 )
 def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component, clean_cli_env, tmp_path, monkeypatch):
     """#697's configuration on both hosts (bf16-mixed, two-step accumulation), which the core loop could not

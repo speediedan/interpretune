@@ -32,7 +32,7 @@ on:
         default: '0'
         type: string
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
