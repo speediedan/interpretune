@@ -687,20 +687,36 @@ class TestProtocolClsThreading:
         assert _resolve_protocol_path(recorded) is DefaultAnalysisBatchProtocol
 
     @pytest.mark.parametrize(
-        "path, expected_warning",
+        "path, match",
         [
-            ("no_such_module.NotReal", "Could not import protocol_cls"),
-            ("builtins.str", "not a BaseAnalysisBatchProtocol subclass"),
+            ("no_such_module.NotReal", "outside interpretune and the hub components"),
+            ("builtins.str", "outside interpretune and the hub components"),
+            ("it_hub_components.someone__repo.abc123.Proto", "outside interpretune and the hub components"),
+            ("interpretune.no_such_module.Proto", "does not import"),
+            ("interpretune.hub.artifacts.ArtifactEnvelopeError", "not a BaseAnalysisBatchProtocol subclass"),
         ],
     )
-    def test_unresolvable_protocol_degrades_to_the_default_with_a_warning(self, path, expected_warning, recwarn):
-        """Falls back rather than raising: the columns are still readable without the attribute surface.
-        Warned rather than silent, since silently serving the default is the failure recording it prevents.
-        """
+    def test_an_untrusted_or_unresolvable_protocol_is_refused_by_name(self, path, match):
+        """Importing the path runs code, and serving the default instead would silently change the store's
+        surface."""
+        from interpretune.hub.artifacts import ArtifactEnvelopeError, _resolve_protocol_path
+
+        with pytest.raises(ArtifactEnvelopeError, match=match):
+            _resolve_protocol_path(path, source="me/store")
+
+    def test_a_protocol_from_a_loaded_hub_component_resolves_without_an_import(self, monkeypatch):
+        """A hub component module is in ``sys.modules`` only once a trusted load executed it."""
+        import sys
+        import types
+
         from interpretune.hub.artifacts import _resolve_protocol_path
 
-        assert _resolve_protocol_path(path) is None
-        assert any(expected_warning in str(w.message) for w in recwarn.list)
+        protocol = self._custom_protocol()
+        name = "it_hub_components.someone__repo.abc123"
+        module = types.ModuleType(name)
+        module.HubProto = protocol
+        monkeypatch.setitem(sys.modules, name, module)
+        assert _resolve_protocol_path(f"{name}.HubProto") is protocol
 
 
 class TestPushPublishChecks:

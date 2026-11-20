@@ -165,8 +165,10 @@ provenance is: what a name resolves to later is not necessarily what produced th
 
 `protocol_cls` closes a gap where a store pushed with a custom protocol came back with the default —
 the columns were intact, but the attribute surface the protocol exists to provide was silently absent.
-An unresolvable protocol now falls back to the default **with a warning** rather than silently, since
-silently serving the default is exactly the failure recording it is meant to prevent.
+Pulling a store resolves `protocol_cls` only from `interpretune` or from a hub component module already
+loaded through the remote-code gate, since importing a path runs its module. Anything else, or a path
+that does not name a batch protocol, is **refused by name**: serving the default in its place is
+exactly the failure recording the protocol is meant to prevent.
 
 ### Schema versioning policy
 

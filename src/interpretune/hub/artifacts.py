@@ -100,21 +100,39 @@ def _serialize_col_cfg(store) -> dict[str, dict]:
     return out
 
 
-def _resolve_protocol_path(path: str):
-    """Import a protocol recorded in an envelope, or None to fall back to the default."""
+def _resolve_protocol_path(path: str, source: str = "<envelope>"):
+    """Resolve a protocol recorded in an envelope, refusing any module a reader has not already trusted.
+
+    A store is data, but this one field names code: importing it runs that module's top level. So only two kinds of
+    module are resolved. ``interpretune``'s own, and a hub component module already in ``sys.modules``, which is
+    there only because a trusted load executed it (see ``interpretune.hub.trust``), so resolving it imports nothing
+    new. Anything else, or a path that does not name a ``BaseAnalysisBatchProtocol`` subclass, is refused by name:
+    serving the default protocol in its place would hand back a store whose attribute surface silently differs from
+    the one it was written with.
+    """
+    import sys
+
+    from interpretune.hub.entrypoints import _HUB_MODULE_PREFIX
     from interpretune.protocol import BaseAnalysisBatchProtocol
-    from interpretune.utils import rank_zero_warn
 
     module_path, _, attr = path.rpartition(".")
-    try:
-        protocol_cls = getattr(importlib.import_module(module_path), attr)
-    except Exception as e:
-        rank_zero_warn(f"Could not import protocol_cls {path!r} from the artifact envelope: {e}")
-        return None
+    if module_path.split(".")[0] == "interpretune":
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            raise ArtifactEnvelopeError(f"{source}: protocol_cls {path!r} does not import: {e}") from e
+    elif module_path.startswith(_HUB_MODULE_PREFIX) and module_path in sys.modules:
+        module = sys.modules[module_path]
+    else:
+        raise ArtifactEnvelopeError(
+            f"{source}: protocol_cls {path!r} names a module outside interpretune and the hub components this process"
+            " has loaded through the remote-code gate, so it is not imported. Load the component that defines it"
+            " first (it.hub.load, under IT_TRUST_REMOTE_CODE), then pull the store again."
+        )
+    protocol_cls = getattr(module, attr, None)
     # MRO rather than issubclass: the base is a non-runtime_checkable Protocol, so issubclass raises.
     if not isinstance(protocol_cls, type) or BaseAnalysisBatchProtocol not in protocol_cls.__mro__:
-        rank_zero_warn(f"Envelope protocol_cls {path!r} is not a BaseAnalysisBatchProtocol subclass.")
-        return None
+        raise ArtifactEnvelopeError(f"{source}: protocol_cls {path!r} is not a BaseAnalysisBatchProtocol subclass.")
     return protocol_cls
 
 
@@ -377,12 +395,7 @@ def pull_analysis_store(
         format_kwargs["analysis_backend"] = resolve_analysis_backend(it_block["analysis_backend"])
     store_kwargs: dict[str, Any] = {}
     if (declared := it_block.get("protocol_cls")) is not None:
-        # Falls back to the default rather than raising: the columns are still readable without the
-        # richer attribute surface, so an unresolvable protocol degrades the store rather than losing it.
-        # Warned rather than silent, because silently serving the default is exactly the failure this
-        # records the protocol to prevent.
-        if (resolved := _resolve_protocol_path(declared)) is not None:
-            store_kwargs["protocol_cls"] = resolved
+        store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
     store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None, **store_kwargs)
     return store
 
