@@ -125,7 +125,7 @@ class HFReference:
         point: str,
         edit: Callable[[torch.Tensor], torch.Tensor],
         *,
-        scope: str = "last_token",
+        scope: str | tuple[int, ...] = "last_token",
         observe: Sequence[str] = (),
         attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
@@ -140,7 +140,7 @@ class HFReference:
     def steered_many(
         self,
         input_ids: torch.Tensor,
-        edits: Sequence[tuple[str, Callable[[torch.Tensor], torch.Tensor], str]],
+        edits: Sequence[tuple[str, Callable[[torch.Tensor], torch.Tensor], str | tuple[int, ...]]],
         *,
         observe: Sequence[str] = (),
         attention_mask: torch.Tensor | None = None,
@@ -161,6 +161,8 @@ class HFReference:
                     tensor[:, -1, ...] = _edit(tensor[:, -1, ...])
                 elif _scope == "all_positions":
                     tensor = _edit(tensor)
+                elif isinstance(_scope, tuple):
+                    tensor[:, list(_scope), ...] = _edit(tensor[:, list(_scope), ...])
                 else:
                     raise ValueError(f"unknown scope {_scope!r}")
                 return tensor
