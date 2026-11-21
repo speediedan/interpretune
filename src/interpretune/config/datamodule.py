@@ -46,6 +46,10 @@ class ChatTemplatePromptConfig(PromptConfig):
     """
 
     add_generation_prompt: bool = True
+    #: Extra keyword arguments for the tokenizer's ``apply_chat_template``, which a template reads as variables (for
+    #: example ``{"enable_thinking": False}`` for Qwen3, whose template otherwise lets the model open a reasoning block
+    #: at the answer position).
+    chat_template_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._tokenizer: Any = None
@@ -96,6 +100,7 @@ class ChatTemplatePromptConfig(PromptConfig):
             tokenize=tokenize,
             add_generation_prompt=add_generation_prompt,
             return_tensors=return_tensors,
+            **self.chat_template_kwargs,
         )
 
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
@@ -107,7 +112,10 @@ class ChatTemplatePromptConfig(PromptConfig):
         if self._tokenizer is None or not getattr(self._tokenizer, "chat_template", None):
             return task_prompt.strip()
         return self._tokenizer.apply_chat_template(
-            self.build_messages(task_prompt), tokenize=False, add_generation_prompt=self.add_generation_prompt
+            self.build_messages(task_prompt),
+            tokenize=False,
+            add_generation_prompt=self.add_generation_prompt,
+            **self.chat_template_kwargs,
         )
 
 
