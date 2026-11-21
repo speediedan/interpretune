@@ -2,7 +2,7 @@
 
 An AnalysisStore pushed with `interpretune.hub.push_analysis_store` is a dataset repo on the Hugging Face Hub: Parquet
 files, an `it_artifact.json` envelope and a generated card. This page covers how a session finds stores that others
-have published, which publishers it trusts to supply them, and how to pull one. The envelope itself is described in
+have published, which publishers it trusts to supply them, and how to pull or stream one. The envelope itself is described in
 [AnalysisStore serialization](analysis_store_serialization.md).
 
 ## Trusted publishers
@@ -87,6 +87,45 @@ The envelope resolves first and the Parquet files come from the same commit, so 
 described even if the repo has been pushed to since. The interpretune formatter is re-attached from the envelope, so
 graph columns hydrate and steering runs from the stored graph without re-running the pipeline. The
 `shared_analysis_roundtrip` notebook shows the full push, pull and replicate loop.
+
+## Streaming a store
+
+A full pull downloads every Parquet file before it returns. To read part of a large store, or to start reading before
+the rest arrives, stream it:
+
+```python
+store = it.hub.pull_analysis_store(
+    row.repo_id, revision=row.revision, streaming=True, columns=["input_string", "logit_diff"]
+)
+for record in store:                  # decoded rows, as a full pull would decode them
+    print(record["input_string"], record["logit_diff"])
+store["logit_diff"]                   # one column, streamed for that column only
+```
+
+A streamed pull downloads only the envelope up front. The store then streams the Parquet files the envelope lists, at
+the envelope's commit, through `datasets` streaming. It differs from a pulled store in four ways:
+
+- **It reads only what you ask for.** `columns=` projects the read, so the other columns are not fetched. Reading a
+  column by name streams that column alone, again on each access.
+- **It has no positions.** It can be iterated and read by column, but indexing by row (`store[0]`, `store[2:5]`) is
+  refused, since a stream has no positions to index. Pull without `streaming=True` to index rows.
+- **It holds a stream, not a table.** The rows are in `store.stream` (an `IterableDataset`), and `store.dataset` is
+  `None`. A streamed store cannot be pushed; pull it in full to republish it.
+- **Each read is a range request.** Requests go through `HfFileSystem` in blocks of `block_size` bytes, 64 KiB by
+  default (`interpretune.hub.artifacts.STREAMING_BLOCK_SIZE`). The `HfFileSystem` default of 5 MiB is fetched on
+  every request, so on the published demo store a projected read of two small columns transfers about 226 KB of a
+  32 MB file, where the default block would transfer about 5.4 MB.
+
+Rows decode exactly as a full pull decodes them: the same formatter, the same `col_cfg`, and graph columns hydrate
+through the store's analysis backend.
+
+**How far a read reaches depends on row groups.** A Parquet file is read in row groups, and the stream reads a group
+only when a read reaches it. `push_analysis_store` writes row groups of about 16 MB uncompressed
+(`ANALYSIS_STORE_ROW_GROUP_SIZE`; override with `row_group_size=`) and records the target in the envelope as
+`artifacts.interchange.row_group_target_bytes`. The default was measured on a 142 MB store: reading its first row cost
+34 MB at 16 MB groups, against the whole file at the 100 MB `datasets` default, while a scan of two scalar columns took
+11 requests rather than the 38 that 4 MB groups need. A store whose rows are each larger than the target (one
+attribution graph per row, for example) gets one row per group.
 
 ## Dashboard corpora
 
