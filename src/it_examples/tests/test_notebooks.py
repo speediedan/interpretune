@@ -800,6 +800,52 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# Trains on the train split, whose arrow read fails on Windows runners (as for the runner demo below).
+@RunIf(skip_windows=True)
+def test_role_kinds_tuning_notebook(tmp_path: Path):
+    """The interpretability role kinds in one staged run (#879): CPU-only, against the local-publish snapshot.
+
+    The notebook asserts the guarantees itself (an artifact neither thawed nor optimized until its promotion, the
+    steering vector trained then held, the fitted direction saved and never trained); this checks it ran clean and that
+    the checkpoints it read show the promotion.
+    """
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "tuning" / "role_kinds_tuning.ipynb",
+        parameters={"LIMIT_TRAIN_BATCHES": 2, "LIMIT_VAL_BATCHES": 1, "FIT_BATCHES": 2, "REVISION": rev},
+        output_dir=output_dir,
+    )
+
+    import nbformat
+
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    html = "".join(
+        "".join(o.get("data", {}).get("text/html", ""))
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+    )
+    assert "What each saved checkpoint holds" in html and "latent:sae" in html
+
+    _cleanup_notebook_artifacts()
+
+
 # The train-split arrow read fails on Windows runners (OSError 22 on mmap) while test-split
 # paths pass there; the demo needs the train split for its fit leg, so it skips Windows.
 @RunIf(skip_windows=True)
@@ -953,6 +999,7 @@ def test_notebook_discovery():
         "sasa_blocks/sasa_blocks_frames_charts.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
+        "tuning/role_kinds_tuning.ipynb",
     }
 
     missing = sorted(roster - published)
