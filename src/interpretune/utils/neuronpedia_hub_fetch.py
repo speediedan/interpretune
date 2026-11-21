@@ -16,6 +16,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,6 @@ from interpretune.utils.neuronpedia_source_conflicts import (
 
 __all__ = [
     "CORPUS_MANIFEST",
-    "DEFAULT_CORPUS_COLLECTIONS",
     "CorpusListing",
     "CorpusPlan",
     "DashboardDatabaseUnreachableError",
@@ -50,18 +50,13 @@ CORPUS_MANIFEST = "dashboards.json"
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/neuronpedia_dashboard"
 
-#: The Hub collections a client reads to discover published corpora: the trust list. Each item is a bucket whose own
-#: ``dashboards.json`` says what it holds, so a collection names corpora and never describes them. It defaults to the
-#: project's collection; pass ``collections=`` to read another publisher's.
-DEFAULT_CORPUS_COLLECTIONS: tuple[str, ...] = ("speediedan/neuronpedia-dashboard-corpora-6af900009df4b4831ab24069",)
-
 
 @dataclass(frozen=True)
 class CorpusListing:
     """One discoverable corpus, described by its own manifest, enough to choose it before any GiB moves."""
 
     bucket: str
-    collection: str
+    publisher: str
     model_id: str | None
     source_set_id: str | None
     prompt_corpus: str | None
@@ -153,33 +148,32 @@ def find_dashboard_corpora(
     model_id: str | None = None,
     source_set_id: str | None = None,
     *,
-    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    publishers: Iterable[str] | str | None = None,
     token: str | bool | None = None,
-    collection_token: str | bool | None = False,
 ) -> list[CorpusListing]:
-    """The published corpora the ``collections`` list, optionally only those serving a (model, source set).
+    """The corpora the trusted publishers have published, optionally only those serving a (model, source set).
 
-    Reads each collection's bucket items and each bucket's ``dashboards.json`` (about 3 KB, with ``token``); nothing
-    else is downloaded. The match is on what the corpus says about itself, never on the bucket's name.
-
-    Collections are read anonymously unless ``collection_token`` is given (for a private collection): the Hub refuses
-    a fine-grained token without ``collection.read`` even on a public collection, and the default one is public.
+    ``publishers`` is the trust list shared with analysis stores (``interpretune.hub.trusted_publishers``: the
+    keyword, else ``IT_TRUSTED_PUBLISHERS``, else the project's namespace). Each publisher's buckets are listed, and a
+    bucket is a corpus when it carries a ``dashboards.json`` (about 3 KB, read with ``token``); nothing else is
+    downloaded. The match is on what the corpus says about itself, never on the bucket's name.
     """
     from huggingface_hub import HfApi
 
+    from interpretune.hub.discovery import trusted_publishers
+
+    api = HfApi(token=token)
     found: list[CorpusListing] = []
-    for slug in collections:
-        for item in HfApi(token=collection_token).get_collection(slug, token=collection_token).items:
-            if item.item_type != "bucket":
-                log.debug(
-                    "skipping %s item %s of %s: corpora are discovered as buckets", item.item_type, item.item_id, slug
-                )
+    for publisher in trusted_publishers(publishers):
+        for bucket in api.list_buckets(namespace=publisher, token=token):
+            if not list(api.get_bucket_paths_info(bucket.id, [CORPUS_MANIFEST], token=token)):
+                log.debug("skipping bucket %s of %s: it carries no %s", bucket.id, publisher, CORPUS_MANIFEST)
                 continue
-            manifest = read_remote_manifest(item.item_id, token)
+            manifest = read_remote_manifest(bucket.id, token)
             corpus = manifest.get("prompt_corpus") or {}
             listing = CorpusListing(
-                bucket=item.item_id,
-                collection=slug,
+                bucket=bucket.id,
+                publisher=publisher,
                 model_id=(manifest.get("model") or {}).get("name"),
                 source_set_id=(manifest.get("source_set") or {}).get("id"),
                 prompt_corpus=_prompt_corpus_label(corpus),
@@ -201,17 +195,19 @@ def resolve_bucket_for(
     source_set_id: str,
     *,
     prompt_corpus: str | None = None,
-    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    publishers: Iterable[str] | str | None = None,
     token: str | bool | None = None,
-    collection_token: str | bool | None = False,
 ) -> str:
-    """The published bucket serving a (model, source set), chosen from the ``collections``.
+    """The published bucket serving a (model, source set), chosen from the trusted ``publishers``' corpora.
 
     One prompt corpus per source set is not guaranteed, so several matches are refused unless ``prompt_corpus``
     (``<hf_dataset_path>`` or ``<hf_dataset_path>:<config>``) picks one, and no match is refused with what the
-    collections do serve.
+    publishers do serve.
     """
-    discover = {"collections": collections, "token": token, "collection_token": collection_token}
+    from interpretune.hub.discovery import trusted_publishers
+
+    trusted = trusted_publishers(publishers)
+    discover = {"publishers": trusted, "token": token}
     matches = find_dashboard_corpora(model_id, source_set_id, **discover)
     if prompt_corpus is not None:
         matches = [m for m in matches if prompt_corpus in (m.prompt_corpus, (m.prompt_corpus or "").split(":")[0])]
@@ -223,8 +219,9 @@ def resolve_bucket_for(
         )
         wanted = f"{model_id!r}/{source_set_id!r}" + (f" with prompt corpus {prompt_corpus!r}" if prompt_corpus else "")
         raise LookupError(
-            f"no corpus in {list(collections)} serves {wanted}. They serve: {', '.join(served) or 'nothing'}. Pass"
-            " bucket= explicitly, another collections=, or generate the dashboards locally."
+            f"no corpus published by {list(trusted)} serves {wanted}. They serve: {', '.join(served) or 'nothing'}."
+            " Pass bucket= explicitly, trust another publisher (publishers= or IT_TRUSTED_PUBLISHERS), or generate the"
+            " dashboards locally."
         )
     options = ", ".join(f"{m.prompt_corpus} ({m.bucket})" for m in matches)
     raise LookupError(
