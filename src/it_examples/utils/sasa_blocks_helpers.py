@@ -377,9 +377,12 @@ def removal(
         texts = [template.format(t=name) for name in CONCEPTS[concept]]
         batch = batch_of(tokenizer, texts, device)
         column = name_column(tokenizer, texts[0], CONCEPTS[concept][0])
+        clean = None
         for name, block in rows.items():
             clean, edited = backend.fwd_w_intervention(model, batch, {site: _spec(block, "reject", column)})
             totals[name].append(float(concept_mass(edited, ids).mean()))
+        if clean is None:
+            raise ValueError("removal needs at least one group to remove")
         totals["unsteered"].append(float(concept_mass(clean, ids).mean()))
     return {name: 100 * sum(values) / len(values) for name, values in totals.items()}
 
@@ -437,10 +440,13 @@ def addition(
         texts = [template.format(t=noun) for noun in chosen]
         batch = batch_of(tokenizer, texts, device)
         column = name_column(tokenizer, texts[0], chosen[0])
+        clean = None
         for name, vector in controls.items():
             for alpha in alphas:
                 clean, edited = backend.fwd_w_intervention(model, batch, {site: _spec(alpha * vector, "add", column)})
                 totals[name][alpha].append(float(concept_mass(edited, ids).mean()))
+        if clean is None:
+            raise ValueError("addition needs at least one control and one alpha")
         totals["unsteered"].append(float(concept_mass(clean, ids).mean()))
     mean = lambda values: 100 * sum(values) / len(values)  # noqa: E731
     return {
@@ -481,7 +487,7 @@ def named_subspace(states: torch.Tensor, labels: torch.Tensor, n_carriers: int, 
     return torch.linalg.svd(centered.double(), full_matrices=False)[2][:rank].float()
 
 
-def fit_ring(frame_coordinates: torch.Tensor, labels: torch.Tensor) -> dict[str, torch.Tensor]:
+def fit_ring(frame_coordinates: torch.Tensor, labels: torch.Tensor) -> dict[str, Any]:
     """A ``pca_plane`` chart's parameters from the members' centroids in frame coordinates, with each centroid."""
     n = int(labels.max()) + 1
     centroids = torch.stack([frame_coordinates[labels == i].mean(0) for i in range(n)]).double()
@@ -553,10 +559,13 @@ def chart_edits(
         h = capture(model, backend, batch, site)[0, column]
         shifted = (answer + 1) % n
         logits = {}
+        clean = None
         for name, edit in edits.items():
             clean, logits[name] = backend.fwd_w_intervention(
                 model, batch, {site: _spec(edit(h, member), "replace", column)}
             )
+        if clean is None:
+            raise ValueError("chart_edits needs at least one edit to run")
         logits["none"] = clean
         for name, out in logits.items():
             probs = out[0, -1].float().softmax(-1)[list(ids)]
