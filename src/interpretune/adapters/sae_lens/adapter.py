@@ -498,14 +498,13 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         """Initialize NNsight LanguageModel and load SAEs.
 
         This method handles NNsight-specific initialization logic, then loads SAEs using sae_lens (pure PyTorch).
-        Also initializes the ``NNsightModelBackend`` with a ``HookNameResolver`` for the model's architecture.
+        Also initializes the ``NNsightModelBackend`` for the model's architecture (``NNsightModelBackend.for_model``).
         """
         import os
 
         from nnsight import TransformersModel
 
-        from interpretune.analysis.backends.hook_mapping import HookNameResolver
-        from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
         from interpretune.utils import rank_zero_debug
 
         nnsight_cfg = self.nnsight_cfg  # from NNsightAttributeMixin
@@ -556,22 +555,8 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         self.instantiate_saes()  # from BaseSAELensModule
 
         # Initialize NNsight model backend with hook resolver
-        hf_model = NNsightModelBackend._get_hf_model(self.model)
-        hf_config = getattr(hf_model, "config", None)
-        architectures = getattr(hf_config, "architectures", None) if hf_config else None
-        if architectures:
-            model_arch = architectures[0]
-        else:
-            # Fallback: use the class name of the underlying HF model
-            model_arch = type(hf_model).__name__
-
-        resolver = HookNameResolver(model_arch)
-        self._model_backend = NNsightModelBackend(
-            resolver,
-            configs_per_pass=get_default_configs_per_pass(),
-        )
-        self._model_backend.register_model_hooks(self.model)
-        rank_zero_info(f"NNsight model backend initialized with architecture: {model_arch}")
+        self._model_backend = NNsightModelBackend.for_model(self.model)
+        rank_zero_info("NNsight model backend initialized for the model's architecture")
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for NNsight SAE Lens module.

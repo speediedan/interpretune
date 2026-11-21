@@ -297,6 +297,57 @@ class TestNNsightSession:
             assert "input_ids" in tokens
 
 
+class TestNNsightPlainModelBackend:
+    """A plain (core, nnsight) composition is its own model backend: the ops that run the model reach it without a
+    latent adapter composed."""
+
+    def test_the_composition_exposes_the_nnsight_backend(self, get_it_session__ns_gpt2__setup):
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
+        from interpretune.analysis.optools import require_model_backend
+
+        assert isinstance(require_model_backend(get_it_session__ns_gpt2__setup.it_session.module), NNsightModelBackend)
+
+    def test_an_unmapped_architecture_gets_no_backend_unless_strict(self):
+        from transformers import GPT2Config, GPT2LMHeadModel
+
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
+
+        model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_embd=8, n_head=2, vocab_size=16, n_positions=8))
+        model.config.architectures = ["NotAMappedArchitecture"]
+        assert NNsightModelBackend.for_model(model, strict=False) is None
+        with pytest.raises(ValueError, match="Unsupported model architecture"):
+            NNsightModelBackend.for_model(model)
+
+    def test_an_interchange_of_every_write_reproduces_the_other_prompt(self, get_it_session__ns_gpt2__setup):
+        """GPT-2's attention returns a tuple, so this also checks that a write to a tuple output replaces its first
+        element rather than failing on the immutable tuple."""
+        from interpretune.analysis.backends.interventions import InterventionSpec
+        from interpretune.analysis.optools import require_model_backend
+        from interpretune.analysis.venngram import resolve_sites
+
+        module = get_it_session__ns_gpt2__setup.it_session.module
+        backend = require_model_backend(module)
+        tokenizer = module.model.tokenizer
+        first, second = (
+            dict(tokenizer(p, return_tensors="pt")) for p in ("The capital of France is", "The capital of Spain is")
+        )
+        assert first["input_ids"].shape == second["input_ids"].shape
+        sites = list(
+            resolve_sites("point:hook_attn_out | point:hook_mlp_out", n_layers=module.model.config.n_layer).sites
+        )
+        second_logits, cache = backend.fwd_w_cache(model=module.model, batch=second, names_filter=sites)
+        specs = {
+            site: InterventionSpec(intervention_tensor=torch.as_tensor(cache[site])[0, -1], op="replace")
+            for site in sites
+        }
+        pre, post = backend.fwd_w_intervention(model=module.model, batch=first, interventions=specs)
+        target = torch.as_tensor(second_logits).reshape(-1, torch.as_tensor(second_logits).shape[-1])[-1]
+        post = torch.as_tensor(post).reshape(-1, target.shape[-1])[-1]
+        pre = torch.as_tensor(pre).reshape(-1, target.shape[-1])[-1]
+        assert not torch.allclose(pre, target, atol=1e-3), "the two prompts must differ at the last position"
+        torch.testing.assert_close(post, target, atol=1e-3, rtol=1e-4)
+
+
 class TestNNsightMixinAttributes:
     """Tests for NNsightAttributeMixin property access patterns."""
 
