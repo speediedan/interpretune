@@ -196,11 +196,11 @@ def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None
 
     if latent_model_handles:
         for sae in latent_model_handles:
-            base_name = str(sae.cfg.metadata.hook_name)
-            canonical_names = alias_to_canonical.get(base_name, [base_name])
-            for canonical_name in canonical_names:
-                for suffix in sorted(SUBHOOK_SUFFIXES):
-                    candidate_map.setdefault(f"{canonical_name}.{suffix}", f"{canonical_name}.{suffix}")
+            # The wrapper registers transcoder internals at the output site, which can differ from their input.
+            # Its public resolver owns both that choice and the bridge's alias resolution.
+            for suffix in sorted(SUBHOOK_SUFFIXES):
+                name = model.get_sae_hook_name(sae, suffix)
+                candidate_map.setdefault(name, name)
 
     actual_names = list(candidate_map.values())
     for alias, canonicals in alias_to_canonical.items():
