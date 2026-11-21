@@ -1,0 +1,13 @@
+# #931 Part 2, the gated arm's control: the gate of `kug_gated.qwen2_5_1_5b.yaml` without its refreeze. Phase 0 trains
+# every block's LoRA adapters on cross-entropy alone; `MetricThresholdTransition` (configured in the run) opens phase 1
+# in the epoch memorization (`mem_em`) first reaches 0.9, where `PhaseLRSD` turns the LRSD term on and every adapter
+# keeps training. Against the gated arm it isolates the refreeze; against LRSD throughout, the timing.
+0:
+  params:
+  - model\..*\.lora_[AB]\..*
+  phase_config:
+    lrsd_lambda: 0.0
+1:
+  params: []
+  phase_config:
+    lrsd_lambda: 1.0

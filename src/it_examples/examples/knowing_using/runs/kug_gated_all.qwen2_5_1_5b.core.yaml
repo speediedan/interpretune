@@ -1,0 +1,28 @@
+# #931 Part 2, the gated arm's control: the run of `kug_gated.qwen2_5_1_5b.core.yaml` with its schedule's refreeze
+# removed, so phase 1 turns the LRSD term on while every adapter keeps training:
+#
+#   interpretune --run_command train --config hub://speediedan/knowing-using/runs/kug_gated_all.qwen2_5_1_5b.core.yaml
+#
+# Against the gated arm it isolates the mid-band refreeze, and against LRSD throughout, when the term starts.
+session_ref: speediedan/knowing-using:kug_lrsd.qwen2_5_1_5b.core
+seed_everything: 848
+run_cfg:
+  max_epochs: 50
+  precision: bf16-mixed
+  callbacks:
+    - class_path: knowing_using.ExactMatchReport
+      init_args:
+        precision: bf16-mixed
+        log_path: kug_gated_all.qwen2_5_1_5b.core.exact_match.json
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/knowing-using/ft_schedules/kug_gated_all.qwen2_5_1_5b.yaml
+        tuning_scheduler_kwargs:
+          transition:
+            class_path: knowing_using.MetricThresholdTransition
+            init_args:
+              monitor: mem_em
+              threshold: 0.9
+          phase_hooks:
+            start:
+              - class_path: knowing_using.PhaseLRSD
