@@ -12,7 +12,7 @@ import torch
 
 from interpretune.config.shared import ITSerializableCfg
 from interpretune.config.module import ITConfig
-from interpretune.utils import rank_zero_warn, MisconfigurationException
+from interpretune.utils import check_gpu_device_map, rank_zero_warn, MisconfigurationException
 
 
 @dataclass(kw_only=True)
@@ -170,6 +170,11 @@ class NNsightConfig(ITSerializableCfg):
         """
         kwargs: dict[str, Any] = {"dispatch": self.dispatch}
 
+        # checked here, where the map becomes the load's placement, not when the config is built: configurations
+        # written for a GPU are placed on another device after loading (a seed component's, for one). A remote model
+        # is placed by the service, not on this host.
+        if self.device_map is not None and not self.remote:
+            check_gpu_device_map(self.device_map, field="nnsight_cfg.device_map")
         if self.device_map is not None:
             # nnsight 0.8 loads through a transformers pipeline, which moves the model to
             # its own `device` (cuda:0 whenever CUDA is available) after loading: a

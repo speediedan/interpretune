@@ -161,7 +161,7 @@ extract_concept_latent_examples:
 concept_direction:
   description: Aggregate latent concept examples into a normalized concept direction vector
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.concept_direction_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [semantic_direction]
   # Declared cross-batch state for streaming aggregation; the module constants
   # CONCEPT_STREAMING_STATE_FIELDS are the source of truth (pinned by test_bundled_concept_streaming).
@@ -360,6 +360,11 @@ model_fwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false
@@ -451,6 +456,11 @@ model_bwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false
@@ -472,6 +482,12 @@ model_bwd_intervention:
       datasets_dtype: int64
       required: false
       sequence_type: true
+    # The scalar the gradient is taken of (a Readout, or a callable of the logits), for in-process use; refused beside
+    # logit_target_ids, which only the default readout reads.
+    readout:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
     grad_capture:
       datasets_dtype: object
       required: false
@@ -552,6 +568,11 @@ intervention_first_order_check:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
     use_latent_models:
       datasets_dtype: bool
       required: false
@@ -603,6 +624,42 @@ intervention_first_order_check:
       sequence_type: false
     concept_basis:
       datasets_dtype: string
+      required: true
+      non_tensor: true
+      sequence_type: false
+
+weight_equivalence_check:
+  description: Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.weight_equivalence_check_impl
+  # The activation form runs through the backend's intervention path. The weight form edits parameters directly and
+  # needs no capability, only a tunable view whose component map records `mlp.out`'s layout (refused by name if not).
+  required_capabilities: [intervention]
+  input_schema:
+    recipe:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    we_rtol:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    we_atol:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+  output_schema:
+    we_max_abs_diff:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    we_max_abs:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    we_equivalent:
+      datasets_dtype: bool
       required: true
       non_tensor: true
       sequence_type: false

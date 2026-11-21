@@ -25,8 +25,10 @@ from interpretune.tuning.weights import (  # noqa: E402
     bias_patch,
     check_weight_equivalence,
     resolve_weight_targets,
+    weight_edit_role_addresses,
     weight_edit_roles,
 )
+from interpretune.tuning.views import expand_declared_roles  # noqa: E402
 from interpretune.utils import MisconfigurationException  # noqa: E402
 
 D, H, LAYERS, VOCAB = 6, 10, 2, 11
@@ -225,6 +227,13 @@ def test_a_trainable_patch_is_an_adapter_and_a_permanent_one_is_written_into_the
     patch = _patch(tmp_path, model, form="sparse")
     handle = apply_weight_patch(model, patch, name="steer", role="adapter", view=_view(model))
     assert set(weight_edit_roles(model).values()) == {"adapter:steer"}
+    # declared by address (#875): the operands, and not the edit's index buffer, which stays `base`
+    by_address = weight_edit_role_addresses(model)
+    assert by_address == {"adapter:steer": "module:layers.1.mlp.down.parametrizations.weight.0 & leaf:values"}
+    assert expand_declared_roles(model, by_address) == weight_edit_roles(model)
+    assert MappedView(model, from_document(MAP), roles=by_address).roles() == _view(model).roles() | {
+        "layers.1.mlp.down.parametrizations.weight.0.values": "adapter:steer"
+    }
     assert handle.edit.values.requires_grad
     # a view built after the edit schedules its operand by role and still places the base tensor
     view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
@@ -359,23 +368,25 @@ def test_parameter_targets_are_declared_only_where_weights_are_materialized():
     assert {"param", "param_units"} <= supported.targets and check_support(recipe, supported) == []
 
 
+def _stage_doc(ops, tokens="all", site="mlp.out.hook_in"):
+    return {
+        "schema_version": 2,
+        "kind": "recipe",
+        "name": "neurons",
+        "model": {"id": "tiny", "revision": "r1"},
+        "book": {
+            "schema_version": 1,
+            "name": "tiny",
+            "portability": "checkpoint",
+            "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
+            "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
+        },
+        "stages": [{"site": site, "tokens": tokens, "ops": ops}],
+    }
+
+
 def _stage_recipe(ops, tokens="all", site="mlp.out.hook_in"):
-    return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "neurons",
-            "model": {"id": "tiny", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "tiny",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
-                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
-            },
-            "stages": [{"site": site, "tokens": tokens, "ops": ops}],
-        }
-    ).recipe
+    return load_recipe(_stage_doc(ops, tokens=tokens, site=site)).recipe
 
 
 def _hooked(model, recipe):
@@ -445,3 +456,182 @@ def test_a_token_scoped_or_other_site_recipe_has_no_weight_form(model, tokens, s
     ops = [{"op": "scale", "target": {"set": "units"}, "value": {"dose": 0.0}}]
     with pytest.raises(ValueError, match=match):
         weight_form(model, _stage_recipe(ops, tokens=tokens, site=site), view=_view(model))
+
+
+DOWN = "component:mlp.out & layers:1 & leaf:weight"
+
+
+def test_a_unit_adapter_starts_as_the_identity_and_tunes_only_its_units(model):
+    """#868: a trainable delta over the selected units' slices, zero at first, applied by parametrization."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base, out = down.weight.detach().clone(), model(IDS).detach()
+    (handle,) = attach_unit_adapter(model, DOWN, [7, 2], name="hot", view=_view(model))
+    torch.testing.assert_close(model(IDS), out)
+    assert handle.edit.delta.shape == (D, 2)  # mlp.out's units are its input side: two columns of an [out, in] weight
+    assert set(weight_edit_roles(model).values()) == {"adapter:hot"}
+    model(IDS).sum().backward()
+    assert handle.edit.delta.grad is not None and handle.edit.delta.grad.abs().sum() > 0
+    with torch.no_grad():
+        handle.edit.delta.fill_(1.0)
+    moved = (down.weight - base).abs().sum(dim=0)
+    assert moved[[2, 7]].min() > 0 and moved[[0, 1, 3, 4, 5, 6, 8, 9]].abs().sum() == 0
+    handle.remove()
+    assert torch.equal(down.weight, base)
+
+
+def test_a_schedule_thaws_a_unit_adapter_by_role(model):
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    attach_unit_adapter(model, DOWN, [2, 7], name="hot", view=_view(model))
+    view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
+    compiled = compile_schedule({0: {"params": ["role:adapter"]}}, view)
+    assert compiled.phases[0].physical == ("layers.1.mlp.down.parametrizations.weight.0.delta",)
+
+
+def test_a_unit_adapter_is_refused_without_a_unit_axis_or_with_units_outside_it(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="unit axis is unknown|has no unit axis"):
+        attach_unit_adapter(model, DOWN, [2], name="hot", view=_view(model, UNMAPPED_LAYOUT))
+    with pytest.raises(ValueError, match=f"has {H} units along its unit axis"):
+        attach_unit_adapter(model, DOWN, [H], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="selects no units"):
+        attach_unit_adapter(model, DOWN, [], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="not part of the target address"):
+        attach_unit_adapter(model, f"{DOWN} & units:[2]", [2], name="hot", view=_view(model))
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached
+
+
+def test_a_site_unit_adapter_projects_the_neurons_onto_the_mlp_tensors_they_are(model):
+    """Neuron n at the MLP's hidden layer is column n of the down projection and row n (and bias entry n) of the up
+    projection: the down projection's bias lies along the residual, so it carries no hidden unit."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    out = model(IDS).detach()
+    handles = attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1", [2, 7], name="hot", view=_view(model))
+    shapes = {h.target: tuple(h.edit.delta.shape) for h in handles}
+    want = {"layers.1.mlp.up.weight": (2, D), "layers.1.mlp.down.weight": (D, 2)}
+    if model.layers[1].mlp.up.bias is not None:
+        want["layers.1.mlp.up.bias"] = (2,)
+    assert shapes == want
+    torch.testing.assert_close(model(IDS), out)
+    for handle in handles:
+        handle.remove()
+
+
+def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="not a unit space a unit adapter projects onto"):
+        attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="names a gradient"):
+        attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))
+
+
+SPAN = torch.tensor([[1.0, 0.5, -0.25, 0.0, 2.0, 1.0], [0.0, 1.0, 1.0, -1.0, 0.5, 0.0]])
+VECTOR = torch.tensor([0.5, -1.0, 0.25, 2.0, 0.0, 1.0])
+
+
+def _output_stage(ops, site="blocks.1.mlp.out.hook_out", tokens="all"):
+    return {"site": site, "tokens": tokens, "ops": ops}
+
+
+def _output_recipe(*stages, operand=SPAN):
+    doc = _stage_doc([SCALE])  # its book and model; the stages below replace its own
+    values, shape = operand.flatten().tolist(), list(operand.shape)
+    doc["operands"] = {"span": {"values": values, "shape": shape, "basis": "unfolded"}}
+    doc["stages"] = list(stages)
+    return load_recipe(doc).recipe
+
+
+def _hooked_both(model, recipe):
+    """The recipe through interpretune's activation path, at each layer's ``down`` input and output."""
+    from interpretune.analysis.backends.interventions import apply_intervention
+    from interpretune.tuning.weights import weight_form_site_widths
+
+    payload = recipe_interventions(recipe, site_widths=weight_form_site_widths(model, recipe, view=_view(model)))
+    hooks = []
+    for pattern, specs in payload.items():
+        down = model.layers[int(pattern.split(".")[1])].mlp.down
+
+        def edit(x, specs=specs):
+            for spec in specs:
+                x = apply_intervention(x.clone(), spec, last_pos=x.shape[1] - 1)
+            return x
+
+        if pattern.endswith(".hook_in"):
+            hooks.append(down.register_forward_pre_hook(lambda _, args, edit=edit: (edit(args[0]),)))
+        else:
+            hooks.append(down.register_forward_hook(lambda _, __, out, edit=edit: edit(out)))
+
+    class _Hooks:
+        def remove(self):
+            for h in hooks:
+                h.remove()
+
+    return _Hooks()
+
+
+REJECT = {"op": "reject", "operand": "span", "params": {"fraction": 0.5}}
+
+
+@pytest.mark.parametrize(
+    "op, operand",
+    [(REJECT, SPAN), ({"op": "project", "operand": "span"}, VECTOR)],
+    ids=["reject-a-span", "project-onto-a-vector"],
+)
+def test_an_output_span_op_has_a_weight_form_equal_to_its_hooked_form(model, op, operand):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    recipe = _output_recipe(_output_stage([op]), operand=operand)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_out": D}
+    handles = weight_form(model, recipe, view=view)
+    assert [h.target for h in handles] == ["layers.1.mlp.down.weight", "layers.1.mlp.down.bias"]
+    for handle in reversed(handles):
+        handle.remove()
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, f"the hooked form left the output unmoved ({moved}), so equivalence would be vacuous"
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")
+
+
+def test_an_output_rejection_composes_with_the_unit_ops_at_the_input(model):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    # the rejection's stage comes first, yet acts after the input's ops, as in the forward
+    units = {"site": "mlp.out.hook_in", "tokens": "all", "ops": [SCALE, SHIFT]}
+    recipe = _output_recipe(_output_stage([REJECT]), units)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_in": H, "mlp.out.hook_out": D}
+    base = model(IDS)
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, moved
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert torch.equal(model(IDS), base)
+
+
+@pytest.mark.parametrize(
+    "stage, match",
+    [
+        (_output_stage([REJECT], site="mlp.out.hook_out"), "names no layer"),
+        (_output_stage([REJECT], tokens="last"), "tokens `last`"),
+        (_output_stage([{"op": "add", "operand": "span"}]), "only a whole-activation `reject` or `project`"),
+    ],
+    ids=["layer-free", "token-scoped", "add-at-the-output"],
+)
+def test_an_output_stage_with_no_exact_weight_form_is_refused(model, stage, match):
+    from interpretune.tuning.weights import weight_form
+
+    with pytest.raises(ValueError, match=match):
+        weight_form(model, _output_recipe(stage, operand=VECTOR), view=_view(model))

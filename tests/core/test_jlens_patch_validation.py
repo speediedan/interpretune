@@ -564,3 +564,41 @@ class TestGemmaPairLevel3:
         rel_gap = torch.linalg.norm(case["delta"] - tl["delta"]) / torch.linalg.norm(case["delta"])
         assert rel_gap < 0.10, f"backends disagree on the real pair: rel gap {rel_gap:.4f}"
         assert tl["scale_gap"] < 0.01, f"TL-vs-HF scale conventions disagree: {tl['scale_gap']:.6f}"
+
+
+def test_nnsight_interventions_apply_in_forward_order_whatever_order_they_are_listed(nnsight_setup):
+    """A mapping that lists every MLP output before every residual output asks nnsight for a later module's value
+    first; the backend must schedule the edits in forward order, and the result must not depend on the listing."""
+    lm, _hf_model, backend = nnsight_setup
+    torch.manual_seed(3)
+    edits = {
+        f"blocks.{layer}.{hook}": InterventionSpec(intervention_tensor=torch.randn(D_MODEL), op="add")
+        for hook in ("hook_mlp_out", "hook_resid_post")
+        for layer in range(N_LAYERS)
+    }
+    batch = {"input_ids": torch.tensor([PROMPT_IDS])}
+    pre, listed = backend.fwd_w_intervention(model=lm, batch=batch, interventions=edits)
+    _, reversed_listing = backend.fwd_w_intervention(model=lm, batch=batch, interventions=dict(reversed(edits.items())))
+    assert torch.equal(torch.as_tensor(listed), torch.as_tensor(reversed_listing))
+    # positive control: the edits changed the output, so the equality compares two applied interventions
+    assert not torch.allclose(torch.as_tensor(listed)[0, -1], torch.as_tensor(pre)[0, -1])
+
+
+def test_position_set_gradient_operands_leave_other_gradient_rows_unchanged(nnsight_setup):
+    lm, _model, backend = nnsight_setup
+    point = f"blocks.{HOOK_LAYER}.hook_resid_post"
+    payload = {
+        point: {
+            "op": "replace",
+            "position_scope": "positions",
+            "positions": [2, 0],
+            "intervention_tensor": torch.stack([torch.zeros(D_MODEL), torch.ones(D_MODEL)]),
+        }
+    }
+    pre, post, _metric = backend.bwd_w_intervention(
+        lm, {"input_ids": torch.tensor([PROMPT_IDS])}, payload, lambda logits: logits[:, -1, 0].sum(), capture=[point]
+    )
+    assert torch.count_nonzero(pre[point][:, 2]) > 0
+    torch.testing.assert_close(post[point][:, 2], torch.zeros_like(post[point][:, 2]))
+    torch.testing.assert_close(post[point][:, 0], torch.ones_like(post[point][:, 0]))
+    torch.testing.assert_close(post[point][:, [1, 3, 4]], pre[point][:, [1, 3, 4]])

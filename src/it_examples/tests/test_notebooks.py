@@ -16,6 +16,7 @@ import pytest
 
 from interpretune.utils.resource_mgmt import cleanup_python_cuda
 from tests.analysis_resource_utils import clear_nnsight_test_state
+from tests.results import on_rocm
 from tests.runif import RunIf
 
 try:
@@ -393,6 +394,33 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
+# the rendered artifact runs the full panel, sweep and doses; this test runs the notebook's every assertion on a
+# smaller set of each, which is what an execution test needs. Measured with tests/gpu_ci/calibrate.py: need 14.04
+# GiB (RTX 4090, CUDA), declared at the calibrator's recommendation (need plus margin, next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=16.5)
+@pytest.mark.skipif(
+    on_rocm(),
+    reason="ROCm: circuit-tracer head_loadings hits an illegal memory access in a batched bf16 hipBLASLt GEMM (#1001)",
+)
+def test_ct_attention_attribution_notebook(tmp_path: Path):
+    """Test the attention-aware attribution notebook (regimes, influence, head reports, partition,
+    interventions)."""
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "attention_attribution_analysis.ipynb"
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters={
+            "influence_panel": [["Dallas", "Austin"], ["Detroit", "Lansing"]],
+            "residual_sweep_steps": [8, 16, 32],
+            "intervention_doses": [0.0, 0.5, 1.0],
+        },
+        output_dir=output_dir,
+    )
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+    _cleanup_notebook_artifacts()
+
+
 # Test parameters for the concept-direction steering demo notebooks (replaced the archived
 # RTE-focused cross-backend demo, 2026-07-11; rebuilt 2026-07-16 on the gemma-2-2b public-dashboard
 # default, a substrate that needs no local services). Split into two notebooks 2026-07-30: the
@@ -550,6 +578,31 @@ def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, 
     _cleanup_notebook_artifacts()
 
 
+# The neuron-communities replication loads Llama-3.1-8B in bf16 (gated; its weights persist on the agent's cache mount
+# from the first run, as tests/gpu_ci/hf_warm_manifest_gpu.yaml explains) and streams FineWeb-Edu prompts and the
+# release's community records from the network, so it runs in the optional tier rather than a pull-request phase.
+# Measured with tests/gpu_ci/calibrate.py: need 17.70 GiB (RTX 4090, CUDA), declared at the calibrator's recommendation.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=20.5, optional=True)
+def test_neuron_communities_notebook(tmp_path: Path):
+    """Execute the neuron-communities notebook on a few prompts and check its controls ran and the community is
+    necessary, not sufficient to ablate, and recovered by attribution."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "neuron_communities" / "neuron_communities_replication.ipynb",
+        parameters={"n_prompts": 16, "table1_communities": ["187321"], "random_draws": 1, "cache_dir": str(tmp_path)},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "captured vs hand-written gradients" in text, "the gradient control did not run"
+    _cleanup_notebook_artifacts()
+
+
 # The notebook's own defaults: Qwen3.5-4B through the NNsight composition with no transcoders, read through both the
 # J-lens and J++. Both defects the default path first met (a module class listed twice among the composed bases, and a
 # multimodal processor needing the torchvision the pins exclude) passed every Gemma case. Measured with
@@ -572,6 +625,37 @@ def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
     assert "J++ defaults verified" in text, "the J-lens and J++ comparison did not run"
     verdicts = [line for line in text.splitlines() if " was readable at layer " in line]
     assert verdicts and "before" in verdicts[-1], f"expected the intermediate before the answer, got: {verdicts}"
+    _cleanup_notebook_artifacts()
+
+
+# The latent-dynamics notebook runs an analysis the concept-direction Hub component publishes, so it needs the live
+# Hub (the component is fetched at the notebook's pinned revision, never warmed: warming would test a cache rather
+# than the pull) and a token that can read it. Measured with tests/gpu_ci/calibrate.py: need 5.11 GiB (RTX 4090, CUDA),
+# declared at the calibrator's recommendation.
+@pytest.mark.hf_live
+@pytest.mark.skipif(
+    not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
+    reason="IT_HF_TOKEN or HF_TOKEN required to fetch the concept-direction component",
+)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=6.0)
+def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch):
+    """Execute the latent-dynamics notebook with the component trusted, and check every section reported."""
+    import json
+
+    # the kernel inherits the token the Hub client reads; the component is private until the seed repositories flip
+    monkeypatch.setenv("HF_TOKEN", os.environ.get("IT_HF_TOKEN") or os.environ["HF_TOKEN"])
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "circuit_tracer_examples" / "concept_direction_latent_dynamics.ipynb",
+        parameters={"TRUST_COMPONENT_CODE": True},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    for marker in ("probe examples answered as expected", "readout at unembed.hook_in", "causal steering at"):
+        assert marker in text, f"the notebook printed no {marker!r} line: a section did not run"
     _cleanup_notebook_artifacts()
 
 
@@ -811,6 +895,32 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
     _cleanup_notebook_artifacts()
 
 
+# The block-sparse featurizer notebook loads Mistral-7B in bf16 and streams Pile-10k documents for the group gate and
+# the screen's background, so it runs in the optional tier rather than a pull-request phase.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=19.5, optional=True)
+def test_sasa_blocks_notebook(tmp_path: Path):
+    """Execute the SASA blocks notebook on a few prompts and check its payload control ran, the paper's month group
+    was selected, and the frames and charts section reached its edits."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "sasa_blocks" / "sasa_blocks_frames_charts.ipynb",
+        parameters={"max_edit_prompts": 12, "n_background_docs": 16},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "features:sasa &amp; units:[3810]" in tables or "features:sasa & units:[3810]" in tables, "month group"
+    assert "principal cosines, block vs named subspace" in text, "the frames and charts section did not run"
+    assert "Moving a member one step around its ring" in tables, "the chart edits did not run"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -827,6 +937,8 @@ def test_notebook_discovery():
     roster = {
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
+        "circuit_tracer_examples/concept_direction_latent_dynamics.ipynb",
+        "circuit_tracer_examples/attention_attribution_analysis.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
@@ -835,8 +947,10 @@ def test_notebook_discovery():
         "example_op_collections/op_collection_example.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
+        "neuron_communities/neuron_communities_replication.ipynb",
         "quickstart/cpu_quickstart.ipynb",
         "runners/runner_flexibility_demo.ipynb",
+        "sasa_blocks/sasa_blocks_frames_charts.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
     }

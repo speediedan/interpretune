@@ -34,7 +34,7 @@
 - `TransformerBridgeConfig`: The TL config, extending base with an architecture field
 
 **Interpretune Configs:**
-- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `default_padding_side`)
+- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`)
 - `ITLensFromPretrainedConfig`: For from_pretrained initialization (fold_ln, model_name, etc.)
 - `ITLensCustomConfig`: For config-based initialization (a `TransformerBridgeConfig`, or a dict convertible to one)
 - `ITLensConfig`: Top-level IT config encapsulating all settings
@@ -212,7 +212,7 @@ nightly
 # Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
   --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \
-  --venv-dir=/mnt/cache/speediedan/.venvs/it_latest \
+  --venv-dir=${IT_VENV_BASE} \
   --from-source="finetuning_scheduler:~/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
 ```
 

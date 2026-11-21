@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from numbers import Integral
 import re
 from typing import Any, Callable, NamedTuple, TypeAlias
 
@@ -37,7 +38,9 @@ __all__ = [
     "require_position_scope",
     "require_op",
     "require_intervention_support",
+    "require_attached_latent_models",
     "iter_intervention_axes",
+    "LATENT_SUBHOOK",
 ]
 
 
@@ -69,14 +72,18 @@ class InterventionSpec(NamedTuple):
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).
-        position_scope: WHICH POSITIONS the intervention edits -- ``"last_token"`` (default) or
-            ``"all_positions"``. This is part of the specification rather than a backend setting
+        position_scope: Which positions the intervention edits: ``"last_token"`` (default),
+            ``"all_positions"`` or ``"positions"``. This is part of the specification rather than a backend setting
             because the CALLER knows which operation they meant: steering a final-token prediction
             and steering a whole prompt are different experiments, not different implementations of
             one. A backend that cannot honour the requested scope must REFUSE
             (:func:`require_position_scope`) rather than substitute the other one, since the two
             produce equally plausible activations and a silent substitution is undetectable
             downstream.
+        positions: With ``position_scope="positions"``, distinct non-negative, zero-based indices into the padded
+            sequence tensor. Padding is included in this coordinate system; indices are never shifted per example.
+            ``intervention_tensor`` has one leading row per listed position, in the same order. Its remaining axes
+            are that position's operand, including a complete basis for a span op. Other scopes require ``None``.
         use_intervention_tensor_as_basis: Controls which vector defines the projection basis in
             ``"project"`` mode. ``True`` means project the current hook input onto the span of
             ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
@@ -86,6 +93,10 @@ class InterventionSpec(NamedTuple):
             every input and is refused at apply time rather than run.
         clamp_max: Upper bound of the ``"clamp"`` band in pseudoinverse coordinates, or ``None``
             for one-sided clamping from below.
+        unit_indices: Optional ordered indices on the activation's last axis. The op acts on this slice and leaves
+            every other coordinate untouched. Its operand is expressed in the selected coordinates.
+        params: Optional op parameters the scalar fields above do not carry, read by the op's executor (a latent
+            frame or chart edit carries its compiled edit here). ``None`` for every core op.
     """
 
     intervention_tensor: torch.Tensor
@@ -95,9 +106,82 @@ class InterventionSpec(NamedTuple):
     clamp_min: float | None = None
     clamp_max: float | None = None
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
+    unit_indices: tuple[int, ...] | None = None
+    positions: tuple[int, ...] | None = None
+    params: Mapping[str, Any] | None = None
 
 
 InterventionValue: TypeAlias = Any
+
+#: The sub-hook a latent model's feature activations are read and written at, under the hook it is attached at.
+LATENT_SUBHOOK = "hook_sae_acts_post"
+
+
+def require_attached_latent_models(
+    interventions: Mapping[str, Any],
+    expanded_matches: Mapping[str, Sequence[str]],
+    latent_model_handles: Sequence[Any] | None,
+    *,
+    flow: str,
+) -> None:
+    """Refuse, by name and before any pass runs, a compiled latent edit that would not run on the latent model it
+    was compiled against.
+
+    A latent edit (a spec carrying ``params["latent_edit"]``) is computed from one loaded latent model's decoder rows,
+    so it runs only at that model's latent sub-hook, on the forward flow, with that same object attached there and its
+    decoder rows unchanged. Any other placement would write plausible activations computed for a different model. Only
+    a spec object carries ``params``, so a raw tensor or mapping payload has nothing to check.
+    """
+    attached = {_point_key(str(handle.cfg.metadata.hook_name)): handle for handle in latent_model_handles or ()}
+    for pattern, value in interventions.items():
+        # a spec is itself a (named) tuple, so test for one before reading a sequence of them
+        single = isinstance(value, InterventionSpec) or not isinstance(value, Sequence) or isinstance(value, str)
+        values = (value,) if single else value
+        for spec in values:
+            if not isinstance(spec, InterventionSpec) or (edit := (spec.params or {}).get("latent_edit")) is None:
+                continue
+            for hook_name in expanded_matches.get(pattern, ()):
+                _require_attached(spec, edit, hook_name, attached, flow)
+
+
+def _point_key(hook_name: str) -> Any:
+    """A hook's point identity, so a backend's canonical spelling of a hook (``blocks.0.hook_out`` on a
+    TransformerBridge) matches the spelling a latent model declares (``blocks.0.hook_resid_post``)."""
+    from interpretune.analysis.points.vocabulary import parse
+
+    try:
+        point = parse(hook_name)
+    except ValueError:
+        return hook_name
+    return point.layer, point.base, point.contribution
+
+
+def _require_attached(
+    spec: InterventionSpec, edit: Any, hook_name: str, attached: Mapping[Any, Any], flow: str
+) -> None:
+    where = f"latent edit {spec.op!r} on {edit.target} at {hook_name!r}"
+    if flow != "value":
+        raise ValueError(f"{where}: a latent edit moves activations, so it runs on the forward flow, not {flow!r}")
+    base = hook_name.removesuffix(f".{LATENT_SUBHOOK}")
+    handle = attached.get(_point_key(base))
+    if base == hook_name or handle is None:
+        hooks = sorted(str(h.cfg.metadata.hook_name) for h in attached.values())
+        raise ValueError(
+            f"{where}: it runs at the `{LATENT_SUBHOOK}` sub-hook of an attached latent model; attached at {hooks}"
+        )
+    if handle is not edit.model:
+        raise ValueError(
+            f"{where}: the latent model attached at {base!r} is not the loaded model the target resolved to;"
+            " compile the edit against the catalog binding the attached model"
+        )
+    decoder = getattr(handle, "W_dec", None)
+    if isinstance(decoder, torch.Tensor):
+        rows = decoder.detach()[list(edit.columns)].cpu().to(torch.float64)
+        if not torch.equal(rows, edit.decoder_rows().detach().cpu().to(torch.float64)):
+            raise ValueError(
+                f"{where}: the attached model's decoder rows for the block differ from the catalog binding's;"
+                " rebuild the catalog from the model as it is now"
+            )
 
 
 @dataclass(frozen=True)
@@ -240,6 +324,31 @@ def _validate_intervention_spec(
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
     op = normalize_op(spec.op)
+    positions = _explicit_positions(spec)
+    if positions is not None:
+        if tensor.ndim == 0 or tensor.shape[0] != len(positions):
+            raise ValueError(
+                f"hook '{hook_name}': positions requires one leading operand row per position "
+                f"({len(positions)}), got {tuple(tensor.shape)}"
+            )
+        for operand in tensor:
+            _validate_intervention_spec(
+                spec._replace(intervention_tensor=operand, position_scope=PositionScope.LAST_TOKEN, positions=None),
+                target_shape,
+                hook_name,
+            )
+        return spec._replace(
+            intervention_tensor=tensor,
+            op=op,
+            position_scope=PositionScope.POSITIONS,
+            positions=positions,
+            unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
+        )
+    if spec.unit_indices is not None:
+        if not target_shape:
+            raise ValueError(f"Hook {hook_name!r} has no unit axis")
+        _validate_unit_indices(spec.unit_indices, target_shape[-1])
+        target_shape = (*target_shape[:-1], len(spec.unit_indices))
     if op == "patch":
         # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
         # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
@@ -274,14 +383,58 @@ def _validate_intervention_spec(
         clamp_min=spec.clamp_min,
         clamp_max=spec.clamp_max,
         position_scope=normalize_position_scope(spec.position_scope),
+        unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
+        positions=positions,
+        params=spec.params,
     )
+
+
+_BLOCK_LAYER = re.compile(r"^blocks\.(\d+)\.")
+
+
+def _address_sites(pattern: str, available_hook_map: Mapping[str, str], flow: str | None) -> list[str] | None:
+    """The sites a venngram site address selects, in layer order, or ``None`` when ``pattern`` is not an address.
+
+    The address is evaluated by :func:`~interpretune.analysis.venngram.sites.resolve_sites` over the model's block
+    stack, whose depth is read from the ``blocks.<layer>.`` hooks the model exposes.
+    """
+    from venngram.address import is_address
+
+    if not is_address(pattern):
+        return None
+    from interpretune.analysis.venngram.sites import resolve_sites
+
+    layers = [int(m.group(1)) for name in available_hook_map if (m := _BLOCK_LAYER.match(name))]
+    if not layers:
+        raise ValueError(
+            f"Intervention address '{pattern}': the model exposes no `blocks.<layer>.` hooks to resolve it"
+        )
+    try:
+        selection = resolve_sites(pattern, n_layers=max(layers) + 1)
+    except Exception as err:  # venngram's and the vocabulary's refusals arrive as several exception types
+        raise ValueError(f"Intervention address '{pattern}': {err}") from err
+    if flow is not None and selection.flow != flow:
+        surface = "gradients (`bwd_w_intervention`)" if flow == "grad" else "activation values (`fwd_w_intervention`)"
+        raise ValueError(
+            f"Intervention address '{pattern}' acts on {'gradients' if selection.flow == 'grad' else 'values'}, and"
+            f" this payload edits {surface}: "
+            + ("write it with `of: grad`" if flow == "grad" else "drop `of: grad`, or apply it through the backward op")
+        )
+    return list(selection.sites)
 
 
 def expand_intervention_patterns(
     patterns: Sequence[str],
     available_hook_map: Mapping[str, str],
+    *,
+    flow: str | None = None,
 ) -> dict[str, list[str]]:
     """Expand raw hook-name patterns to ordered lists of concrete hook names.
+
+    A pattern may also be a venngram site address (``point:hook_resid_post & layers:-4:``), which expands like a layer
+    wildcard to the sites it selects, in layer order, each matched as an exact hook name would be. A site the model
+    does not expose is refused rather than mapped onto a nearby hook. With ``flow`` (``value`` for a forward payload,
+    ``grad`` for a backward one), an address acting on the other flow is refused.
 
     Every spelling of a pattern's point in the vocabulary (the pattern itself, its canonical component form, the
     semantic names of the same slot, and the registered aliases of each) is tried against the backend's available
@@ -305,14 +458,21 @@ def expand_intervention_patterns(
             variants = tuple("blocks.*." + v[len("blocks.0.") :] for v in variants)
         return variants
 
+    def _exact(name: str) -> str | None:
+        return next((available_hook_map[v] for v in _pattern_variants(name) if v in available_hook_map), None)
+
     expanded: dict[str, list[str]] = {}
     for pattern in patterns:
+        if (sites := _address_sites(pattern, available_hook_map, flow)) is not None:
+            actual = {site: _exact(site) for site in sites}
+            if missing := [site for site, name in actual.items() if name is None]:
+                raise ValueError(
+                    f"Intervention address '{pattern}' selects {', '.join(missing)}, which this model does not expose"
+                )
+            expanded[pattern] = list(dict.fromkeys(name for name in actual.values() if name is not None))
+            continue
         if "*" not in pattern:
-            matched_actual = None
-            for candidate_pattern in _pattern_variants(pattern):
-                matched_actual = available_hook_map.get(candidate_pattern)
-                if matched_actual is not None:
-                    break
+            matched_actual = _exact(pattern)
             if matched_actual is None:
                 raise ValueError(f"Intervention pattern '{pattern}' did not match any available hook names")
             expanded[pattern] = [matched_actual]
@@ -391,6 +551,8 @@ def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_sc
         "clamp_min": None if clamp_min is None else float(clamp_min),
         "clamp_max": None if clamp_max is None else float(clamp_max),
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
+        "unit_indices": None if value.get("unit_indices") is None else tuple(value["unit_indices"]),
+        "positions": value.get("positions"),
     }
 
 
@@ -583,6 +745,7 @@ def resolve_interventions(
         "scale_factor": float(scale_factor),
         "use_intervention_tensor_as_basis": bool(use_intervention_tensor_as_basis),
         "position_scope": normalize_position_scope(position_scope),
+        "positions": _first_defined(resolve_field("intervention_positions"), kwargs.get("positions")),
     }
     if intervention_tensors is not None:
         payload["intervention_tensors"] = intervention_tensors
@@ -820,7 +983,21 @@ def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> to
     (by a user, or from a hub collection) runs through the same path as the core ones.
     """
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
+    if spec.unit_indices is not None:
+        _validate_unit_indices(spec.unit_indices, input_value.shape[-1])
+        indices = torch.tensor(spec.unit_indices, device=input_value.device, dtype=torch.long)
+        selected = input_value.index_select(-1, indices)
+        edited = executor_for(normalize_op(spec.op))(selected, target, spec)
+        # index_copy preserves the complement and its autograd path, including when the selected op replaces values.
+        return input_value.index_copy(-1, indices, torch.broadcast_to(edited, selected.shape))
     return executor_for(normalize_op(spec.op))(input_value, target, spec)
+
+
+def _validate_unit_indices(indices: Sequence[int], width: int) -> None:
+    if not indices or any(type(index) is not int or not 0 <= index < width for index in indices):
+        raise ValueError(f"unit_indices {indices!r} must be nonempty integer indices in [0, {width})")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"unit_indices {indices!r} repeat a unit; each selected unit must occur once")
 
 
 def track_gradient(value: torch.Tensor) -> torch.Tensor:
@@ -859,6 +1036,15 @@ def apply_intervention(
     ``spec.use_intervention_tensor_as_basis`` is ``False`` the direction is reversed.
     """
     scope = normalize_position_scope(spec.position_scope)
+    positions = _explicit_positions(spec)
+    if positions is not None:
+        spec = _validate_intervention_spec(spec, get_intervention_target_shape(value), "position-set intervention")
+        if any(position >= value.shape[1] for position in positions):
+            raise ValueError(f"positions {positions} exceed sequence length {value.shape[1]}")
+        for index, position in enumerate(positions):
+            operand = spec._replace(intervention_tensor=spec.intervention_tensor[index])
+            value[:, position, ...] = _apply_op_to_region(value[:, position, ...], operand)
+        return value
 
     if scope == PositionScope.LAST_TOKEN:
         value[:, last_pos, ...] = _apply_op_to_region(value[:, last_pos, ...], spec)
@@ -870,10 +1056,24 @@ def apply_intervention(
         value[...] = _apply_op_to_region(flat, spec).reshape(value.shape)
         return value
 
-    raise NotImplementedError(
-        f"a hook spec cannot carry position_scope={scope.value!r}: explicit positions are named by the payload itself"
-        " (circuit-tracer's feature tuples), and a hook spec edits the final real token or every position"
-    )
+    raise NotImplementedError(f"unsupported hook position scope {scope.value!r}")
+
+
+def _explicit_positions(spec: InterventionSpec) -> tuple[int, ...] | None:
+    """Validate absolute, zero-based indices into the padded sequence, retaining their operand order."""
+    if normalize_position_scope(spec.position_scope) != PositionScope.POSITIONS:
+        if spec.positions is not None:
+            raise ValueError("positions is only valid with position_scope='positions'")
+        return None
+    positions = spec.positions
+    if not isinstance(positions, Sequence) or isinstance(positions, (str, bytes)) or not positions:
+        raise ValueError("position_scope='positions' requires a nonempty sequence of position indices")
+    if any(isinstance(p, bool) or not isinstance(p, Integral) or p < 0 for p in positions):
+        raise ValueError(f"positions must be non-negative integer indices, got {positions!r}")
+    normalized = tuple(int(p) for p in positions)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"positions must be distinct, got {normalized}")
+    return normalized
 
 
 def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
@@ -890,7 +1090,7 @@ def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
             "which knows the final real token"
         )
     # every leading axis indexes independent rows; the trailing axes the operand spans (at least one) are the units
-    units = max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
+    units = 1 if spec.unit_indices is not None else max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
     if value.ndim < units:
         raise ValueError(
             f"an operand spanning {units} axes cannot apply to an activation of shape {tuple(value.shape)}"
@@ -1044,5 +1244,7 @@ def require_intervention_support(
     """
     require_flow(backend, flow, backend_name=backend_name)
     for _pattern, spec in iter_intervention_axes(interventions):
+        if spec.unit_indices is not None and "units" not in getattr(backend.intervention_support, "targets", {}):
+            raise NotImplementedError(f"backend {backend_name!r} does not declare the 'units' intervention target")
         require_position_scope(backend, spec, backend_name=backend_name)
         require_op(backend, spec, backend_name=backend_name)

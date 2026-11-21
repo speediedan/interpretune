@@ -361,7 +361,9 @@ def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
 
     Non-op top-level keys are skipped. Every family declares a ``collection:`` header, and treating it as an
     op made the generator fail on its second family with a misleading "Duplicate bundled op definition
-    'collection'" -- the same shape of bug the header caused in the op compiler.
+    'collection'" -- the same shape of bug the header caused in the op compiler. Tensor ops (a definition carrying
+    an ``op_spec`` block) are skipped too: they are executors a backend's hook calls, registered by name, and the
+    dispatcher exposes no top-level wrapper for them.
     """
     non_op_keys = {COLLECTION_HEADER_KEY}
     merged: Dict[str, Any] = {}
@@ -369,7 +371,7 @@ def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
         with open(yaml_path, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {}
         for op_name, op_def in content.items():
-            if op_name in non_op_keys:
+            if op_name in non_op_keys or (isinstance(op_def, dict) and "op_spec" in op_def):
                 continue
             if op_name == "composite_operations":
                 merged.setdefault("composite_operations", {}).update(op_def)

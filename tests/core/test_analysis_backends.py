@@ -26,7 +26,10 @@ from interpretune.analysis.backends import (
     ModelBackend,
     ModuleCapabilities,
     PositionScope,
+    Readout,
+    as_readout,
     require_intervention_support,
+    resolve_readout_sites,
     apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
@@ -822,17 +825,15 @@ class TestBackendCapability:
     def test_gradients_value(self):
         assert Capability.GRADIENTS.value == "gradients"
 
-    def test_attribution_value(self):
-        assert Capability.ATTRIBUTION_GRAPH.value == "attribution_graph"
-
     def test_intervention_value(self):
         assert Capability.INTERVENTION.value == "intervention"
 
     def test_capture_value(self):
         assert Capability.CAPTURE.value == "capture"
 
-    def test_head_attribution_value(self):
-        assert Capability.HEAD_ATTRIBUTION.value == "head_attribution"
+    def test_the_members_are_the_core_surfaces_only(self):
+        """Techniques are bound to providers through the op registry, never members (see ``TechniqueSupport``)."""
+        assert {m.value for m in Capability} == {"intervention", "latent_models", "gradients", "capture"}
 
     def test_scopes_and_modes_are_a_support_record_not_members(self):
         """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
@@ -857,11 +858,12 @@ class TestBackendCapability:
     def test_enum_members_count(self):
         """A ratchet, so adding a capability is a conscious act rather than a side effect.
 
-        Six members, one namespace whichever component provides them. Position scope was briefly two flat members
-        beside an efficiency flag; those were configurations of one surface, and they live in the surface's support
-        record instead, as the activation and feature interventions now do as targets of one ``INTERVENTION``.
+        Four members, the core surfaces, one namespace whichever component provides them. Position scope was briefly two
+        flat members beside an efficiency flag; those were configurations of one surface, and they live in the surface's
+        support record instead. The two technique members left the same way: a technique is bound to the component
+        declaring its typed record, so adding one never touches this enum.
         """
-        assert len(Capability) == 6
+        assert len(Capability) == 4
 
     def test_membership_in_frozenset(self):
         caps = frozenset({Capability.LATENT_MODELS, Capability.GRADIENTS})
@@ -1109,6 +1111,7 @@ class TestTLFwdWHooksBatched:
         mock_model.run_with_hooks_with_saes.side_effect = [fake_logits_1, fake_logits_2]
         sae_handle = MagicMock()
         sae_handle.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
+        mock_model.get_sae_hook_name.side_effect = lambda sae, suffix: f"{sae.cfg.metadata.hook_name}.{suffix}"
 
         hook_configs = [
             [("blocks.0.hook_resid_post.hook_sae_acts_post", lambda t, h: t)],
@@ -1833,17 +1836,16 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
 
 class TestCapabilitySpellings:
-    """The normalizer refuses a retired spelling by name with its replacement, and accepts each vocabulary's
-    own."""
+    """The normalizer accepts each vocabulary's own spellings and refuses any other by name, with the vocabulary
+    listed."""
 
-    def test_a_retired_spelling_is_refused_with_its_replacement(self):
+    def test_a_spelling_outside_the_vocabulary_is_refused_with_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        for retired in ("activation_intervention", "feature_intervention"):
-            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*'intervention'"):
-                normalize_backend_capability(retired)
-        with pytest.raises(ValueError, match="'attribution' is a retired capability spelling.*'attribution_graph'"):
-            normalize_backend_capability("attribution")
+        # former spellings get no special handling: they are refused like any other unknown name
+        for spelling in ("activation_intervention", "attribution", "attribution_graph", "head_attribution", "nope"):
+            with pytest.raises(ValueError, match=f"'{spelling}' is not a capability: spellings are .*'intervention'"):
+                normalize_backend_capability(spelling)
 
     def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
         from interpretune.analysis.backends import (
@@ -1858,7 +1860,7 @@ class TestCapabilitySpellings:
     def test_an_unknown_spelling_lists_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'head_attribution'"):
+        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'capture'"):
             normalize_backend_capability("steering")
 
 
@@ -1915,3 +1917,341 @@ class TestGradientInterventionOnAFrozenModel:
             )
 
         self._assert_frozen_matches_trainable(run, lm._module)
+
+
+class TestGradientReadouts:
+    """A readout names the scalar a gradient is taken of, and may read activations from the forward pass the
+    backward runs from.
+
+    Both model backends must differentiate it as a hand-written HuggingFace reference does, unedited and
+    with a gradient edit between what it reads and an earlier capture: a logit difference, and the projection of an
+    intermediate activation onto a direction, which no function of the logits alone can express.
+    """
+
+    READ, EDIT, CAPTURE = "blocks.5.hook_in", "blocks.3.hook_out", "blocks.2.hook_out"
+    A, B = 1000, 2000
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    @staticmethod
+    def _unit(seed: int) -> torch.Tensor:
+        vector = torch.randn(768, generator=torch.Generator().manual_seed(seed))
+        return vector / vector.norm()
+
+    def _readouts(self) -> dict[str, Readout]:
+        direction = self._unit(0)
+
+        def logit_difference(logits, activations):
+            return (logits[:, -1, self.A] - logits[:, -1, self.B]).sum()
+
+        def projection(logits, activations):
+            return (activations[self.READ][:, -1, :] @ direction.to(activations[self.READ].dtype)).sum()
+
+        return {"logit_difference": Readout(logit_difference), "projection": Readout(projection, sites=(self.READ,))}
+
+    def _payload(self) -> dict:
+        vector = self._unit(1)
+        return {
+            self.EDIT: {"intervention_tensor": vector, "op": "add", "scale_factor": 1.0, "position_scope": "last_token"}
+        }
+
+    @pytest.fixture(scope="class")
+    def hf(self):
+        from interpretune.testing.conformance.reference import HFReference
+
+        return HFReference("gpt2")
+
+    @pytest.fixture(scope="class")
+    def bridge(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        return TransformerBridge.boot_transformers("gpt2", device="cpu")
+
+    @pytest.fixture(scope="class")
+    def lm(self):
+        from nnsight import LanguageModel
+
+        return LanguageModel("gpt2", device_map="cpu", dispatch=True)
+
+    def _backend(self, backend_name: str, request):
+        """The backend, its model and a batch in the form that backend takes."""
+        if backend_name == "transformer_lens":
+            from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+            return TLModelBackend(), request.getfixturevalue("bridge"), {"input": self.IDS}
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        return backend, request.getfixturevalue("lm"), {"input_ids": self.IDS}
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    @pytest.mark.parametrize("name", ["logit_difference", "projection"])
+    def test_a_readout_matches_the_reference(self, name, backend_name, hf, request):
+        """Captured at the site the projection reads as well, where its gradient enters beside the logits'."""
+        readout = self._readouts()[name]
+        vector = self._unit(1)
+        points = [self.READ, self.EDIT, self.CAPTURE]
+        clean = hf.gradients(self.IDS, readout, observe=points)
+        edited = hf.gradients(
+            self.IDS,
+            readout,
+            observe=points,
+            edits=[(self.EDIT, lambda g: g + vector.to(g.dtype), "last_token")],
+        )
+        backend, model, batch = self._backend(backend_name, request)
+        pre, post, value = backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        assert value.ndim == 0 and torch.isfinite(value), f"the readout's value is {value!r}"
+        moved = (edited[self.CAPTURE] - clean[self.CAPTURE]).abs().max().item()
+        assert moved > 1e-3, f"the reference edit moved the gradient at {self.CAPTURE} by only {moved:.3e}"
+        for point in points:
+            torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_no_interventions_capture_the_gradients_in_one_pass(self, backend_name, hf, request, monkeypatch):
+        """Gradient capture alone (gradient-times-activation attribution): an empty payload returns the reference
+        gradients as both pre and post from one traced backward, where an edit takes two (the counter's
+        control)."""
+        import interpretune.adapters.transformer_lens.backends as tl_backends
+
+        readout = self._readouts()["logit_difference"]
+        points = [self.EDIT, self.CAPTURE]
+        clean = hf.gradients(self.IDS, readout, observe=points)
+        backend, model, batch = self._backend(backend_name, request)
+        owner, attr = (
+            (tl_backends, "_tl_backward") if backend_name == "transformer_lens" else (backend, "_traced_backward")
+        )
+        traced = getattr(owner, attr)
+        passes = []
+
+        def counted(*args, **kwargs):
+            passes.append(1)
+            return traced(*args, **kwargs)
+
+        monkeypatch.setattr(owner, attr, counted)
+        pre, post, _ = backend.bwd_w_intervention(model, batch, {}, readout, capture=points)
+        assert len(passes) == 1, f"an empty payload ran {len(passes)} traced backward passes"
+        for point in points:
+            torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(post[point], pre[point])
+        passes.clear()
+        backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        assert len(passes) == 2, f"an edit ran {len(passes)} traced backward passes, so the counter does not count them"
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
+        """A treatment's readout, declared as a logit difference plus a block-5 projection, executes as the
+        callable readout that writes the same scalar by hand (the reference test above checks that form)."""
+        pytest.importorskip("venngram", reason="the venngram extra is not installed")
+        from interpretune.analysis.venngram import load_recipe, recipe_readout
+
+        direction = self._unit(0)
+        book_model = {"id": "gpt2", "revision": "main"}
+        doc = {
+            "schema_version": 4,
+            "kind": "recipe",
+            "name": "logit-difference-plus-projection",
+            "model": book_model,
+            "book": {
+                "schema_version": 3,
+                "name": "readout-sets",
+                "portability": "checkpoint",
+                "applies_to": {"models": [book_model]},
+                "sets": {
+                    "answer": {"point": "unembed.hook_out", "units": [self.A]},
+                    "foil": {"point": "unembed.hook_out", "units": [self.B]},
+                    "read": {"point": "hook_in", "layers": [5]},
+                    "edit_grad": {"point": "hook_out", "layers": [3], "units": [0], "of": "grad"},
+                },
+            },
+            "operands": {"direction": {"values": direction.tolist(), "shape": [768], "basis": "jlens_folded"}},
+            "readout": {
+                "terms": [
+                    {"reduce": "sum", "set": "answer", "tokens": "last", "weight": 1.0},
+                    {"reduce": "sum", "set": "foil", "tokens": "last", "weight": -1.0},
+                    {"reduce": "project", "set": "read", "tokens": "last", "operand": "direction"},
+                ]
+            },
+            "stages": [
+                {
+                    "site": "hook_out",
+                    "tokens": "last",
+                    "ops": [{"op": "scale", "target": {"set": "edit_grad"}, "value": {"dose": 1.0}}],
+                }
+            ],
+        }
+        declared = recipe_readout(load_recipe(doc).recipe, n_layers=12)
+        hand = self._readouts()
+
+        def both(logits, activations):
+            return hand["logit_difference"](logits, activations) + hand["projection"](logits, activations)
+
+        points = [self.READ, self.EDIT, self.CAPTURE]
+        backend, model, batch = self._backend(backend_name, request)
+        expected = backend.bwd_w_intervention(
+            model, batch, self._payload(), Readout(both, sites=(self.READ,)), capture=points
+        )
+        got = backend.bwd_w_intervention(model, batch, self._payload(), declared, capture=points)
+        torch.testing.assert_close(got[2], expected[2])
+        for pre_or_post in (0, 1):
+            for point in points:
+                torch.testing.assert_close(got[pre_or_post][point], expected[pre_or_post][point])
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_an_edit_at_a_branch_does_not_leak_into_its_sibling(self, backend_name, hf, request):
+        """At a residual add, autograd hands one gradient tensor to both branches.
+
+        An edit at the attention output (one branch) written into that tensor in place would also edit the residual
+        stream's gradient (the other branch), so the backends edit a copy. Zeroing the last token's gradient there must
+        leave what the residual stream carries past block 5, as the reference, which edits a clone, does.
+        """
+        site = "blocks.5.attn.hook_out"
+        points = [site, self.READ, self.CAPTURE]
+        readout = self._readouts()["logit_difference"]
+        edited = hf.gradients(
+            self.IDS, readout, observe=points, edits=[(site, lambda g: torch.zeros_like(g), "last_token")]
+        )
+        payload = {site: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+        backend, model, batch = self._backend(backend_name, request)
+        _, post, _ = backend.bwd_w_intervention(model, batch, payload, readout, capture=points)
+        assert edited[self.READ][0, -1].norm() > 0.1, "the reference left no residual gradient to leak into"
+        for point in points:
+            torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
+
+    def test_the_two_readouts_take_different_gradients(self, hf):
+        """The projection reads an activation the logit difference does not, so a backend that dropped the reads
+        and fell back to the logits would miss the reference above; this pins that the two references differ."""
+        grads = {
+            name: hf.gradients(self.IDS, readout, observe=[self.CAPTURE])[self.CAPTURE]
+            for name, readout in self._readouts().items()
+        }
+        assert not torch.allclose(grads["logit_difference"], grads["projection"], atol=1e-4)
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_readout_returning_a_tensor_is_refused(self, backend_name, request):
+        backend, model, batch = self._backend(backend_name, request)
+        with pytest.raises(ValueError, match="a readout must return a scalar tensor"):
+            backend.bwd_w_intervention(model, batch, self._payload(), lambda logits: logits[:, -1, :5])
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_readout_site_the_model_lacks_is_refused(self, backend_name, request):
+        backend, model, batch = self._backend(backend_name, request)
+        readout = Readout(lambda logits, activations: logits.sum(), sites=("blocks.5.hook_nowhere",))
+        with pytest.raises(ValueError, match="'blocks.5.hook_nowhere' did not match"):
+            backend.bwd_w_intervention(model, batch, self._payload(), readout)
+
+
+class TestReadout:
+    """The readout type itself: what it accepts, what it refuses, and how its sites key the activations."""
+
+    def test_a_bare_callable_is_a_readout_of_the_logits(self):
+        readout = as_readout(lambda logits: logits.sum())
+        assert readout.sites == () and readout(torch.ones(2, 3)).item() == 6.0
+        assert as_readout(readout) is readout
+
+    def test_a_site_given_as_a_string_is_one_site(self):
+        assert Readout(lambda logits, activations: logits.sum(), sites="blocks.0.hook_in").sites == (
+            "blocks.0.hook_in",
+        )
+
+    @pytest.mark.parametrize(
+        "make, match",
+        [
+            (lambda: Readout(3), "must be callable"),
+            (lambda: Readout(lambda logits, activations: logits.sum(), sites=("",)), "hook names or patterns"),
+            (lambda: as_readout("blocks.0.hook_in"), "a Readout or a callable of the logits"),
+        ],
+    )
+    def test_malformed_readouts_are_refused(self, make, match):
+        with pytest.raises(TypeError, match=match):
+            make()
+
+    def test_a_non_tensor_result_is_refused(self):
+        with pytest.raises(ValueError, match="returned float"):
+            Readout(lambda logits, activations: 1.0)(torch.ones(1))
+
+    def test_sites_key_by_spelling_for_names_and_by_match_for_patterns(self):
+        available = {f"blocks.{i}.hook_in": f"blocks.{i}.hook_in" for i in range(3)}
+        exact = Readout(lambda logits, activations: logits.sum(), sites=("blocks.1.hook_resid_pre",))
+        assert resolve_readout_sites(exact, available) == {"blocks.1.hook_in": "blocks.1.hook_resid_pre"}
+        pattern = Readout(lambda logits, activations: logits.sum(), sites=("blocks.*.hook_in",))
+        assert resolve_readout_sites(pattern, available) == {name: name for name in available}
+
+
+class TestInterventionAddresses:
+    """An intervention payload key may be a venngram site address, which expands like a layer wildcard to the sites
+    it selects (#876), and is refused where the model has no such site or the address acts on the other flow."""
+
+    AVAILABLE = {f"blocks.{i}.{p}": f"blocks.{i}.{p}" for i in range(4) for p in ("hook_resid_post", "hook_in")}
+
+    def test_an_address_expands_to_its_sites_in_layer_order(self):
+        address = "point:hook_resid_post & layers:-2:"
+        expanded = expand_intervention_patterns([address], self.AVAILABLE)
+        assert expanded == {address: ["blocks.2.hook_resid_post", "blocks.3.hook_resid_post"]}
+
+    def test_a_site_the_model_does_not_expose_is_refused(self):
+        with pytest.raises(ValueError, match=r"selects blocks\.1\.attn\.hook_out, which this model does not expose"):
+            expand_intervention_patterns(["point:attn.hook_out & layers:1"], self.AVAILABLE)
+
+    def test_an_address_on_the_other_flow_is_refused(self):
+        grad, value = "point:hook_in & layers:1 & of:grad", "point:hook_in & layers:1"
+        with pytest.raises(ValueError, match="acts on gradients, and this payload edits activation values"):
+            expand_intervention_patterns([grad], self.AVAILABLE, flow="value")
+        with pytest.raises(ValueError, match="acts on values, and this payload edits gradients"):
+            expand_intervention_patterns([value], self.AVAILABLE, flow="grad")
+        assert expand_intervention_patterns([grad], self.AVAILABLE, flow="grad")[grad] == ["blocks.1.hook_in"]
+
+    def test_an_unresolvable_address_is_refused_with_the_reason(self):
+        with pytest.raises(ValueError, match="Intervention address 'point:hook_resid_post & units:3'"):
+            expand_intervention_patterns(["point:hook_resid_post & units:3"], self.AVAILABLE)
+        with pytest.raises(ValueError, match="exposes no `blocks.<layer>.` hooks"):
+            expand_intervention_patterns(["point:hook_resid_post"], {"hook_embed": "hook_embed"})
+
+    SITE, ADDRESS = "blocks.5.hook_in", "point:hook_in & layers:5"
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    def _payload(self, key: str) -> dict:
+        return {key: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+
+    def _assert_address_matches_hook_name(self, fwd) -> None:
+        by_name_pre, by_name_post = fwd(self._payload(self.SITE))
+        by_address_pre, by_address_post = fwd(self._payload(self.ADDRESS))
+        torch.testing.assert_close(by_address_pre, by_name_pre)
+        torch.testing.assert_close(by_address_post, by_name_post)
+        assert not torch.allclose(by_name_pre, by_name_post), "the positive control: the edit must move the logits"
+
+    def test_transformer_lens_forward_payload_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        self._assert_address_matches_hook_name(
+            lambda payload: TLModelBackend().fwd_w_intervention(bridge, {"input": self.IDS}, payload)
+        )
+
+    def test_nnsight_forward_payload_by_address(self):
+        from nnsight import LanguageModel
+
+        lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        self._assert_address_matches_hook_name(
+            lambda payload: backend.fwd_w_intervention(lm, {"input_ids": self.IDS}, payload)
+        )
+
+    def test_transformer_lens_backward_payload_and_capture_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        backend = TLModelBackend()
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, 1000].sum()
+
+        _, by_name, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(self.SITE), metric, capture=["blocks.2.hook_out"]
+        )
+        capture = "point:hook_out & layers:2 & of:grad"
+        _, by_address, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(f"{self.ADDRESS} & of:grad"), metric, capture=[capture]
+        )
+        torch.testing.assert_close(by_address[capture], by_name["blocks.2.hook_out"])

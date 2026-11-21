@@ -233,3 +233,41 @@ def test_covers_cli_exit_codes(tmp_path, monkeypatch):
     monkeypatch.setenv("IT_GPU_SELECTION_FILE", str(sel))
     assert main(["--covers", NOTEBOOKS]) == 1
     assert main(["--covers", "tests/core/test_backend_conformance.py"]) == 0
+
+
+def test_the_plan_record_carries_identity_selection_and_change_set(spec):
+    from tests.gpu_ci.plan_gpu_run import plan_record
+
+    env = {
+        "BUILD_REASON": "PullRequest",
+        "BUILD_REPOSITORY_NAME": "speediedan/interpretune",
+        "BUILD_BUILDID": "2150",
+        "SYSTEM_PULLREQUEST_PULLREQUESTNUMBER": "1051",
+        "SYSTEM_PULLREQUEST_SOURCECOMMITID": "f" * 40,
+    }
+    record = plan_record(_plan(spec), env, "e" * 40, [JLENS_SRC])
+    assert record["mode"] == "selected" and "jlens" in record["selection"]["areas"]
+    assert record["changed_paths"] == [JLENS_SRC] and record["changed_unknown"] is None
+    identity = record["identity"]
+    assert (identity["pull_request"], identity["merge_revision"]) == ("1051", "e" * 40)
+    assert identity["pull_request_head"] == "f" * 40 and identity["schedule"] is None
+
+
+@pytest.mark.parametrize(
+    "reason, why", [("Schedule", "only a pull request gate"), ("PullRequest", "the planner decided without it")]
+)
+def test_an_absent_change_set_says_why_rather_than_reading_as_empty(spec, reason, why):
+    from tests.gpu_ci.plan_gpu_run import plan_record
+
+    plan = _plan(spec, reason=reason, labels=(FULL_LABEL,))
+    record = plan_record(plan, {"BUILD_REASON": reason}, None, None)
+    assert record["changed_paths"] is None and why in record["changed_unknown"]
+
+
+def test_an_unwritable_plan_record_does_not_fail_the_plan(tmp_path, capsys):
+    from tests.gpu_ci.plan_gpu_run import write_plan_record
+
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    write_plan_record({"schema": "x"}, blocker / "telemetry" / "plan.json")
+    assert "could not write the plan record" in capsys.readouterr().out

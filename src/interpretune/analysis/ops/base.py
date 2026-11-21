@@ -534,6 +534,7 @@ class AnalysisOp:
         protocol_cls: Any = None,
         required_tensor_ops: Sequence[str | Any] | None = None,
         required_position_scopes: Sequence[str | Any] | None = None,
+        required_techniques: Sequence[str] | None = None,
     ) -> None:
         self.name = name
         # The RESOLVED BaseAnalysisBatchProtocol subclass this op's batches conform to, or None for the
@@ -555,6 +556,11 @@ class AnalysisOp:
         # INTERVENTION surface; that implication is enforced in _validate_capabilities.
         self.required_tensor_ops = self._normalize_tensor_ops(required_tensor_ops)
         self.required_position_scopes = self._normalize_position_scopes(required_position_scopes)
+        # The techniques this op executes, by name (`attribution_graph`). Not capabilities: a technique is bound to the
+        # component declaring a typed record for it (`technique_support`), so a third-party op names its own without an
+        # edit to the capability vocabulary, and a composition with every core surface but no implementation is
+        # refused by name.
+        self.required_techniques = frozenset(str(t) for t in (required_techniques or ()))
         # Declared cross-batch state (OpStateSpec | None). The SPEC lives on the op; the state
         # itself does not -- ops are process-global singletons, so per-run state is owned by the
         # AnalysisCfg for that run (see AnalysisCfg.op_state).
@@ -689,17 +695,21 @@ class AnalysisOp:
 
     def _validate_capabilities(self, module: torch.nn.Module | None) -> None:
         """Validate that the target module exposes all required capabilities, tensor ops and position scopes."""
-        if not self.required_capabilities and not self.requires_intervention_axes:
+        if not self.required_capabilities and not self.requires_intervention_axes and not self.required_techniques:
             return
 
         if module is None:
             required = ", ".join(
-                capability_value(cap) for cap in sorted(self.required_capabilities, key=capability_value)
+                [
+                    *(capability_value(cap) for cap in sorted(self.required_capabilities, key=capability_value)),
+                    *sorted(self.required_techniques),
+                ]
             )
             raise ValueError(
                 f"Operation '{self.name}' requires module capabilities [{required}] but no module was provided"
             )
         self._validate_intervention_axes(module)
+        self._validate_techniques(module)
         if not self.required_capabilities:
             return
 
@@ -717,6 +727,23 @@ class AnalysisOp:
                 f"Operation '{self.name}' requires capabilities [{required}] but the module's components only provide "
                 f"[{available_str}]; missing [{missing_str}]"
             )
+
+    def _validate_techniques(self, module: torch.nn.Module) -> None:
+        """Refuse, naming the technique, when no single component of the module implements one this op executes.
+
+        Resolved through :meth:`~interpretune.analysis.backends.ModuleCapabilities.technique_for`, so a missing,
+        ambiguous or mistyped implementation fails here, before execution, with the providers named.
+        """
+        if not self.required_techniques:
+            return
+        from interpretune.analysis.backends import get_module_capabilities
+
+        available = get_module_capabilities(module)
+        for technique in sorted(self.required_techniques):
+            try:
+                available.technique_for(technique)
+            except ValueError as exc:
+                raise ValueError(f"Operation '{self.name}' cannot run: {exc}") from None
 
     def _validate_intervention_axes(self, module: torch.nn.Module) -> None:
         """Refuse, naming the axis, when the module's backend cannot honour a declared tensor op or scope.
@@ -887,6 +914,7 @@ class AnalysisOp:
                 self.required_capabilities,
                 self.required_tensor_ops,
                 self.required_position_scopes,
+                self.required_techniques,
             )
         )
 
@@ -897,7 +925,8 @@ class AnalysisOp:
             f"description='{self.description}', "
             f"output_schema={self.output_schema}, "
             f"input_schema={self.input_schema}, "
-            f"required_capabilities={sorted(cap.value for cap in self.required_capabilities)})"
+            f"required_capabilities={sorted(cap.value for cap in self.required_capabilities)}, "
+            f"required_techniques={sorted(self.required_techniques)})"
         )
 
     def __str__(self) -> str:
@@ -1055,7 +1084,7 @@ class CompositeAnalysisOp(AnalysisOp):
         # A composite needs every intervention configuration any part needs, plus whatever it declares itself.
         # The union is computed here rather than at validation so it is READABLE from the op: a conformance
         # suite asks a composite what it needs and gets one answer that already accounts for its parts.
-        for axis in ("required_tensor_ops", "required_position_scopes"):
+        for axis in ("required_tensor_ops", "required_position_scopes", "required_techniques"):
             declared = set(kwargs.pop(axis, None) or ())
             declared.update(value for op in ops for value in getattr(op, axis, ()))
             kwargs[axis] = list(declared) or None  # normalized to a frozenset by AnalysisOp.__init__
@@ -1080,11 +1109,12 @@ class CompositeAnalysisOp(AnalysisOp):
     ) -> BaseAnalysisBatchProtocol:
         """Execute all operations in sequence with automatic parameter resolution."""
         current_batch = analysis_batch or AnalysisBatch()
-        # The UNION of the parts' intervention axes is checked once, up front: a mode the third part needs
-        # is refused before the first part runs, rather than after two stages of work. Capabilities proper
-        # stay per-stage below, since each part validates the surface it uses against the batch it sees.
+        # The UNION of the parts' intervention axes and techniques is checked once, up front: a mode or technique the
+        # third part needs is refused before the first part runs, rather than after two stages of work. Capabilities
+        # proper stay per-stage below, since each part validates the surface it uses against the batch it sees.
         if module is not None:
             self._validate_intervention_axes(module)
+            self._validate_techniques(module)
 
         for op in self.composition:
             with op.active_ctx_key(self.name):

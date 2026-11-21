@@ -64,7 +64,9 @@ registered_cfg:
         class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
         init_args:
           model_name: gpt2-small
-          default_padding_side: left
+          # the gpt2-small-res-jb SAEs were trained on TransformerLens' processed weights (center_writing_weights);
+          # the sae_lens adapter refuses them on a model without that processing
+          enable_compatibility_mode: true
       sae_cfgs:
         - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:

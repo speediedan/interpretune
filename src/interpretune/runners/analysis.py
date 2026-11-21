@@ -52,7 +52,7 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "as_generator": True}
-    with profiling(module) as prof:
+    with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
             for batch_idx, batch in tqdm(enumerate(dataloader)):
@@ -146,6 +146,7 @@ def generate_analysis_dataset(
     split="validation",
     dataset_fingerprint: str | None = None,
     generator_cache_dir: str | Path | None = None,
+    writer_batch_size: int | None = None,
     **kwargs,
 ) -> Dataset:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
@@ -164,6 +165,9 @@ def generate_analysis_dataset(
         generator_cache_dir: Where datasets writes generator cache files. None (default) keeps
             `output_store.cache_dir`. A persistent directory requires `dataset_fingerprint`: with random
             fingerprints it would only accumulate files no run can reuse, so that combination is refused.
+        writer_batch_size: How many records the writer buffers before each flush to the cache file. Peak host
+            memory during generation follows this times the record size, not the number of records. None (default)
+            keeps the `datasets` default.
         **kwargs: Additional arguments for error context
 
     Returns:
@@ -180,6 +184,8 @@ def generate_analysis_dataset(
             "generate_analysis_dataset takes its cache key as `dataset_fingerprint` (the AnalysisRunnerCfg field); "
             "`fingerprint` would be absorbed as error context and silently ignored"
         )
+    if writer_batch_size is not None and writer_batch_size < 1:
+        raise ValueError(f"writer_batch_size must be a positive number of records or None, got {writer_batch_size}")
     if generator_cache_dir is not None and dataset_fingerprint is None:
         raise ValueError(
             f"generator_cache_dir={generator_cache_dir!s} was given without a dataset_fingerprint: every generation "
@@ -209,6 +215,8 @@ def generate_analysis_dataset(
             }
         )
         resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
+    # None passes nothing, so the datasets default stays in place
+    writer_kwargs: dict[str, Any] = {} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}
     try:
         dataset = Dataset.from_generator(
             analysis_store_generator,
@@ -221,6 +229,7 @@ def generate_analysis_dataset(
             gen_kwargs=gen_kwargs,
             split=split,  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
+            **writer_kwargs,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # datasets compatibility
     except Exception as e:
@@ -323,6 +332,7 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
                     "per_latent_preds": value.per_latent_preds,
                     "required_tensor_ops": sorted(value.required_tensor_ops),
                     "required_position_scopes": sorted(str(s) for s in value.required_position_scopes),
+                    "required_techniques": sorted(value.required_techniques),
                 },
                 path=f"{path}<op:{value.name}>",
             ),

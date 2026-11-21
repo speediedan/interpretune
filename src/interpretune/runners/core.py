@@ -2,7 +2,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Any, Iterator, Literal, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
 import logging
 import random
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from functools import partialmethod
 from pathlib import Path
@@ -20,6 +20,7 @@ from interpretune.runners.distributed import (
     rank_device,
     reduce_metrics,
     resolve_placement,
+    step_per_tensor,
 )
 from interpretune.utils import MisconfigurationException, rank_zero_only, rank_zero_warn
 
@@ -72,19 +73,61 @@ def autocast_dtype(precision: Precision | None, module: Any) -> torch.dtype | No
 
 
 @contextmanager
-def profiling(module: ITModule) -> Iterator[torch.profiler.profile | None]:
+def profiling(module: ITModule, phase: str) -> Iterator[torch.profiler.profile | None]:
     """Run the enclosed batch loop under the PyTorch profiler when ``it_cfg.profiler_cfg`` selects it.
 
     Yields the active profiler, which the loop steps once per batch, or ``None`` when profiling is off. Traces go to
-    ``pytorch_profiler_cfg.trace_dir``, defaulting to ``<core_log_dir>/pytorch_profiler``.
+    ``pytorch_profiler_cfg.trace_dir``, defaulting to ``<core_log_dir>/pytorch_profiler``. When ``filename`` is set, a
+    summary table of the last profiled window is written there too, as ``<phase>-<filename>.txt``.
+
+    Args:
+        module: The module whose ``it_cfg.profiler_cfg`` is read.
+        phase: The loop being profiled (``train``, ``test`` or ``analysis``), which names the summary file.
     """
     profiler_cfg = module.it_cfg.profiler_cfg
     if profiler_cfg.which != "pytorch":
         yield None
         return
-    default_trace_dir = Path(module.core_log_dir) / "pytorch_profiler"  # mixin attr
-    with torch.profiler.profile(**profiler_cfg.torch_profiler_kwargs(default_trace_dir)) as prof:
+    trace_dir = Path(profiler_cfg.pytorch_profiler_cfg.get("trace_dir", Path(module.core_log_dir) / "pytorch_profiler"))
+    with torch.profiler.profile(**profiler_cfg.torch_profiler_kwargs(trace_dir)) as prof:
         yield prof
+    summary = profiler_cfg.summary_options()
+    if summary is not None:
+        _write_profiler_summary(prof, summary, trace_dir, phase)
+
+
+def _write_profiler_summary(prof: torch.profiler.profile, summary: dict[str, Any], trace_dir: Path, phase: str) -> None:
+    name = f"{phase}-{summary['filename']}"
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        name += f"-{torch.distributed.get_rank()}"  # the rank suffix Lightning's profilers use
+    # A schedule whose first active window was never reached (fewer batches than `skip_first + wait + warmup`)
+    # leaves no profiler session, and a window over steps that ran no operators leaves no events.
+    events = prof.key_averages() if prof.profiler is not None else None
+    if not events:
+        rank_zero_warn(
+            f"The PyTorch profiler recorded no operators during the {phase} loop, so no summary was written to "
+            f"{str(trace_dir / name)!r}. Either the loop ran fewer batches than the schedule waits before its first "
+            "active step, or the profiled steps ran no operators."
+        )
+        return
+    table = events.table(
+        sort_by=summary["sort_by_key"],
+        row_limit=summary["row_limit"],
+        max_name_column_width=summary["max_name_column_width"],
+    )
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / f"{name}.txt").write_text(table, encoding="utf-8")
+
+
+def memprofiled_iteration(module: ITModule) -> AbstractContextManager:
+    """One profiled ``training_step`` call of the module's memory profiler, when it has one: the whole training
+    iteration (forward, backward and, at a window's end, the optimizer step), so the snapshot at its end and an
+    FSDP2 report see gradients and optimizer state.
+
+    A ``memprofilable`` step inside it is not profiled again.
+    """
+    memprofiler = getattr(module, "memprofiler", None)
+    return memprofiler.profile("training_step") if memprofiler else nullcontext()
 
 
 @dataclass
@@ -299,7 +342,7 @@ def core_train_loop(
     val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
     _callbacks(ctx, "on_train_start")
     start_epoch = _resume(ctx, resume_from, dist_run) if resume_from is not None else 0
-    with profiling(module) as prof:
+    with profiling(module, "train") as prof:
         for epoch_idx in range(start_epoch, max_epochs):
             if ctx.should_stop or ctx.steps_exhausted:
                 break
@@ -322,17 +365,18 @@ def core_train_loop(
                     break
                 accumulated += 1
                 boundary = accumulated == accumulate_grad_batches
-                output = run_step(
-                    step_fn="training_step",
-                    module=module,
-                    batch=batch,
-                    batch_idx=batch_idx,
-                    optimizer=ctx.optimizer,
-                    precision=precision,
-                    loss_scale=1.0 / accumulate_grad_batches,
-                    zero_grad=accumulated == 1,
-                    step_optimizer=boundary,
-                )
+                with memprofiled_iteration(module):
+                    output = run_step(
+                        step_fn="training_step",
+                        module=module,
+                        batch=batch,
+                        batch_idx=batch_idx,
+                        optimizer=ctx.optimizer,
+                        precision=precision,
+                        loss_scale=1.0 / accumulate_grad_batches,
+                        zero_grad=accumulated == 1,
+                        step_optimizer=boundary,
+                    )
                 if boundary:
                     accumulated = 0
                     _optimizer_step_done(ctx, output)
@@ -656,7 +700,7 @@ def core_test_loop(
     module._it_state._current_epoch = 0
     assert module.model is not None, "Model must be initialized before testing"
     module.model.eval()
-    with profiling(module) as prof:
+    with profiling(module, "test") as prof:
         for batch_idx, batch in enumerate(dataloader):
             with torch.inference_mode():
                 if batch_idx >= limit_test_batches >= 0:
@@ -805,8 +849,15 @@ class SessionRunner:
             self.run_cfg.module.device = rank_device(self.dist_run)
         with self.dist_run.rank_zero_first():
             it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
-        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.fsdp_plan, self.run_cfg.fsdp_default_kwargs)
+        place_module(
+            self.run_cfg.module,
+            self.dist_run,
+            self.run_cfg.fsdp_plan,
+            self.run_cfg.fsdp_default_kwargs,
+            tp_plan=self.run_cfg.tp_plan,
+        )
         it_configure_optimizers(self.run_cfg.module)
+        step_per_tensor(self.run_cfg.module.optimizers or (), self.dist_run)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""

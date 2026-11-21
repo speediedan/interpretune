@@ -153,11 +153,11 @@ Rules that must not be missed:
   CPU-only adds `--torch-backend=cpu`, and the whole torch ecosystem must share that backend (a torchvision from the
   default index is CUDA-linked and fails later with `operator torchvision::nms does not exist`).
 - **From-source directives** (`--from-source="pkg:path:extras:ENVVAR=..."`) are for a repository you are actually
-  developing: they take the package out of the pins' governance. `sae-lens` is git-pinned temporarily to
-  decoderesearch/SAELens#739; the old fork pin `speediedan/SAELens@86f90b3d` must never come back (20 duplicate YAML
-  keys bind 10 transcoder entries to the wrong weights). `UV_EXCLUDE` (the excludes file) is required on the
-  sae_dashboard and circuit-tracer directives; install nnsight first; after every rebuild validate with
-  `python requirements/utils/collect_env_details.py`.
+  developing: they take the package out of the pins' governance. `sae-lens` installs from its released floor
+  (`>=6.55.0`, the first release that imports under transformer-lens 4.0); the old fork pin
+  `speediedan/SAELens@86f90b3d` must never come back (20 duplicate YAML keys bind 10 transcoder entries to the wrong
+  weights). `UV_EXCLUDE` (the excludes file) is required on the sae_dashboard and circuit-tracer directives; install
+  nnsight first; after every rebuild validate with `python requirements/utils/collect_env_details.py`.
 - **Pins:** `pyproject.toml` `[tool.uv] override-dependencies` (keep in sync with `requirements/ci/overrides.txt` and
   `excludes.txt`) and `[dependency-groups] git-deps` (excluded from the universal lock, so every bump needs hand
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
@@ -392,7 +392,7 @@ vocab sentinels, so the adapter resolves `d_vocab` / `d_vocab_out` first. Config
 
 ## CI/CD
 
-- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout
+- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout. A PR runs Linux and Windows; macOS runs on pushes (main, release/*), a manual dispatch, and a PR labelled `ci:macos` (adding the label runs the macOS leg alone): hosted macOS runners are few and the leg is the slowest
 - **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template shared with finetuning-scheduler (gpu-epsilon's `templates/gpu-job.yml`, pinned to a tag in each GPU pipeline's `resources`, with interpretune's settings in `.azure-pipelines/templates/it-gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`python -m gpu_epsilon.phase_evidence`, shared with finetuning-scheduler and configured by `[tool.gpu-epsilon.phase-evidence]` in `pyproject.toml`): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then the release eligibility checker shared with finetuning-scheduler (`gpu_epsilon.release_eligibility`, configured by `tests/gpu_ci/release.json`, pinned in `requirements/ci/gpu_epsilon.txt`) over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
 - **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
   Check the build's approval state before touching runner configuration: an ungranted gate looks
@@ -610,7 +610,7 @@ instructions file rather than in this published one.
 
 ## Important Caveats
 
-- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
+- **Git dependencies** (circuit_tracer, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
 - **Type checking:** Enabled for every module under `src/`, the relocated research and notebook trees included; there is no exclusion list, so a module that cannot be typed is fixed or removed rather than exempted. All `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports

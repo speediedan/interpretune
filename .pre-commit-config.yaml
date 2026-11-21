@@ -136,6 +136,14 @@ repos:
         # `always_run`: a commit touching only AGENTS.md (a hand edit of the generated file) must fail.
         always_run: true
         pass_filenames: false
+      - id: check-no-home-paths
+        name: Published Markdown and notebooks carry no contributor home paths
+        entry: python scripts/check_no_home_paths.py
+        language: system
+        # Enumerates tracked *.md and *.ipynb itself: the repo-level `exclude:` drops both skills trees, and a
+        # skill file is where such a path was first found, so a file list from pre-commit would miss it.
+        always_run: true
+        pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'

@@ -267,13 +267,21 @@ accepting and ignoring it.
 from interpretune.config import SAELensConfig, ITLensBridgeConfig
 
 cfg = SAELensConfig(
-    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left"),
+    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", enable_compatibility_mode=True),
     sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
 )
 ```
 
 For HookedTransformer-equivalent numerics, set ``enable_compatibility_mode=True`` on the bridge config; the
 weight processing the legacy path applied by default is what that reproduces.
+
+**An SAE must see the weight processing it was trained on.** sae_lens records it in the SAE's
+``model_from_pretrained_kwargs`` (``gpt2-small-res-jb`` declares ``center_writing_weights: True``), and the
+sae_lens adapter refuses, by name, an SAE that declares a processing step the model does not have. On the bridge
+the fix is ``enable_compatibility_mode`` (with ``enable_compatibility_mode_kwargs`` when a declared step differs
+from its defaults), as above. The NNsight composition serves the raw Hugging Face weights, where no such
+processing exists, so it takes an SAE that declares none, such as OpenAI's ``gpt2-small-resid-post-v5-32k``.
+Only the steps an SAE declares are checked.
 
 **Training SAE parameters requires ``add_saes_on_init=True``.**
 
@@ -282,7 +290,7 @@ If you intend to *optimize* SAE parameters, you must set it to ``True``:
 
 ```python
 cfg = SAELensConfig(
-    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small"),
+    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", enable_compatibility_mode=True),
     sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
     add_saes_on_init=True,   # without this, SAE parameters never reach the optimizer
 )

@@ -134,7 +134,7 @@ class BaseNNsightModule(BaseITModule):
         from interpretune.tuning.views import RefusingView, default_view
 
         if "hf_model" in self._modules:
-            return default_view(self, roles=self.tunable_roles())
+            return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:
@@ -142,7 +142,11 @@ class BaseNNsightModule(BaseITModule):
         if cfg is None:
             return "the model was not built through nnsight (the composition has no `nnsight_cfg`)."
         if cfg.remote:
-            return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
+            return (
+                "nnsight compositions executing remotely (NDIF) have no local weights to tune; train adapter or "
+                "intervention tensors created inside a bounded remote session instead "
+                "(interpretune.tuning.remote.run_remote_chunk)."
+            )
         model = getattr(self, "model", None)
         if model is not None and not getattr(model, "dispatched", True):
             return (
@@ -276,6 +280,18 @@ class BaseNNsightModule(BaseITModule):
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
+
+        # A plain (core, nnsight) composition is its own model backend, so the analysis ops that run the model
+        # (`model_fwd_intervention`, `fwd_w_cache`, ...) need no latent adapter composed to reach it. An architecture
+        # the hook mapping does not cover still loads, without a backend, as it did before.
+        if self.__dict__.get("_model_backend") is None:
+            from interpretune.adapters.nnsight.backends import NNsightModelBackend
+
+            backend = NNsightModelBackend.for_model(self.model, strict=False)
+            if backend is None:
+                rank_zero_debug("No NNsight model backend: the hook mapping does not cover this model's architecture")
+            else:
+                self._model_backend = backend
 
         rank_zero_info("NNsight TransformersModel initialized successfully")
 

@@ -20,20 +20,33 @@ from interpretune.analysis.backends import (
     InterventionSupport,
     AttributionGraphSupport,
     FeatureTargetSupport,
+    HeadAttributionSupport,
     PositionScope,
+    TechniqueSupport,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
+
+
+def _require_single_prompt(batch_size: int) -> None:
+    if batch_size != 1:
+        raise ValueError(
+            f"circuit-tracer analysis attributes one prompt per call, but this batch carries {batch_size} prompts; "
+            "run it at batch size 1 so that no prompt is dropped"
+        )
 
 
 class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
 
     @property
-    def attribution_graph_support(self) -> AttributionGraphSupport:
-        """Graph construction resolves gemma's attention location through source tracing of the bound eager
-        function."""
-        return AttributionGraphSupport(requires_own_eager_attention=True)
+    def technique_support(self) -> dict[str, TechniqueSupport]:
+        """Attribution graphs, whose construction resolves gemma's attention location through source tracing of the
+        bound eager function, and head attribution."""
+        return {
+            "attribution_graph": AttributionGraphSupport(requires_own_eager_attention=True),
+            "head_attribution": HeadAttributionSupport(),
+        }
 
     @property
     def intervention_support(self) -> InterventionSupport:
@@ -71,14 +84,8 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        """Attribution graphs, head attribution and interventions on transcoder features."""
-        return frozenset(
-            {
-                Capability.ATTRIBUTION_GRAPH,
-                Capability.INTERVENTION,
-                Capability.HEAD_ATTRIBUTION,
-            }
-        )
+        """Interventions on transcoder features; its techniques are declared in :attr:`technique_support`."""
+        return frozenset({Capability.INTERVENTION})
 
     @property
     def requires(self) -> frozenset[Capability]:
@@ -185,18 +192,26 @@ class CircuitTracerAnalysisBackend:
         return token_ids
 
     def resolve_prompt(self, module: Any, analysis_batch: AnalysisBatch, batch: BatchEncoding | None) -> str:
-        """Recover the prompt from the analysis batch if present, else decode it back from the encoding."""
+        """Recover the batch's one prompt from the analysis batch, else decode it back from the encoding.
+
+        Circuit-tracer attributes one prompt per call, so a batch of several is refused rather than resolved to its
+        first row: the rest would be dropped, and every graph, feature set and intervention built on it would look
+        complete.
+        """
         prompts = getattr(analysis_batch, "prompts", None)
         if isinstance(prompts, str):
             return prompts
         if isinstance(prompts, list) and prompts:
+            _require_single_prompt(len(prompts))
             return str(prompts[0])
         if batch is None:
             raise ValueError("compute_attribution_graph requires batch input or prompts in analysis_batch")
         tokenizer = self.get_tokenizer(module)
         input_ids = get_batch_input(batch)
-        prompt_tokens = input_ids[0] if input_ids.dim() > 1 else input_ids
-        return str(tokenizer.decode(prompt_tokens.detach().cpu().tolist(), skip_special_tokens=True))
+        if input_ids.dim() > 1:
+            _require_single_prompt(input_ids.shape[0])
+            input_ids = input_ids[0]
+        return str(tokenizer.decode(input_ids.detach().cpu().tolist(), skip_special_tokens=True))
 
     def build_concept_attribution_targets(
         self,

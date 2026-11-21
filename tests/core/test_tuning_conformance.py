@@ -59,7 +59,9 @@ def test_a_frozen_spliced_sae_is_an_artifact(request):
     cfg.module_cfg.sae_cfgs = [replace(sae_cfgs[0], frozen=True), *sae_cfgs[1:]]
     cfg.module_cfg.add_saes_on_init = True
     module = ITSession(cfg).module
-    roles = module.tunable_roles()
+    from interpretune.tuning.views import expand_declared_roles
+
+    roles = expand_declared_roles(module, module.tunable_roles())  # declared by address (#875)
     frozen_key, other_key = (module.attached_sae_key(s.sae_id) for s in sae_cfgs[:2])
     by_key = {k: {r for n, r in roles.items() if n.startswith(f"attached_saes.{k}.")} for k in (frozen_key, other_key)}
     assert by_key == {frozen_key: {"artifact"}, other_key: {"latent:sae"}}

@@ -1,0 +1,74 @@
+# Derived key: prompt_analysis.gemma2.circuit_tracer+nnsight
+# Model and adapter composition only. No prompts and no attribution targets: a caller supplies the prompts
+# (`datamodule_cfg.prompt_cfg.prompts`), and circuit-tracer's salient-logit selection applies unless the caller names
+# targets. Experiment variants that need targets set them (see capital_states.*).
+task_variant: prompt_analysis
+model: gemma2
+composition: [circuit_tracer, nnsight]
+extensions: []
+descriptor: null
+reg_info:
+  model_src_key: gemma2
+  model_cfg_key: prompt_analysis
+  adapter_combinations:
+    - [core, nnsight, circuit_tracer]
+  description: Circuit tracer on free-form prompts with the NNsight backend, Gemma2-2b (non-instruction tuned)
+shared_config:
+  task_name: prompt_analysis
+  os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+  model_name_or_path: google/gemma-2-2b
+  tokenizer_kwargs:
+      model_input_names: ['input']
+      padding_side: left
+      add_bos_token: true
+registered_cfg:
+  datamodule_cfg:
+    prompt_cfg:
+      class_path: prompt_analysis.PromptSetConfig
+    signature_columns: ['input']
+    enable_datasets_cache: False
+    eval_batch_size: 1
+  module_cfg:
+    class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
+    init_args:
+      auto_comp_cfg:
+        class_path: interpretune.config.shared.AutoCompConfig
+        init_args:
+          module_cfg_name: PromptAnalysisConfig
+          module_cfg_mixin:
+            class_path: interpretune.harness.sessions.NeutralSessionMixin
+            import_only: True
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cpu
+            dtype: float32
+          model_head: transformers.Gemma2ForCausalLM
+      nnsight_cfg:
+        class_path: interpretune.adapters.nnsight.config.NNsightConfig
+        init_args:
+          model_name: google/gemma-2-2b
+          device_map: cuda
+          torch_dtype: float32
+          dispatch: true
+          attn_implementation: eager
+          tokenizer_kwargs:
+            padding_side: left
+            add_bos_token: true
+      circuit_tracer_cfg:
+        class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
+        init_args:
+          backend: "nnsight"
+          transcoder_set: "gemma"
+          max_n_logits: 10
+          desired_logit_prob: 0.95
+          max_feature_nodes: 8192
+          batch_size: 256
+          offload: 'cpu'
+          verbose: true
+          use_neuronpedia: false
+  datamodule_cls:
+    class_path: prompt_analysis.PromptDataModule
+  module_cls:
+    class_path: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule

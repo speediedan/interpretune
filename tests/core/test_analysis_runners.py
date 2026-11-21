@@ -453,6 +453,74 @@ class TestGradStateAcrossAFailingRun:
         assert torch.is_grad_enabled(), "a failing run leaked a disabled grad state"
 
 
+class TestWriterBatchSize:
+    """The writer batch bounds generation's peak memory, so the runner config must reach the writer."""
+
+    def _generate(self, monkeypatch, tmp_path, n, **kwargs):
+        def fake_gen(**_kwargs):
+            for i in range(n):
+                yield {"value": i}
+
+        monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_gen)
+        module = MagicMock()
+        module.analysis_cfg.output_store.cache_dir = str(tmp_path / "cache")
+        dataset = generate_analysis_dataset(
+            module=module, features=Features({"value": Value("int64")}), it_format_kwargs={}, gen_kwargs={}, **kwargs
+        )
+        return dataset, sorted((tmp_path / "cache").rglob("*.arrow"))
+
+    @staticmethod
+    def _record_batches(arrow_files):
+        import pyarrow as pa
+
+        return sum(sum(1 for _ in pa.ipc.open_stream(str(f))) for f in arrow_files)
+
+    def test_the_writer_flushes_every_batch(self, monkeypatch, tmp_path):
+        dataset, files = self._generate(monkeypatch, tmp_path, 5, writer_batch_size=2)
+        assert dataset.to_dict() == {"value": [0, 1, 2, 3, 4]}
+        assert self._record_batches(files) == 3, "5 records at a batch of 2 must be written as 3 batches"
+
+    def test_the_default_writes_one_batch(self, monkeypatch, tmp_path):
+        # positive control: without the setting the same records are buffered whole, so the count above is the
+        # setting's effect and not how the writer always splits
+        _, files = self._generate(monkeypatch, tmp_path, 5)
+        assert self._record_batches(files) == 1
+
+    @pytest.mark.parametrize("size", [0, -1])
+    def test_a_non_positive_size_is_refused_by_name(self, tmp_path, size):
+        with pytest.raises(ValueError, match="writer_batch_size must be a positive"):
+            generate_analysis_dataset(
+                module=MagicMock(),
+                features=Features({"value": Value("int64")}),
+                it_format_kwargs={},
+                gen_kwargs={},
+                writer_batch_size=size,
+            )
+
+    def test_the_runner_config_value_reaches_generation(self, tmp_path):
+        """The runner hands its config to the loop by field name, so the setting must arrive under that name."""
+        from interpretune.runners import analysis as runner
+
+        assert "writer_batch_size" in AnalysisRunnerCfg.__dataclass_fields__
+        module = MagicMock()
+        module.analysis_cfg.output_store.save_dir = str(tmp_path / "out")
+        features = Features({"value": Value("int64")})
+        seen: list[dict] = []
+
+        def _from_generator(*_args, **kwargs):
+            seen.append(kwargs)
+            return MagicMock()
+
+        with (
+            patch.object(runner, "dataset_features_and_format", side_effect=lambda _m, kw: (features, {}, kw)),
+            patch.object(runner.Dataset, "from_generator", side_effect=_from_generator),
+        ):
+            runner.core_analysis_loop(module, MagicMock(), writer_batch_size=64)
+            runner.core_analysis_loop(module, MagicMock())
+        assert seen[0]["writer_batch_size"] == 64
+        assert "writer_batch_size" not in seen[1], "None must leave the datasets default in place"
+
+
 class TestGeneratorCacheSharing:
     """Deterministic fingerprints share generator cache files across runs."""
 

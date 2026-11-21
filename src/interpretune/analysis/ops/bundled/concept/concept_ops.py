@@ -17,8 +17,10 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     apply_intervention,
+    as_readout,
     build_intervention_dict,
     get_intervention_target_shape,
+    last_token_logit_readout,
     require_intervention_support,
     resolve_interventions,
 )
@@ -36,6 +38,7 @@ from interpretune.analysis.optools import (
     resolve_aggregate_input,
     resolve_embedding_weight,
     resolve_gradient_sites,
+    recipe_weight_equivalence,
     resolve_jlens_layer,
     resolve_tokenizer,
     resolve_unembed_and_norm_scale,
@@ -1228,10 +1231,13 @@ def model_bwd_intervention_impl(
     """Apply hook-point interventions to gradients during a backward pass, and store the gradients they change.
 
     The backward counterpart of ``model_fwd_intervention``: the same payload, delegated to the model backend's
-    ``bwd_w_intervention``, with each spec acting on the gradient at its site. The metric is the summed last-token
-    logit of ``logit_target_ids`` (else the concept groups' ids), or, with neither, of each row's own top prediction.
-    The forward pass is not edited, so the metric is the same with and without the interventions; what changes is the
-    gradient reaching every site upstream of an edit.
+    ``bwd_w_intervention``, with each spec acting on the gradient at its site. The gradient is taken of ``readout``, a
+    :class:`~interpretune.analysis.backends.readouts.Readout` (or a callable of the logits), which may read the
+    activations at sites it names; without one, of the summed last-token logit of ``logit_target_ids`` (else the
+    concept groups' ids), or, with neither, of each row's own top prediction. A readout and ``logit_target_ids``
+    together are refused, since the readout would leave the ids unread. The forward pass is not edited, so the readout
+    is the same with and without the interventions; what changes is the gradient reaching every site upstream of an
+    edit.
 
     ``grad_capture`` names the sites whose gradients are stored: hook names or patterns, or one venngram site address
     under ``of: grad`` (``grad_capture_sets`` supplies its book's sets). Without it, the intervention sites are
@@ -1265,25 +1271,28 @@ def model_bwd_intervention_impl(
         batch = module.auto_prune_batch(batch, "forward")
 
     target_ids = resolve_aggregate_input(module, analysis_batch, "logit_target_ids")
-    if target_ids is None:
-        concept_ids = list(analysis_batch.get("concept_group_a_token_ids") or []) + list(
-            analysis_batch.get("concept_group_b_token_ids") or []
-        )
-        target_ids = concept_ids or None
-    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
-
-    def backward_fn(logits: Any) -> Any:
-        last = logits[:, -1, :]
-        if target_ids_tensor is None:
-            return last.max(dim=-1).values.sum()
-        return last[:, target_ids_tensor.to(last.device)].sum()
+    readout = resolve_aggregate_input(module, analysis_batch, "readout") or kwargs.get("readout")
+    if readout is not None:
+        if target_ids is not None:
+            raise ValueError(
+                "model_bwd_intervention was given both a `readout` and `logit_target_ids`; the readout defines the "
+                "scalar the gradient is taken of and would leave the ids unread, so pass one of them"
+            )
+        readout = as_readout(readout)
+    else:
+        if target_ids is None:
+            concept_ids = list(analysis_batch.get("concept_group_a_token_ids") or []) + list(
+                analysis_batch.get("concept_group_b_token_ids") or []
+            )
+            target_ids = concept_ids or None
+        readout = last_token_logit_readout(target_ids)
 
     # the flow gate above has refused a backend that does not declare `grad`, which is the promise of this method
     pre_grads, post_grads, metric = model_backend.bwd_w_intervention(
         model=module.model,
         batch=batch,
         interventions=interventions,
-        backward_fn=backward_fn,
+        readout=readout,
         capture=capture,
         latent_model_handles=latent_model_handles,
     )
@@ -1478,6 +1487,57 @@ def intervention_first_order_check_impl(
     return analysis_batch
 
 
+def weight_equivalence_check_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Check that a recipe's weight form equals its activation form on this batch.
+
+    The recipe's unit ``scale`` and ``add`` ops at ``mlp.out``'s input, and its whole-activation ``reject`` and
+    ``project`` at ``mlp.out``'s output, at token scope ``all``, are run twice: as the weight edits they equal (a unit
+    scale of ``mlp.out``'s weight, a bias patch, and the span edit of the output side of its weight and bias, resolved
+    through the module's view when it places units, else venngram's registry map for the model it carries) and through
+    the backend's own intervention path. Each form is taken back after its forward. The batch gets the greatest absolute
+    logit difference between the two (``we_max_abs_diff``), the greatest logit magnitude under the activation form
+    (``we_max_abs``) and the verdict (``we_equivalent``: the difference is within ``atol + rtol * max_abs``).
+
+    A recipe with no exact weight form (a token-scoped op, another site, an op other than these) is refused with the
+    reason, before any forward runs, as is a module whose view cannot resolve ``mlp.out`` (no published map describes
+    its module names) or, for unit ops, places no unit axis for it (its component map records no ``layout``).
+    """
+
+    def _input(name: str) -> Any:
+        value = kwargs.get(name)
+        return resolve_aggregate_input(module, analysis_batch, name) if value is None else value
+
+    recipe = _input("recipe")
+    if recipe is None:
+        raise ValueError(
+            "weight_equivalence_check requires `recipe`: a venngram recipe (or a document or reference "
+            "`interpretune.analysis.venngram.load_recipe` reads), whose weight form is compared with its "
+            "activation form."
+        )
+    rtol, atol = _input("we_rtol"), _input("we_atol")
+    rtol = 1e-4 if rtol is None else float(rtol)
+    atol = 1e-5 if atol is None else float(atol)
+    if (
+        getattr(module, "analysis_cfg", None)
+        and module.analysis_cfg.auto_prune_batch_encoding
+        and isinstance(batch, BatchEncoding)
+    ):
+        batch = module.auto_prune_batch(batch, "forward")
+    result = recipe_weight_equivalence(module, batch, recipe, rtol=rtol, atol=atol)
+    analysis_batch.update(
+        we_max_abs_diff=torch.tensor(result.max_abs_diff, dtype=torch.float32),
+        we_max_abs=torch.tensor(result.max_abs, dtype=torch.float32),
+        we_equivalent=bool(result.equivalent),
+    )
+    return analysis_batch
+
+
 __all__ = [
     "CONCEPT_AGGREGATE_ROW_FIELDS",
     "CONCEPT_BASES",
@@ -1496,4 +1556,5 @@ __all__ = [
     "project_context_enhanced_states",
     "reset_concept_streaming_state",
     "resolve_concept_cache_key",
+    "weight_equivalence_check_impl",
 ]

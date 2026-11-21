@@ -31,6 +31,21 @@ from interpretune.protocol import Adapter
 if TYPE_CHECKING:
     from interpretune.analysis.backends import ModelBackend
 
+#: The TransformerLens weight-processing steps an SAE's ``model_from_pretrained_kwargs`` can declare. sae_lens trains
+#: on ``from_pretrained_no_processing(**model_from_pretrained_kwargs)``, so each declared step is one applied over the
+#: raw weights, and a step the SAE does not declare is not checked.
+WEIGHT_PROCESSING_STEPS = (
+    "fold_ln",
+    "center_writing_weights",
+    "center_unembed",
+    "fold_value_biases",
+    "refactor_factored_attn_matrices",
+)
+
+
+class SAEProcessingMismatchError(ValueError):
+    """An SAE declares weight processing the model it would attach to does not have."""
+
 
 @dataclass(kw_only=True)
 class InstantiatedSAE:
@@ -134,6 +149,7 @@ class BaseSAELensModule(BaseITModule):
                 handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # pyright: ignore[reportArgumentType]
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
+            self._check_sae_processing(handle, sae_cfg)
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # pyright: ignore[reportArgumentType]
             # `getattr` with the field's own default: a module composition can carry the SAE mixin without
             # the SAE config mixin (the circuit-tracer + sae_lens composition attaches `sae_cfgs` onto a
@@ -141,6 +157,48 @@ class BaseSAELensModule(BaseITModule):
             if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
                 self.model.add_sae(added_sae.handle)  # pyright: ignore[reportCallIssue]
                 self._register_attached_sae(added_sae.handle, frozen=sae_cfg.frozen)
+
+    def model_weight_processing(self) -> dict[str, bool] | None:
+        """The weight processing applied to this module's model, by step, or ``None`` when it cannot be
+        established.
+
+        Backend mixins override this; a composition that does not cannot vouch for its model's processing.
+        """
+        return None
+
+    def processing_fix_hint(self, declared: dict[str, bool]) -> str:
+        """How to give this module's model the processing ``declared`` by an SAE (backend mixins override)."""
+        return "this composition cannot say what weight processing its model has"
+
+    def _check_sae_processing(self, handle: SAE, sae_cfg: SAELensFromPretrainedConfig | SAELensCustomConfig) -> None:
+        """Refuse an SAE trained on weight processing the model does not have.
+
+        An SAE applied to a residual stream other than the one it was trained on composes and runs without error, and
+        its encodings can be close to meaningless (GPT-2's ``gpt2-small-res-jb`` SAEs on unprocessed weights reconstruct
+        with negative explained variance in later layers), so a mismatch is refused by name rather than warned about.
+        """
+        metadata = getattr(handle.cfg, "metadata", None)
+        kwargs = getattr(metadata, "model_from_pretrained_kwargs", None) or {}
+        declared = {step: bool(kwargs[step]) for step in WEIGHT_PROCESSING_STEPS if step in kwargs}
+        if not declared:
+            return
+        if isinstance(sae_cfg, SAELensFromPretrainedConfig):
+            name = f"{sae_cfg.release}/{sae_cfg.sae_id}"
+        else:
+            name = f"the custom SAE at {getattr(metadata, 'hook_name', '?')}"
+        applied = self.model_weight_processing()
+        if applied is None:
+            raise SAEProcessingMismatchError(
+                f"SAE {name} was trained with weight processing {declared}, and {self.processing_fix_hint(declared)}"
+            )
+        mismatched = {step: want for step, want in declared.items() if applied[step] != want}
+        if mismatched:
+            have = {step: applied[step] for step in mismatched}
+            raise SAEProcessingMismatchError(
+                f"SAE {name} was trained with weight processing {mismatched}, but the model it would attach to has "
+                f"{have}; its activations would not be the ones the SAE was trained on. "
+                f"{self.processing_fix_hint(declared)}"
+            )
 
     @staticmethod
     def attached_sae_key(hook_name: str) -> str:
@@ -201,16 +259,21 @@ class BaseSAELensModule(BaseITModule):
                     yield param
 
     def tunable_roles(self) -> dict[str, str]:
-        """Spliced SAEs' parameters take the ``latent:sae`` role (#758), or ``artifact`` for one configured
-        ``frozen`` (#812)."""
+        """Spliced SAEs take the ``latent:sae`` role (#758), or ``artifact`` for one configured ``frozen`` (#812),
+        declared by address (``module:attached_saes.<key>``, #875)."""
+        from interpretune.tuning.views import merge_roles, module_address
+
         roles = super().tunable_roles()  # cooperative, provided by BaseITModule
         attached = self._attached_saes()
-        if attached is not None:
-            frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
-            for key, sae in attached.items():
+        if attached is None:
+            return roles
+        frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
+        declared: dict[str, list[str]] = {}
+        for key, sae in attached.items():
+            if [*sae.parameters(), *sae.buffers()]:  # venngram refuses an address that selects nothing
                 role = "artifact" if key in frozen_keys else "latent:sae"
-                roles.update({f"attached_saes.{key}.{n}": role for n, _ in sae.named_parameters()})
-        return roles
+                declared.setdefault(role, []).append(f"attached_saes.{key}")
+        return merge_roles(roles, {role: module_address(*paths) for role, paths in declared.items()})
 
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
@@ -250,6 +313,37 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         if hasattr(self.model, "get_sae_hook_name"):
             return self.model.get_sae_hook_name(sae_handle, internal)
         return f"{sae_handle.cfg.metadata.hook_name}.{internal}"
+
+    @staticmethod
+    def _compatibility_processing(compat_kwargs: dict[str, Any]) -> dict[str, bool]:
+        """The processing steps ``enable_compatibility_mode(**compat_kwargs)`` applies: its own defaults,
+        overridden."""
+        import inspect
+
+        from transformer_lens.model_bridge import TransformerBridge
+
+        if compat_kwargs.get("no_processing"):
+            return dict.fromkeys(WEIGHT_PROCESSING_STEPS, False)
+        params = inspect.signature(TransformerBridge.enable_compatibility_mode).parameters
+        return {step: bool(compat_kwargs.get(step, params[step].default)) for step in WEIGHT_PROCESSING_STEPS}
+
+    def model_weight_processing(self) -> dict[str, bool] | None:
+        """What this module applied to its bridge; a bridge processed some other way is unknown (``None``)."""
+        applied = self.__dict__.get("_applied_weight_processing")
+        if applied is not None:
+            return applied
+        if getattr(self.model, "_weights_processed", False):
+            return None
+        return dict.fromkeys(WEIGHT_PROCESSING_STEPS, False)
+
+    def processing_fix_hint(self, declared: dict[str, bool]) -> str:
+        """The ``tl_cfg`` settings that apply ``declared``."""
+        defaults = self._compatibility_processing({})
+        kwargs = {step: want for step, want in declared.items() if defaults[step] != want}
+        hint = "Set `enable_compatibility_mode: true` on the model's `tl_cfg` (an `ITLensBridgeConfig`)"
+        if kwargs:
+            hint += f" with `enable_compatibility_mode_kwargs: {kwargs}`"
+        return hint + ", or use an SAE trained on the processing this model has."
 
     def _convert_hf_to_tl(self) -> None:
         """Convert HF model to a ``SAETransformerBridge``."""
@@ -336,6 +430,7 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
             self.model.enable_compatibility_mode(**compat_kwargs)
+            self._applied_weight_processing = self._compatibility_processing(compat_kwargs)
             # This SAE-Lens conversion path bypasses BaseITLensModule._convert_to_bridge, so the
             # processed-weight _apply patch must be ensured here as well (otherwise Lightning's
             # Trainer-driven .to() strands the caches on cpu — see the patch docstring)
@@ -378,6 +473,19 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
     LanguageModel initialization and SAE loading.
     """
 
+    def model_weight_processing(self) -> dict[str, bool]:
+        """NNsight serves the Hugging Face weights as they are: no TransformerLens processing step applies."""
+        return dict.fromkeys(WEIGHT_PROCESSING_STEPS, False)
+
+    def processing_fix_hint(self, declared: dict[str, bool]) -> str:
+        """No setting adds TransformerLens processing to an NNsight model, so the fix is another SAE or
+        composition."""
+        return (
+            "The NNsight composition serves the raw Hugging Face weights, where TransformerLens weight processing does "
+            "not exist: use an SAE whose `model_from_pretrained_kwargs` declare none, or the TransformerLens "
+            "composition with `enable_compatibility_mode: true` on its `tl_cfg`."
+        )
+
     def auto_model_init(self) -> None:
         """Initialize model using NNsight backend for SAE Lens.
 
@@ -390,14 +498,13 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         """Initialize NNsight LanguageModel and load SAEs.
 
         This method handles NNsight-specific initialization logic, then loads SAEs using sae_lens (pure PyTorch).
-        Also initializes the ``NNsightModelBackend`` with a ``HookNameResolver`` for the model's architecture.
+        Also initializes the ``NNsightModelBackend`` for the model's architecture (``NNsightModelBackend.for_model``).
         """
         import os
 
         from nnsight import TransformersModel
 
-        from interpretune.analysis.backends.hook_mapping import HookNameResolver
-        from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
         from interpretune.utils import rank_zero_debug
 
         nnsight_cfg = self.nnsight_cfg  # from NNsightAttributeMixin
@@ -448,22 +555,8 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         self.instantiate_saes()  # from BaseSAELensModule
 
         # Initialize NNsight model backend with hook resolver
-        hf_model = NNsightModelBackend._get_hf_model(self.model)
-        hf_config = getattr(hf_model, "config", None)
-        architectures = getattr(hf_config, "architectures", None) if hf_config else None
-        if architectures:
-            model_arch = architectures[0]
-        else:
-            # Fallback: use the class name of the underlying HF model
-            model_arch = type(hf_model).__name__
-
-        resolver = HookNameResolver(model_arch)
-        self._model_backend = NNsightModelBackend(
-            resolver,
-            configs_per_pass=get_default_configs_per_pass(),
-        )
-        self._model_backend.register_model_hooks(self.model)
-        rank_zero_info(f"NNsight model backend initialized with architecture: {model_arch}")
+        self._model_backend = NNsightModelBackend.for_model(self.model)
+        rank_zero_info("NNsight model backend initialized for the model's architecture")
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for NNsight SAE Lens module.

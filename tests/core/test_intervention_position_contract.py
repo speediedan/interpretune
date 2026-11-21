@@ -75,3 +75,113 @@ class TestTheCountIsWhatCatchesAWholePromptBackend:
         assert torch.allclose(everywhere[:, LAST], expected_last)
         # ...and the count is what tells the two operations apart
         assert _changed_positions(before, everywhere) != {LAST}
+
+
+@pytest.mark.parametrize("mode", VALUE_OPS)
+def test_explicit_positions_change_only_the_selected_set_for_every_value_op(mode):
+    before = _activation()
+    one = _spec(mode, "last_token")
+    operands = torch.stack([one.intervention_tensor, torch.roll(one.intervention_tensor, 1, dims=-1)])
+    spec = one._replace(position_scope="positions", positions=(3, 1), intervention_tensor=operands)
+    after = apply_intervention(before.clone(), spec, last_pos=LAST)
+    assert _changed_positions(before, after) == {1, 3}
+    assert torch.equal(after[:, [0, 2, 4]], before[:, [0, 2, 4]])
+
+
+def test_position_operand_order_and_padding_coordinates_are_preserved():
+    before = torch.zeros(2, 5, 3)
+    spec = InterventionSpec(
+        torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), position_scope="positions", positions=(3, 0)
+    )
+    result = apply_intervention(before.clone(), spec, last_pos=4)
+    torch.testing.assert_close(result[:, 3], torch.tensor([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]))
+    torch.testing.assert_close(result[:, 0], torch.tensor([[4.0, 5.0, 6.0], [4.0, 5.0, 6.0]]))
+    assert torch.equal(result[:, [1, 2, 4]], before[:, [1, 2, 4]])
+    # Position zero means the padded tensor's first column for every row, independent of last_pos.
+    assert torch.equal(result, apply_intervention(before.clone(), spec, last_pos=1))
+
+
+def test_positions_compose_with_unit_indices():
+    # Each position's operand row spans only the selected units, so the width check must narrow to them once: a
+    # validation that narrowed again inside the per-position check would refuse unit 3 against a width of 2.
+    before = torch.zeros(2, 5, 4)
+    spec = InterventionSpec(
+        torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+        op="replace",
+        position_scope="positions",
+        positions=(4, 0),
+        unit_indices=(3, 1),
+    )
+    result = apply_intervention(before.clone(), spec, last_pos=2)
+    expected = before.clone()
+    expected[:, 4, 3], expected[:, 4, 1] = 1.0, 2.0
+    expected[:, 0, 3], expected[:, 0, 1] = 3.0, 4.0
+    assert torch.equal(result, expected)
+    value = before.clone()
+    with pytest.raises(ValueError, match="unit_indices"):
+        apply_intervention(value, spec._replace(unit_indices=(4, 1)), last_pos=2)
+    assert torch.equal(value, before)
+
+
+@pytest.mark.parametrize("positions", [None, (), (1, 1), (-1,), (True,), (1.5,), "1"])
+def test_invalid_position_sets_are_refused_before_mutation(positions):
+    before = _activation()
+    spec = InterventionSpec(torch.ones(2, D), position_scope="positions", positions=positions)
+    value = before.clone()
+    with pytest.raises(ValueError, match="position"):
+        apply_intervention(value, spec, last_pos=LAST)
+    assert torch.equal(value, before)
+
+
+@pytest.mark.parametrize(
+    "positions,tensor", [((0, SEQ), torch.ones(2, D)), ((0, 1), torch.ones(3, D)), ((0, 1), torch.ones(2, D + 1))]
+)
+def test_out_of_range_positions_and_mismatched_operands_are_atomic(positions, tensor):
+    before = _activation()
+    value = before.clone()
+    with pytest.raises(ValueError, match="positions|shape"):
+        apply_intervention(
+            value, InterventionSpec(tensor, position_scope="positions", positions=positions), last_pos=LAST
+        )
+    assert torch.equal(value, before)
+
+
+def test_positions_on_another_scope_are_refused():
+    with pytest.raises(ValueError, match="only valid"):
+        apply_intervention(_activation(), InterventionSpec(torch.ones(D), positions=(1,)), last_pos=LAST)
+
+
+def test_position_metadata_survives_wildcard_canonicalization_and_scope_gating():
+    from interpretune.analysis.backends.interventions import build_intervention_dict, require_intervention_support
+    from interpretune.analysis.backends.capabilities import InterventionSupport
+    from types import SimpleNamespace
+
+    raw = {
+        "blocks.*.hook_out": {
+            "intervention_tensors": [torch.ones(2, D), torch.full((2, D), 2.0)],
+            "positions": [3, 1],
+            "position_scope": "positions",
+            "op": "add",
+        }
+    }
+    hooks = ["blocks.0.hook_out", "blocks.1.hook_out"]
+    result = build_intervention_dict(raw, {"blocks.*.hook_out": hooks}, dict.fromkeys(hooks, (D,)))
+    assert all(spec.positions == (3, 1) for specs in result.values() for spec in specs)
+    limited = SimpleNamespace(intervention_support=InterventionSupport(position_scopes={"last_token"}, ops={"add"}))
+    with pytest.raises(NotImplementedError, match="position_scope='positions'"):
+        require_intervention_support(limited, raw, backend_name="limited")
+
+
+def test_shorthand_carries_position_indices_to_canonicalization():
+    from interpretune.analysis.backends.interventions import resolve_interventions, build_intervention_dict
+
+    hook = "blocks.0.hook_out"
+    fields = {
+        "intervention_hook_pattern": hook,
+        "intervention_tensor": torch.ones(2, D),
+        "intervention_position_scope": "positions",
+        "intervention_positions": [4, 1],
+    }
+    payload = resolve_interventions(analysis_batch={}, resolve_field=fields.get, load_json_field=lambda _: None)
+    (spec,) = build_intervention_dict(payload, {hook: [hook]}, {hook: (D,)})[hook]
+    assert spec.positions == (4, 1)

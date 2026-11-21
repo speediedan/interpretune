@@ -196,9 +196,10 @@ class SessionRunnerCfg:
     # `torch.inference_mode()`
     validate_with_grad: bool = False
     # how the core loops place the module across processes launched by torchrun: 'single' (one process), 'ddp' (every
-    # rank holds the model, gradients averaged) or 'fsdp2' (parameters, gradients and optimizer state sharded); see
+    # rank holds the model, gradients averaged), 'fsdp2' (parameters, gradients and optimizer state sharded) or 'tp'
+    # (the layers `tp_plan` selects split across ranks, every rank on the same batch); see
     # `interpretune.runners.distributed`
-    placement: Literal["single", "ddp", "fsdp2"] = "single"
+    placement: Literal["single", "ddp", "fsdp2", "tp"] = "single"
     # the modules a data-parallel placement shards as their own units, in finetuning-scheduler's FSDP2 plan grammar
     # (`finetuning_scheduler.strategies.plan`): each key (a module name, a regex matched from the start of module
     # names, or `class:<name>` for every instance of a class or its subclasses) maps to its `fully_shard` kwargs, plus
@@ -208,6 +209,13 @@ class SessionRunnerCfg:
     # `fully_shard` kwargs every planned unit takes unless its entry overrides them; all but `act_ckpt` also apply to
     # the module itself
     fsdp_default_kwargs: Mapping[str, Any] | None = None
+    # the layers 'tp' splits across ranks, in finetuning-scheduler's tensor-parallel plan grammar
+    # (`finetuning_scheduler.strategies.plan.parallelize_model`): the same keys as `fsdp_plan`, each mapped to a
+    # parallel style (`{'style': 'colwise'}`, `'rowwise'`, `'sequence'`, `'prepare_input'`, ...) and its layouts.
+    # Refused under any other placement. Under 'tp' without one, the module's own default is used: a Hugging Face
+    # model's declared plan (its decoder layers split the Megatron way) on the core and nnsight paths; TransformerLens
+    # has none
+    tp_plan: Mapping[str, Mapping[str, Any]] | None = None
     # resume training from a core-loop checkpoint taken at the end of an epoch (training continues at the next
     # epoch): under 'single', a `interpretune.runners.core.checkpoint_state` or a path to one saved with
     # `torch.save`; under 'ddp'/'fsdp2', the distributed checkpoint's directory (`save_checkpoint`)
@@ -238,9 +246,19 @@ class SessionRunnerCfg:
             raise MisconfigurationException(
                 f"`accumulate_grad_batches` must be at least 1, got {self.accumulate_grad_batches}."
             )
-        if self.placement not in ("single", "ddp", "fsdp2"):
+        if self.placement not in ("single", "ddp", "fsdp2", "tp"):
             raise MisconfigurationException(
-                f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
+                f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2', 'tp'."
+            )
+        if self.placement == "tp" and (self.fsdp_plan is not None or self.fsdp_default_kwargs):
+            raise MisconfigurationException(
+                "`fsdp_plan` and `fsdp_default_kwargs` shard the module across data-parallel ranks, but the placement"
+                " is 'tp', which splits the layers `tp_plan` selects instead. Drop them, or use 'fsdp2'."
+            )
+        if self.tp_plan is not None and self.placement != "tp":
+            raise MisconfigurationException(
+                f"`tp_plan` splits layers across ranks under placement 'tp', but the placement is '{self.placement}'."
+                " Set `placement` to 'tp' (and launch with torchrun), or drop the plan."
             )
         if self.placement == "single" and (self.fsdp_plan is not None or self.fsdp_default_kwargs):
             raise MisconfigurationException(
@@ -306,6 +324,10 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     # a persistent directory only accumulate files no run can reuse.
     dataset_fingerprint: str | None = None
     generator_cache_dir: str | Path | None = None
+    # Records the store's writer buffers before each flush to disk. Peak host memory during generation scales with
+    # this times the record size, not with the number of records, so large-record analyses lower it. None keeps the
+    # `datasets` default (1000).
+    writer_batch_size: int | None = None
     # Per-case key derivation. When set, each run derives its own `dataset_fingerprint` from this
     # target part plus the case identity AFTER the cfg is applied (resolved op, materialized filter),
     # because setup mutates the cfg in place: a key taken before the run would differ from the same

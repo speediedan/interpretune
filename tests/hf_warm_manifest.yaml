@@ -29,6 +29,10 @@ models:
     allow_patterns: ["blocks.0.hook_resid_pre/*", "blocks.1.hook_resid_pre/*", "blocks.9.hook_resid_pre/*"]
   - repo_id: ckkissane/attn-saes-gpt2-small-all-layers
     allow_patterns: ["gpt2-small_L1_*", "gpt2-small_L2_*", "gpt2-small_L9_*", "gpt2-small_L10_*"]
+  # OpenAI's v5 residual SAEs (trained on GPT-2's raw weights, so they declare no weight processing): the NNsight
+  # sae_lens composition and the sae_lens profiling pair attach the first two layers.
+  - repo_id: jbloom/GPT2-Small-OAI-v5-32k-resid-post-SAEs
+    allow_patterns: ["v5_32k_layer_0.pt/*", "v5_32k_layer_1.pt/*"]
   # Gemma Scope 2 residual SAE the conformance suite attaches for the gemma-3-1b-it circuit-tracer
   # target (one layer only; the full release is tens of gigabytes the suite never loads).
   - repo_id: google/gemma-scope-2-1b-it
@@ -60,15 +64,19 @@ components:
   # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
-    revision: 7d0bbe4d887cfbb3844111305d24ffb15eae9a9e
+    revision: b1a920fc1400837a62bc7a2b155e39e5da206b86
   # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
   # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
   - repo_id: speediedan/prompt-configs
     revision: 3d8b9710061283dd14c86a46f0c0649b5e262db0
+  # The task-neutral prompt-analysis component the circuit-tracer notebooks load (free-form prompts, no task head).
+  # Pinned revision; bump with intent.
+  - repo_id: speediedan/prompt-analysis
+    revision: d221f0e9293888836a0101509546968eced813bd
 venngram:
   # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
   # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,
   # and the warm step fetches every map and overlay it indexes into venngram's cache (VENNGRAM_CACHE, else
   # ~/.cache/venngram, which the actions cache saves beside the Hub cache).
   registries:
-    - hub-dataset:speediedan/venngram-registry/index@aaa1c0a47949a553a6e95471e0bad5ece9efc86e
+    - hub-dataset:speediedan/venngram-registry/index@9adb204a81e8c5fd16b754c4357b4b268b463f18

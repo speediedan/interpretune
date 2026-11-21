@@ -106,6 +106,8 @@ ignore:
   - "**/*.pyi"
   - src/interpretune/hub/publish.py
   - src/interpretune/hub/cards.py
+  # store discovery reads Hub listings and envelopes only; nothing it does reaches a device
+  - src/interpretune/hub/discovery.py
   - src/interpretune/utils/neuronpedia_*
   - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
   - src/interpretune/utils/notebook_config.py
@@ -178,6 +180,8 @@ areas:
       - src/interpretune/extensions/**
       - src/interpretune/config/extension_cfgs.py
       - src/interpretune/utils/**
+      # launched by path rather than imported, so no import edge reaches the tests that run it
+      - tests/core/distributed_core_loop_worker.py
     tests:
       - tests/core/test_components_mixins.py
       - tests/core/test_debug_generation.py
@@ -186,6 +190,8 @@ areas:
       - tests/core/test_memprofiler.py
       # a bitsandbytes 4-bit base under LoRA adapters: thawing its packed storage is refused, the adapters train (#758)
       - tests/core/test_tuning_packed_storage.py
+      # the core loop's placements on two GPUs: tensor-parallel transcoder tuning against one GPU
+      - tests/core/test_core_loop_distributed.py
       - tests/gpu_ci/
   tl_arch:
     # the TransformerLens view's parameter mapping on gated llama3/gemma2
@@ -205,10 +211,12 @@ areas:
       - src/interpretune/analysis/ops/bundled/*.py
       - src/interpretune/analysis/ops/bundled/*.yaml
       - src/interpretune/analysis/ops/bundled/core/**
+      - src/interpretune/analysis/ops/bundled/latent/**
       - src/interpretune/config/analysis.py
       - src/interpretune/runners/analysis.py
       - src/interpretune/hub/opcollections.py
       - src/interpretune/hub/artifacts.py
+      - src/interpretune/hub/subject.py
       - src/interpretune/hub/hookmaps.py
     tests:
       - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
@@ -254,6 +262,12 @@ areas:
     tests:
       - tests/core/test_jlens_
       - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
+  latent_dynamics_notebook:
+    # runs the concept-direction component's latent-dynamics analysis, fetched from the Hub at a pinned revision
+    paths:
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/concept_direction_latent_dynamics.ipynb
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
   ct_notebooks:
     # Example notebooks on real models (9.1 of a full run's 22 GPU minutes, builds 2065 and 2087). This area is what
     # every one of them loads: the harness package's import chain (`interpretune.harness` loads bootstrap, config and
@@ -279,6 +293,7 @@ areas:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
       - src/it_examples/tests/test_notebooks.py::test_ct_
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
   ct_notebooks_new:
     # anything else under the notebook sources and helpers (a new notebook or helper): every notebook test, as before
     # the split. Only for a path none of the areas above or below names.
@@ -343,9 +358,57 @@ areas:
       - src/it_examples/notebooks/publish/neuronpedia_example/**
     tests:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  nb_neuron_communities:
+    # the Llama-3.1-8B replication; its test is optional-tier (a gated 8B model and network prompt sources), so a
+    # pull-request gate selects it without running it and the optional tier runs it
+    paths:
+      - src/it_examples/notebooks/publish/neuron_communities/**
+      - src/it_examples/utils/neuron_communities_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_neuron_communities_notebook
+  nb_sasa_blocks:
+    # the SASA blocks example on Mistral-7B; its test is optional-tier (a 7B model and network prompt sources), so a
+    # pull-request gate selects it without running it and the optional tier runs it
+    paths:
+      - src/it_examples/notebooks/publish/sasa_blocks/**
+      - src/it_examples/utils/sasa_blocks_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_sasa_blocks_notebook
   sae_lens_notebooks:
     paths:
       - src/it_examples/notebooks/publish/saelens_adapter_example/**
       - src/it_examples/tests/notebook/**
     tests:
       - src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks
+
+# The few slow cases a per-change gate leaves to the full run (main, scheduled and run_all builds keep every one). Each
+# is a node id an area's `tests` select; a gate whose change set touches none of its `unless_changed` paths drops it,
+# and the run's output says how many it deferred. Each entry's path still runs in the gate through a cheaper case
+# (`covered_by`), so a gate keeps every composition path while the broadest, most expensive form of the check waits
+# for the full run. `unless_changed` names the code the case uniquely exercises: a change there keeps it in the gate.
+full_run_only:
+  - test: tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_every_declared_point_is_captured
+    why: captures every declared point of gemma-3-1b-it in one run (about 120 s of the class's 505 s on a 4090)
+    covered_by: [test_cache_op_stores_logits_and_every_requested_point, test_capture_converges_on_the_forward]
+    unless_changed:
+      - src/interpretune/testing/conformance/**
+      - tests/core/test_backend_conformance.py
+      - src/interpretune/adapters/nnsight/**
+      - src/interpretune/analysis/points/**
+  - test: tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_a_gradient_edit_matches_a_manual_backward_hook
+    why: four HF backward references over gemma-3-1b-it beside the op's run (75 to 95 s)
+    covered_by: [test_a_gradient_edit_reaches_a_latent_sub_hook, test_gradient_op_stores_the_declared_schema]
+    unless_changed:
+      - src/interpretune/testing/conformance/**
+      - tests/core/test_backend_conformance.py
+      - src/interpretune/adapters/nnsight/**
+      - src/interpretune/analysis/injection/**
+      - src/interpretune/analysis/ops/bundled/concept/**
+  - test: tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_mixed_modes_apply_in_declaration_order
+    why: one run per declared mode plus the mixed run and their HF references (about 50 s)
+    covered_by: [test_declared_modes_are_distinguishable, test_mixed_scopes_produce_the_per_scope_result]
+    unless_changed:
+      - src/interpretune/testing/conformance/**
+      - tests/core/test_backend_conformance.py
+      - src/interpretune/adapters/nnsight/**
+      - src/interpretune/analysis/injection/**

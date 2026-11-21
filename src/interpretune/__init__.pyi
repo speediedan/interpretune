@@ -480,6 +480,7 @@ def intervention_first_order_check(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
@@ -737,11 +738,13 @@ def model_bwd_intervention(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
         direction_scale_factor (float32)
         logit_target_ids (int64)
+        readout (object)
         grad_capture (object)
         grad_capture_sets (object)
 
@@ -789,6 +792,7 @@ def model_fwd_intervention(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
@@ -859,6 +863,23 @@ def model_gradient(
 
     Function parameter defaults (from YAML):
         logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+    """
+    ...
+
+def weight_equivalence_check(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
+
+    Input Schema:
+        recipe (object)
+        we_rtol (float32)
+        we_atol (float32)
+
+    Output Schema:
+        we_max_abs_diff (float32) (required)
+        we_max_abs (float32) (required)
+        we_equivalent (bool) (required)
     """
     ...
 
