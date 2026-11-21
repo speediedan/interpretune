@@ -1,0 +1,84 @@
+# Derived key: kug_lrsd.llama3_2_3b.core
+# The Knowing-Using Gap's LRSD recipe on Llama-3.2-3B-Instruct, the paper's second model family (Dai et al.): the
+# recipe of `kug_lrsd.qwen2_5_1_5b.core` (LoRA r 8, alpha 32, dropout 0.05 on every block's projections over fp32
+# weights, AdamW at 1e-4, batch 10, gradient norm clipped to 1), with the paper's Llama fact seed 1340 (1,000 facts,
+# 427 unique two-hop questions). Llama-3.2-3B has 28 blocks, as Qwen2.5-1.5B has, so the layer pair is again block
+# 14's head-entity state toward block 21's (0.5L and 0.75L). Llama 3.2's chat template stamps the current date into
+# its system header; the prompt pins it to the authors' date so that every run sees the same prompt. The checkpoint is
+# gated: set the environment variable named by `os_env_model_auth_key` to a token with access.
+task_variant: kug_lrsd
+model: llama3_2_3b
+composition: []
+extensions: []
+descriptor: null
+reg_info:
+  model_src_key: llama3_2_3b
+  model_cfg_key: kug_lrsd
+  adapter_combinations:
+    - core
+  description: Knowing-Using Gap LRSD recipe (LoRA, CE plus layer-wise self-distillation) on Llama-3.2-3B-Instruct
+shared_config:
+  task_name: knowing_using
+  os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+  model_name_or_path: meta-llama/Llama-3.2-3B-Instruct
+  tokenizer_kwargs:
+    revision: 0cb88a4f764b7a12671c53f0838cd831a0843b95
+registered_cfg:
+  datamodule_cfg:
+    class_path: knowing_using.KUGDataModuleConfig
+    init_args:
+      data_repo_id: speediedan/knowing-using-gap-chaining
+      data_filename: chaining_tasks.json
+      data_revision: a1bb9cee0bb47bc956df037a8e013a4350d127db
+      data_path: null
+      fact_seed: 1340
+      n_memorization: 1000
+      prompt_cfg:
+        class_path: knowing_using.KUGPromptConfig
+        init_args:
+          # the authors' pinned date (their `CHAT_DATE`), in place of the template's `strftime_now`
+          chat_template_kwargs:
+            date_string: 19 Aug 2026
+      train_batch_size: 10
+      eval_batch_size: 64
+  module_cfg:
+    class_path: knowing_using.KUGLRSDConfig
+    init_args:
+      lrsd_lambda: 1.0
+      lrsd_student_layer: 14
+      lrsd_teacher_layer: 21
+      grad_clip_norm: 1.0
+      generative_step_cfg:
+        class_path: interpretune.config.mixins.GenerativeClassificationConfig
+        init_args:
+          lm_generation_cfg:
+            class_path: interpretune.config.mixins.HFGenerationConfig
+            init_args:
+              # greedy; every other generation setting stays the checkpoint's own
+              model_config:
+                do_sample: false
+                max_new_tokens: 64
+                use_cache: true
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cuda
+            dtype: float32
+            revision: 0cb88a4f764b7a12671c53f0838cd831a0843b95
+          model_head: transformers.LlamaForCausalLM
+          lora_cfg:
+            r: 8
+            lora_alpha: 32
+            lora_dropout: 0.05
+            target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+            task_type: CAUSAL_LM
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          lr: 1.0e-04
+          weight_decay: 0.01
+  datamodule_cls:
+    class_path: knowing_using.KUGDataModule
+  module_cls:
+    class_path: knowing_using.KUGModule
