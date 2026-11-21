@@ -247,7 +247,8 @@ class TestStreamedReadCost:
             def _strip_protocol(cls, path):
                 path = str(path)
                 path = path[len("itcountfs://") :] if path.startswith("itcountfs://") else path
-                return "/" + path.lstrip("/")
+                # a POSIX path can arrive with its leading slash stripped; a Windows one starts with its drive
+                return path if os.name == "nt" else "/" + path.lstrip("/")
 
             def info(self, path, **kwargs):
                 path = self._strip_protocol(path)
@@ -287,7 +288,7 @@ class TestStreamedReadCost:
         stats.update(requests=0, bytes=0)
         stream = load_dataset(
             "parquet",
-            data_files={"validation": [f"itcountfs://{path}"]},
+            data_files={"validation": [f"itcountfs://{path.as_posix()}"]},
             split="validation",
             streaming=True,
             **load_kwargs,
@@ -301,7 +302,7 @@ class TestStreamedReadCost:
         size = grouped_parquet.stat().st_size
         counting_fs.update(requests=0, bytes=0)
         stream = _stream_parquet(
-            [f"itcountfs://{grouped_parquet}"],
+            [f"itcountfs://{grouped_parquet.as_posix()}"],
             "validation",
             columns=None,
             storage_options={"itcountfs": {"block_size": STREAMING_BLOCK_SIZE}},
@@ -321,7 +322,7 @@ class TestStreamedReadCost:
 
         counting_fs.update(requests=0, bytes=0)
         stream = _stream_parquet(
-            [f"itcountfs://{grouped_parquet}"],
+            [f"itcountfs://{grouped_parquet.as_posix()}"],
             "validation",
             columns=["label"],
             storage_options={"itcountfs": {"block_size": STREAMING_BLOCK_SIZE}},
