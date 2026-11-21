@@ -13,6 +13,7 @@ latent coordinates (three here), so a block names a small subspace rather than o
 
 from __future__ import annotations
 
+import types
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,13 +36,23 @@ def block_topk(norms: torch.Tensor, l0: int) -> torch.Tensor:
 class BlockSparseFeaturizer(nn.Module):
     """A vanilla block-sparse featurizer with its input normalization, as #708 saved it.
 
+    It is also a latent model a model backend can attach (``latent_model_handles=[featurizer]``) at
+    ``blocks.{layer}.hook_resid_post``, so an edit of one block (``block_edit_spec``) runs natively at that hook's
+    latent sub-hook. Its latents are the gated codes, flat (``(..., blocks * block size)``), and with the error term an
+    attached pass with no edit is the clean pass. The decoder is affine, so an edit of a block's codes moves the
+    activation by exactly that block's decoded change, at the activation's own scale.
+
     Args:
         state: The checkpoint dict: ``state_dict`` (``W_enc``, ``b_enc``, ``W_dec``), ``group_size``, ``n_groups``,
             ``l0``, ``mean``, ``scale``, ``layer`` and ``space``.
+        io_dtype: The dtype of the model's activations, which :meth:`decode` writes back.
     """
 
-    def __init__(self, state: dict[str, Any]) -> None:
+    use_error_term = True
+
+    def __init__(self, state: dict[str, Any], io_dtype: torch.dtype = torch.float32) -> None:
         super().__init__()
+        self.io_dtype = io_dtype
         weights = state["state_dict"]
         self.W_enc = nn.Parameter(weights["W_enc"].float())
         self.b_enc = nn.Parameter(weights["b_enc"].float())
@@ -56,19 +67,30 @@ class BlockSparseFeaturizer(nn.Module):
                 f" latent coordinates; its encoder has {self.W_enc.shape[1]} and its decoder {self.W_dec.shape[0]}"
             )
 
+    @property
+    def cfg(self) -> Any:
+        """The hook the featurizer reads and writes, where a model backend splices it."""
+        return types.SimpleNamespace(metadata=types.SimpleNamespace(hook_name=f"blocks.{self.layer}.hook_resid_post"))
+
     def codes(self, x: torch.Tensor) -> torch.Tensor:
-        """Every block's code before the top-:math:`L_0` gate, ``(items, blocks, block size)``."""
+        """Every block's code before the top-:math:`L_0` gate, ``(..., blocks, block size)``."""
         a = ((x.float() - self.mean) / self.scale) @ self.W_enc + self.b_enc
         return a.view(*a.shape[:-1], self.n_groups, self.group_size)
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """The gated codes: the :math:`L_0` blocks of largest norm kept, the rest zero."""
+    def block_codes(self, x: torch.Tensor) -> torch.Tensor:
+        """The gated codes by block, ``(..., blocks, block size)``: the :math:`L_0` blocks of largest norm kept,
+        the rest zero."""
         a = self.codes(x)
         return a * block_topk(a.norm(dim=-1), self.l0).unsqueeze(-1)
 
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """The gated codes, flat: ``(..., blocks * block size)``, block :math:`b` at coordinates :math:`bs` to
+        :math:`bs + s - 1`."""
+        return self.block_codes(x).flatten(-2)
+
     def decode(self, codes: torch.Tensor) -> torch.Tensor:
-        """The reconstruction at the activation's own scale, from ``(..., blocks, block size)`` codes."""
-        return (codes.flatten(-2) @ self.W_dec) * self.scale + self.mean
+        """The reconstruction at the activation's own scale and dtype, from flat codes."""
+        return ((codes.float() @ self.W_dec) * self.scale + self.mean).to(self.io_dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decode(self.encode(x))
@@ -90,16 +112,75 @@ class BlockSparseFeaturizer(nn.Module):
 
 
 def load_featurizer(
-    space: str, *, repo_id: str = REPO, revision: str = REVISION, device: str | torch.device = "cpu"
+    space: str,
+    *,
+    repo_id: str = REPO,
+    revision: str = REVISION,
+    device: str | torch.device = "cpu",
+    io_dtype: torch.dtype = torch.float32,
 ) -> BlockSparseFeaturizer:
-    """Download one of #708's featurizers (``space`` is ``resid`` or ``jspace``) at a pinned revision."""
+    """Download one of #708's featurizers (``space`` is ``resid`` or ``jspace``) at a pinned revision; ``io_dtype``
+    is the dtype of the model's activations, which an attached featurizer writes back."""
     from huggingface_hub import hf_hub_download
 
     if space not in SPACES:
         raise ValueError(f"#708 trained featurizers in {SPACES}, not {space!r}")
     path = hf_hub_download(repo_id, f"bsf_{space}_L17_block3.pt", revision=revision)
     state = torch.load(path, map_location="cpu", weights_only=False)
-    return BlockSparseFeaturizer(state).to(device).eval()
+    return BlockSparseFeaturizer(state, io_dtype=io_dtype).to(device).eval()
+
+
+class KeptError(nn.Module):
+    r"""A featurizer spliced in with its own reconstruction error kept, to tune a few of its blocks.
+
+    Attached with ``replace`` (:func:`~interpretune.tuning.latents.attach_latent_model`), it writes
+    :math:`x + f_\theta(x) - f_0(x)`, where :math:`f_\theta` is the featurizer with its adapters and :math:`f_0` the
+    featurizer as loaded. While the adapters are zero the activation passes through unchanged, and a trained adapter
+    moves it by exactly the change it makes to the reconstruction. ``replace`` alone would run the model on the
+    reconstruction, and ``replace_with_error`` keeps the activation's value whatever the adapters learn (its error term
+    is detached from the same reconstruction), so neither tunes a few blocks of a featurizer that stays as it is.
+    """
+
+    def __init__(self, featurizer: BlockSparseFeaturizer) -> None:
+        super().__init__()
+        self.featurizer = featurizer
+        self.layer, self.group_size = featurizer.layer, featurizer.group_size
+        # the loaded weights, as buffers: not parameters, so an adapter neither resolves nor trains them
+        for leaf in ("W_enc", "b_enc", "W_dec"):
+            self.register_buffer(f"{leaf}_0", getattr(featurizer, leaf).detach().clone(), persistent=False)
+        self._x: torch.Tensor | None = None
+
+    @property
+    def W_dec(self) -> torch.Tensor:
+        """The featurizer's decoder rows, adapters included."""
+        return self.featurizer.W_dec
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        self._x = x
+        return self.featurizer.encode(x)
+
+    def decode(self, codes: torch.Tensor) -> torch.Tensor:
+        x, self._x = self._x, None
+        if x is None:
+            raise RuntimeError("KeptError decodes the codes of the activation it last encoded; encode first")
+        f = self.featurizer
+        with torch.no_grad():
+            a = ((x.float() - f.mean) / f.scale) @ self.W_enc_0 + self.b_enc_0
+            a = a.view(*a.shape[:-1], f.n_groups, f.group_size)
+            a = a * block_topk(a.norm(dim=-1), f.l0).unsqueeze(-1)
+            loaded = (a.flatten(-2) @ self.W_dec_0) * f.scale
+        tuned = (codes.float() @ f.W_dec) * f.scale
+        return (x.float() + tuned - loaded).to(x.dtype)
+
+    def binding(self, name: str) -> Any:
+        """The spliced featurizer as a latent binding, for
+        :func:`~interpretune.tuning.weights.attach_feature_adapter`:
+
+        ``features:<name> & layers:<layer> & units:[b]`` selects block ``b``.
+        """
+        from interpretune.analysis.venngram import LatentBinding
+
+        return LatentBinding(name, self.layer, "hook_resid_post", self, self.featurizer.W_dec.detach(), self.group_size)
 
 
 @dataclass
