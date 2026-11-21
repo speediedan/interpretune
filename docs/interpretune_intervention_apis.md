@@ -215,8 +215,12 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     capture. SAE, transcoder and block-sparse nodes are placed; a block-sparse node's vector value is the block's
     contiguous columns. One latent model is attached at a hook, so a stage's nodes share one space, and cross-layer
     transcoder nodes are refused by name. The positions index the sequence the backend runs, so pass one unpadded
-    prompt. `venngram_subsets` declares what this path applies, and `check_recipe` checks graph ops against it. A
-    restriction has no native form at a latent sub-hook yet and is refused here too.
+    prompt. A restriction (`outside: {set: <universe>, tokens: prompt}`) writes its dose (0 ablates) on every member
+    of a finite feature set of the book at every prompt position, except the coordinates the graph places, again one
+    spec per layer and position; the universe names the graph's space with explicit layers, and lists its features or
+    names the whole space (the latent model's width). Composed with a `replace` on the same graph, the sub-hook carries
+    the subset alone. `venngram_subsets` declares what this path applies, and `check_recipe` checks graph ops against
+    it.
 
   What each recipe op is honoured as, per surface and target:
 
@@ -241,8 +245,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   venngram's conformance checker reads both without Interpretune installed. Interventions on sets of units named by
   address, composed with set algebra, are the next section's subject
   ([unit-set interventions](#unit-set-interventions-by-address)); applying attribution-graph subsets from one context
-  in another, on both surfaces, is tracked in [#966](https://github.com/speediedan/interpretune/issues/966) (a
-  restriction to the subset is the open part).
+  in another, on both surfaces, is tracked in [#966](https://github.com/speediedan/interpretune/issues/966).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight

@@ -43,8 +43,9 @@ compute them from. :func:`venngram_feature_subsets` derives, from the same recor
 path applies (venngram's ``circuits.subsets`` section): ``replace``, and ``add`` with a clean capture, on transcoder
 and CLT nodes with scalar values, by any anchor, through the transforms that act on each value alone, and no
 restriction. :func:`venngram_subsets` is the model-backend surface's graph-subset declaration, derived from
-:func:`venngram_support`'s record: ``replace`` and ``add`` at an attached latent model's sub-hook, on SAE, transcoder
-and block-sparse nodes with scalar or vector values, where feature targets and explicit positions are declared.
+:func:`venngram_support`'s record: ``replace`` and ``add`` at an attached latent model's sub-hook, and a restriction
+(the complement in a finite feature set), on SAE, transcoder and block-sparse nodes with scalar or vector values, where
+feature targets and explicit positions are declared.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -256,7 +257,7 @@ def _latent_subsets(support: Any) -> Any:
         featurizers=GRAPH_LATENT_FEATURIZERS,
         values=frozenset({"scalar", "vector"}),
         transforms=GRAPH_TUPLE_TRANSFORMS,
-        complement=False,
+        complement=bool(places and "replace" in support.ops),
         sites=None if support.sites is None or callable(support.sites) else frozenset(support.sites),
     )
 
