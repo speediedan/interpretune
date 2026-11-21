@@ -117,7 +117,8 @@ the envelope's commit, through `datasets` streaming. It differs from a pulled st
   32 MB file, where the default block would transfer about 5.4 MB.
 
 Rows decode exactly as a full pull decodes them: the same formatter, the same `col_cfg`, and graph columns hydrate
-through the store's analysis backend.
+through the store's analysis backend. The `shared_analysis_roundtrip` notebook streams the published demo store,
+`speediedan/ct-concept-steering-demo`, which is public, so its streamed read needs no token.
 
 **How far a read reaches depends on row groups.** A Parquet file is read in row groups, and the stream reads a group
 only when a read reaches it. `push_analysis_store` writes row groups of about 16 MB uncompressed
