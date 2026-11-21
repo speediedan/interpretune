@@ -3,7 +3,7 @@ name: regen-ci-req-report (report-only)
 on:
   workflow_dispatch:
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
