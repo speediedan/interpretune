@@ -61,6 +61,15 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+- `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
+  attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
+  a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block
+  $b$ of a model with blocks of $s$ coordinates is coordinates $bs$ to $bs + s - 1$, and each tensor with a latent axis
+  takes a unit delta over those coordinates' slices: the encoder's rows and bias, and the decoder's rows. The deltas
+  take `adapter:<name>`, and the rest of the latent model keeps its own role, so a frozen (`artifact`) featurizer can
+  be tuned at a few blocks only. Each tensor's latent axis is found by its length; a featurizer as wide as its site
+  names the tensors to adapt and their axes in `axes`
+  ([#868](https://github.com/speediedan/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
   token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
   weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
