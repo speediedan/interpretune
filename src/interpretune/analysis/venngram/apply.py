@@ -58,6 +58,9 @@ node's value (its column, or its delta from a baseline column), and ``add`` sets
 it. Only transcoder and CLT nodes (one feature index, a scalar value) are placed. A restriction (``outside``), which
 ablates every member of a universe the graph does not place, is refused here: as tuples it would enumerate each one,
 at every position. The model-backend surface does not place graph nodes yet, so :func:`op_refusal` refuses them.
+:func:`graph_subset_overlap` places a subset the same way in the prompt of another attribution graph and reports which
+of its nodes that graph selects and what share of the graph's influence they carry, a measure of how much of the
+reasoning the subset describes transferred.
 
 **Gradient-targeted ops** are unit- or feature-targeted ops whose target set addresses ``of: grad``: the gradient with
 respect to those units of the activation at the site. ``recipe_interventions(..., flow="grad")`` translates them into
@@ -74,8 +77,10 @@ skipped the check still cannot get a silently narrowed treatment.
 
 from __future__ import annotations
 
+import importlib
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -262,6 +267,101 @@ def _graph_targets(
             v = _GRAPH_TRANSFORMS[transform.name](v, transform.params)
         targets.append((placement.layer, placement.position, placement.index[0], v))
     return targets
+
+
+@dataclass(frozen=True)
+class GraphSubsetOverlap:
+    """How much of a graph subset an attribution graph of another prompt contains
+    (:func:`graph_subset_overlap`)."""
+
+    placed: tuple[tuple[str, int, int, int], ...]
+    """``(node, layer, position, feature)`` for each placement of the subset's feature nodes in the graph's
+    prompt."""
+    matched: Mapping[tuple[str, int, int, int], float]
+    """Each placement that is a selected feature of the graph, with its activation there."""
+    node_overlap: float
+    """The fraction of placements the graph selects."""
+    recovered_influence: float | None
+    """The matched features' share of the graph's total feature influence, when the influence is given."""
+
+
+def graph_subset_overlap(
+    subset: Any,
+    graph: Any,
+    *,
+    token_ids: Sequence[int] | None = None,
+    tokenizer: Mapping[str, str] | None = None,
+    influence: Any | None = None,
+    sites: Sequence[str] | None = None,
+) -> GraphSubsetOverlap:
+    """Compare a graph subset with an attribution graph of another prompt: which of its feature nodes, placed by their
+    anchors in that prompt, the graph selects, and how much of the graph's influence they carry.
+
+    After a subset is applied in a new prompt, attributing that prompt and comparing its graph with the subset measures
+    how much of the reasoning the subset describes the new prompt's graph contains. A placement matches when the graph
+    selects a feature at its layer, position and feature index.
+
+    Args:
+        subset: A venngram ``GraphSubset`` (:func:`~interpretune.analysis.venngram.graphs.export_graph_subset`
+            returns one), or a ``graph_subset`` document.
+        graph: The circuit-tracer ``Graph`` of the destination prompt.
+        token_ids: The destination prompt's unpadded input ids the anchors resolve in; the graph's ``input_tokens``
+            when not given.
+        tokenizer: ``{id, revision}`` of the destination tokenizer, which a ``token_match`` anchor needs to be the one
+            the subset's source pins.
+        influence: One influence score per selected feature of ``graph``, in its order (the analysis backend's
+            ``compute_node_influence_scores``), for ``recovered_influence``.
+        sites: Only the subset's nodes at these sites (all of them when ``None``).
+
+    Returns:
+        A :class:`GraphSubsetOverlap`.
+
+    Raises:
+        MisconfigurationException: If the subset is malformed or a node does not resolve in the prompt (the whole
+            comparison is refused, as a graph target's placement is), a node lies in a space whose units are not one
+            feature with a scalar value, or ``influence`` is not one score per selected feature.
+    """
+    from venngram.errors import AddressError
+
+    graphs_mod = importlib.import_module("venngram.graphs")
+    try:
+        if isinstance(subset, Mapping):
+            subset = graphs_mod.GraphSubset.from_mapping(subset, source="the compared graph subset")
+        unsupported = sorted(
+            name for name, space in subset.spaces.items() if len(space.index) != 1 or space.value_shape
+        )
+        if unsupported:
+            raise MisconfigurationException(
+                f"spaces {unsupported} address a unit by more than one index or carry a vector value, which a"
+                " circuit-tracer graph's features do not"
+            )
+        prompt = graph.input_tokens.detach().cpu().flatten().tolist() if token_ids is None else token_ids
+        plan = subset.plan([int(t) for t in prompt], sites=sites, tokenizer=tokenizer)
+    except AddressError as err:
+        raise MisconfigurationException(str(err)) from err
+    selected = graph.selected_features.detach().cpu()
+    rows = {
+        tuple(coordinate): i
+        for i, coordinate in enumerate(graph.active_features.detach().cpu().index_select(0, selected).tolist())
+    }
+    activations = graph.activation_values.detach().cpu().float().tolist()
+    placed = tuple((p.node, p.layer, p.position, p.index[0]) for p in plan)
+    hits = {key: rows[key[1:]] for key in placed if key[1:] in rows}
+    recovered = None
+    if influence is not None:
+        scores = torch.as_tensor(influence).detach().cpu().float().flatten()
+        if scores.numel() != len(rows):
+            raise MisconfigurationException(
+                f"`influence` has {scores.numel()} scores; it needs one per selected feature of the graph ({len(rows)})"
+            )
+        total = float(scores.sum())
+        recovered = float(scores[sorted(set(hits.values()))].sum()) / total if total else 0.0
+    return GraphSubsetOverlap(
+        placed=placed,
+        matched={key: activations[row] for key, row in hits.items()},
+        node_overlap=len(hits) / len(placed),
+        recovered_influence=recovered,
+    )
 
 
 def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
