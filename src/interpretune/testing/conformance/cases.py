@@ -1878,8 +1878,8 @@ class ModelBackendConformance:
                 head_layers=[0],
             )
 
-        if suite.module.replacement_model.backend != "nnsight":
-            with pytest.raises(ValueError, match="nnsight backend only"):
+        if suite.module.replacement_model.backend not in ("nnsight", "interp_engine"):
+            with pytest.raises(ValueError, match="nnsight and interp_engine backends only"):
                 report()
             return
         shares = report()
