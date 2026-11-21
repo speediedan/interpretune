@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     # requirement of `import interpretune.config`, which reaches this module. Same pattern
     # protocol.py already uses for exactly this name.
     from sae_lens.config import HfDataset
+
+    from interpretune.hub.subject import StoreSubject
 else:
     HfDataset = None
 from datasets import Dataset, Features, Array2D, Value, Array3D, load_dataset, Column
@@ -507,6 +509,9 @@ class AnalysisStore:
         # is nothing to record (a store loaded from disk, or assembled outside the op path) -- deliberately
         # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted.
         self.op_provenance: tuple = ()
+        # What the columns were computed on (an `interpretune.hub.subject.StoreSubject`), stamped at the same
+        # moment and for the same reason; None when the store did not come from a module.
+        self.subject: StoreSubject | None = None
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 

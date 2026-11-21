@@ -216,6 +216,7 @@ areas:
       - src/interpretune/runners/analysis.py
       - src/interpretune/hub/opcollections.py
       - src/interpretune/hub/artifacts.py
+      - src/interpretune/hub/subject.py
       - src/interpretune/hub/hookmaps.py
     tests:
       - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
@@ -357,6 +358,14 @@ areas:
       - src/it_examples/notebooks/publish/neuronpedia_example/**
     tests:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  nb_neuron_communities:
+    # the Llama-3.1-8B replication; its test is optional-tier (a gated 8B model and network prompt sources), so a
+    # pull-request gate selects it without running it and the optional tier runs it
+    paths:
+      - src/it_examples/notebooks/publish/neuron_communities/**
+      - src/it_examples/utils/neuron_communities_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_neuron_communities_notebook
   sae_lens_notebooks:
     paths:
       - src/it_examples/notebooks/publish/saelens_adapter_example/**

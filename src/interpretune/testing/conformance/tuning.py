@@ -19,7 +19,7 @@ case applies fails. Each case builds a fresh session, because cases change param
 from __future__ import annotations
 
 import gc
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Any, ClassVar
 
@@ -54,6 +54,69 @@ def tunable_view_of(module: Any) -> Any:
     view = getattr(module, VIEW_ATTR, None)
     assert view is not None, f"{type(module).__name__} has no `{VIEW_ATTR}` attached after model init."
     return view
+
+
+def wrapped_model_names(view: Any) -> dict[str, str]:
+    """Each parameter of ``view``'s root mapped to its name in the model the composition wraps, so the selections
+    of compositions of one model compare (#875).
+
+    A TransformerLens view names each tensor the bridge wraps by its original name (the bridge rewires the wrapped
+    model in place), and a view whose map is mounted at a submodule (``model`` on a core/HF composition, ``hf_model``
+    on an nnsight one) drops that mount from the names under it. Every other tensor (a latent model or intervention
+    registered beside the model) keeps its own name, which is the same on every composition.
+    """
+    root = view.root
+    bridge = getattr(view, "bridge", None)
+    if bridge is not None:
+        from interpretune.adapters.transformer_lens.tunable_view import _wrapped_tensor_names
+
+        originals = _wrapped_tensor_names(bridge)
+        return {n: originals.get(id(p)) or n for n, p in root.named_parameters()}
+    structure = view.structure() if callable(getattr(view, "structure", None)) else None
+    mount = getattr(structure, "mount", None)
+    under = f"{mount}." if mount else None
+    return {n: n.removeprefix(under) if under and n.startswith(under) else n for n, _ in root.named_parameters()}
+
+
+def selection_by_wrapped_name(view: Any, address: str) -> frozenset[str]:
+    """The parameters ``address`` selects on ``view``, by their names in the wrapped model
+    (:func:`wrapped_model_names`), resolved on the view's own names, roles and structure."""
+    from venngram.resolve import ParamSpace, select
+    from venngram.tuning import as_view
+
+    names = wrapped_model_names(view)
+    structure = view.structure() if callable(getattr(view, "structure", None)) else None
+    space = ParamSpace(list(names), roles=dict(as_view(view).roles()), structure=structure)
+    return frozenset(names[n] for n in select(address, space))
+
+
+def assert_same_selection(views: dict[str, Any], addresses: Sequence[str]) -> None:
+    """Assert that each of ``addresses`` selects the same tensors of the wrapped model on every view in ``views``
+    (compositions of one model, by backend), and resolves on each (#875).
+
+    Raises:
+        AssertionError: Naming the address and each backend it does not resolve on, with venngram's reason (an
+            address that matches no tensor does not resolve), or each backend's selection that differs from the
+            first's.
+    """
+    from venngram.errors import AddressUnresolvable
+
+    for address in addresses:
+        selected: dict[str, frozenset[str]] = {}
+        unresolved: dict[str, str] = {}
+        for backend, view in views.items():
+            try:
+                selected[backend] = selection_by_wrapped_name(view, address)
+            except AddressUnresolvable as err:
+                unresolved[backend] = str(err)
+        assert not unresolved, f"`{address}` does not resolve on {', '.join(unresolved)}: {unresolved}"
+        (first, reference), *rest = selected.items()
+        differ = {
+            b: {"only here": sorted(names - reference), f"only on {first}": sorted(reference - names)}
+            for b, names in rest
+            if names != reference
+        }
+        assert not differ, f"`{address}` selects different tensors across backends: {differ}"
 
 
 class TuningConformance:

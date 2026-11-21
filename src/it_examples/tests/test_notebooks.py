@@ -578,6 +578,31 @@ def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, 
     _cleanup_notebook_artifacts()
 
 
+# The neuron-communities replication loads Llama-3.1-8B in bf16 (gated; its weights persist on the agent's cache mount
+# from the first run, as tests/gpu_ci/hf_warm_manifest_gpu.yaml explains) and streams FineWeb-Edu prompts and the
+# release's community records from the network, so it runs in the optional tier rather than a pull-request phase.
+# Measured with tests/gpu_ci/calibrate.py: need 17.70 GiB (RTX 4090, CUDA), declared at the calibrator's recommendation.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=20.5, optional=True)
+def test_neuron_communities_notebook(tmp_path: Path):
+    """Execute the neuron-communities notebook on a few prompts and check its controls ran and the community is
+    necessary, not sufficient to ablate, and recovered by attribution."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "neuron_communities" / "neuron_communities_replication.ipynb",
+        parameters={"n_prompts": 16, "table1_communities": ["187321"], "random_draws": 1, "cache_dir": str(tmp_path)},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "captured vs hand-written gradients" in text, "the gradient control did not run"
+    _cleanup_notebook_artifacts()
+
+
 # The notebook's own defaults: Qwen3.5-4B through the NNsight composition with no transcoders, read through both the
 # J-lens and J++. Both defects the default path first met (a module class listed twice among the composed bases, and a
 # multimodal processor needing the torchvision the pins exclude) passed every Gemma case. Measured with
@@ -953,6 +978,7 @@ def test_notebook_discovery():
         "gradient_readouts/gradient_readouts.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
+        "neuron_communities/neuron_communities_replication.ipynb",
         "quickstart/cpu_quickstart.ipynb",
         "runners/runner_flexibility_demo.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",

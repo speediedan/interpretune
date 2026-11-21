@@ -189,7 +189,12 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
     feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
     scalar) are not yet supported on this path and are refused by name
-    ([#966](https://github.com/speediedan/interpretune/issues/966)).
+    ([#966](https://github.com/speediedan/interpretune/issues/966)). `export_graph_subset` writes such a document
+    from a circuit-tracer attribution graph, pruned (`build_pruned_graph`) or whole: each selected feature is a node at
+    its source layer, position and feature index with its activation, anchored `from_end` by default (or `absolute`,
+    `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
+    the source prompt, attribution targets and pruning settings are its provenance. `.write(path)` writes it, its
+    table in a sidecar when it is large.
 
   What each recipe op is honoured as, per surface and target:
 

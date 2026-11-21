@@ -9,4 +9,17 @@ tensors take the `adapter:<name>` role from venngram's overlay maps (see
 [declaring a view](tuning.md#declaring-a-view)); every other parameter is `base` unless `tunable_roles()`
 says otherwise.
 
+On GPT-2, for example, the top three blocks' attention is
+`model.transformer.h.(9|10|11).attn.*` by name, and by address:
+
+```yaml
+0:
+  params:
+  - layers:-3: & component:attn.*
+```
+
+The address selects the same tensors on the [nnsight](tuning_nnsight.md) and
+[TransformerLens](tuning_transformer_lens.md) compositions of the model, whose names differ
+([conformance](tuning.md#conformance) checks it).
+
 Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
