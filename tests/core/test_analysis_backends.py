@@ -2006,6 +2006,37 @@ class TestGradientReadouts:
             torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
 
     @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_no_interventions_capture_the_gradients_in_one_pass(self, backend_name, hf, request, monkeypatch):
+        """Gradient capture alone (gradient-times-activation attribution): an empty payload returns the reference
+        gradients as both pre and post from one traced backward, where an edit takes two (the counter's
+        control)."""
+        import interpretune.adapters.transformer_lens.backends as tl_backends
+
+        readout = self._readouts()["logit_difference"]
+        points = [self.EDIT, self.CAPTURE]
+        clean = hf.gradients(self.IDS, readout, observe=points)
+        backend, model, batch = self._backend(backend_name, request)
+        owner, attr = (
+            (tl_backends, "_tl_backward") if backend_name == "transformer_lens" else (backend, "_traced_backward")
+        )
+        traced = getattr(owner, attr)
+        passes = []
+
+        def counted(*args, **kwargs):
+            passes.append(1)
+            return traced(*args, **kwargs)
+
+        monkeypatch.setattr(owner, attr, counted)
+        pre, post, _ = backend.bwd_w_intervention(model, batch, {}, readout, capture=points)
+        assert len(passes) == 1, f"an empty payload ran {len(passes)} traced backward passes"
+        for point in points:
+            torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(post[point], pre[point])
+        passes.clear()
+        backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        assert len(passes) == 2, f"an edit ran {len(passes)} traced backward passes, so the counter does not count them"
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
     def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
         """A treatment's readout, declared as a logit difference plus a block-5 projection, executes as the
         callable readout that writes the same scalar by hand (the reference test above checks that form)."""

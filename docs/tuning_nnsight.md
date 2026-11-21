@@ -10,6 +10,10 @@ at `hf_model`, reach its parameters. nnsight builds the model through its own co
 executing remotely (NDIF) has no local weights to tune, and one built with `dispatch=False` keeps its weights on the
 meta device; both are refused, each with its reason.
 
+The view's names are the module's own, under `hf_model` (`hf_model.transformer.h.9.attn.c_attn.weight` on GPT-2), and
+the map places them, so an address written for the core/HF or TransformerLens composition of the same model selects the
+same tensors here: `layers:-3: & component:attn.*` is the top three blocks' attention on each.
+
 The paths to fuller local nnsight tuning, such as tuning applied through nnsight's own tracing, are tracked in
 [interpretune#814](https://github.com/speediedan/interpretune/issues/814).
 

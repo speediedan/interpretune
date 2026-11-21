@@ -315,6 +315,25 @@ def test_profiler_cfg_merges_into_module_cfg():
     assert legacy["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
 
 
+def test_profiler_cfg_summary_options_from_the_cli():
+    """The summary options (finetuning-scheduler's ``ExtendedPyTorchProfiler`` names) reach the module config."""
+    summary = {"filename": "prof", "sort_by_key": "self_cpu_time_total", "row_limit": 50, "max_name_column_width": 100}
+    parser = _session_mixin_parser()
+    config = parser.parse_args(
+        [
+            "--profiler_cfg.which",
+            "pytorch",
+            "--profiler_cfg.pytorch_profiler_cfg",
+            '{"activities": ["cpu"], "schedule": {"wait": 1, "warmup": 1, "active": 2}, '
+            '"filename": "prof", "sort_by_key": "self_cpu_time_total", "row_limit": 50, "max_name_column_width": 100}',
+        ]
+    )
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {"registered_cfg": {"module_cfg": {}}})
+    merged = mapping["registered_cfg"]["module_cfg"]["profiler_cfg"]
+    assert {k: merged["pytorch_profiler_cfg"][k] for k in summary} == summary
+    assert merged["pytorch_profiler_cfg"]["schedule"] == {"wait": 1, "warmup": 1, "active": 2}
+
+
 @RunIf(lightning=True)
 def test_lightning_cli_accepts_trainer_profiler(clean_cli_env, capsys):
     """The Lightning side reuses native --trainer.profiler instead of duplicating it (#11).

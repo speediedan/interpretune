@@ -150,8 +150,8 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
 ## Current surfaces
 
 - `ModelBackend.fwd_w_intervention(...)` is the model-level API for interventions on hook tensors,
-  implemented with the same maths by both the TransformerLens and NNsight model backends at either position
-  scope, `last_token` or `all_positions` (including
+  implemented with the same maths by both the TransformerLens and NNsight model backends at each declared position
+  scope, `last_token`, `all_positions` or `positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
   the ops, targets and position scopes; an op declares the tensor ops it needs in `required_ops` (beside any
   composition ops it depends on) and the scopes in `required_position_scopes`, and the gate compares the two before
@@ -189,7 +189,12 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
     feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
     scalar) are not yet supported on this path and are refused by name
-    ([#966](https://github.com/speediedan/interpretune/issues/966)).
+    ([#966](https://github.com/speediedan/interpretune/issues/966)). `export_graph_subset` writes such a document
+    from a circuit-tracer attribution graph, pruned (`build_pruned_graph`) or whole: each selected feature is a node at
+    its source layer, position and feature index with its activation, anchored `from_end` by default (or `absolute`,
+    `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
+    the source prompt, attribution targets and pruning settings are its provenance. `.write(path)` writes it, its
+    table in a sidecar when it is large.
 
   What each recipe op is honoured as, per surface and target:
 
@@ -883,3 +888,36 @@ Cross-backend parity for intervention behavior should follow the same resource-a
 - prefer shared extraction/caching helpers from `tests/analysis_resource_utils.py`
 - prefer focused parity comparisons over blanket standalone isolation
 - reserve standalone-heavy GPU coverage for cases where backend/runtime constraints actually require it
+
+
+## Explicit position sets
+
+A hook payload can set `position_scope: "positions"` and `positions: [9, 10]` to edit selected columns of the
+activation tensor. Indices are distinct, non-negative and zero-based in the **padded batch tensor**. Left padding
+is included in that coordinate system: an index never shifts according to an example's attention mask. To refer
+to real tokens in differently padded examples, prepare batches whose selected columns have the intended meaning.
+
+The intervention tensor has one leading operand row for each listed position, in the same order. For example:
+
+```python
+payload = {
+    "blocks.18.hook_resid_post": {
+        "op": "add",
+        "position_scope": "positions",
+        "positions": [9, 10],
+        "intervention_tensor": torch.stack([city_delta, answer_delta]),
+    }
+}
+it.model_fwd_intervention(..., interventions=payload)
+```
+
+The remaining operand axes have their usual meaning. A patch therefore supplies one pair of lens vectors per
+position; a rejection supplies one complete span per position. Even a shared operand is stacked explicitly, so a
+position axis cannot be mistaken for a basis axis. Position counts, operand shapes and bounds are checked before
+any position is changed. The same payload can edit gradients through `model_bwd_intervention` on a backend that
+declares that flow. A backend without `positions` in its support record refuses the payload.
+
+Venngram recipes with `tokens: {positions: [...]}` translate to this scope. A recipe's operand is shared over its
+token set, so its translator repeats the operand rows explicitly; different operands can be expressed as separate
+stages. A raw hook payload can carry different rows in one spec. The op shorthand names the indices through
+`intervention_positions` alongside `intervention_position_scope`.

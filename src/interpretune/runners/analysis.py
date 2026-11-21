@@ -52,7 +52,7 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "as_generator": True}
-    with profiling(module) as prof:
+    with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
             for batch_idx, batch in tqdm(enumerate(dataloader)):
