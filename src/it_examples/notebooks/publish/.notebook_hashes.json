@@ -35,7 +35,7 @@
   "notebooks/dev/gradient_readouts/gradient_readouts.ipynb": "ddbd2da68465b55c71c65e22d10bf7211e3bac5fbd5381147b74d8a0cbf8d135",
   "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "3431e19ac03346eba77ba0abc4efcab5d47f1221d0cd3eac3f248a2c9c9ffaa7",
   "notebooks/dev/neuron_communities/neuron_communities_replication.ipynb": "58287965e50fcce7a88af1503866a6457e694f936b42e6e8473ce3ce53b48f52",
-  "notebooks/dev/neuron_finder/neuron_finder.ipynb": "98a1f31199e781a1befb5e618aefc34cf5a0616d26288a9a8377943847c952c0",
+  "notebooks/dev/neuron_finder/neuron_finder.ipynb": "c6962a2d11dd07ed571bdb9e5c0d0fcbbb2b75ade2c61f3f1e6a0096c710c4ed",
   "notebooks/dev/neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb": "7fee9f2a76bb73487f7a9966af71a7f5c8c7b0d7d2688f7b692c16acf5e4bf97",
   "notebooks/dev/quickstart/cpu_quickstart.ipynb": "47d1c428876a12d32a5766654d3975bb15190f80b0dc7757c702b23fcfb959d2",
   "notebooks/dev/runners/runner_flexibility_demo.ipynb": "abced250a4c8e44e1b8d4ddb65c66bdca6401ac92e58b76aaefe2feb1b500a67",
