@@ -32,7 +32,7 @@ on:
         default: '0'
         type: string
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -118,7 +118,7 @@ jobs:
         # Hosted macOS runners are few (five at once) and the macOS leg is the slowest: on 2026-11-18 macOS jobs queued
         # a median 21 min (p90 140) and this leg ran a median 100 min, against 72 (Linux) and 69 (Windows). So a PR runs
         # Linux and Windows, and macOS when it carries the `ci:macos` label (adding the label runs that leg alone, the
-        # other two already ran); a push (main, release/*, ...) and a manual dispatch run all three.
+        # other two already ran); a push (main, release/*) and a manual dispatch run all three.
         env:
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
