@@ -11,7 +11,7 @@ in one set at ``point:mlp.out.hook_in`` and the doses in a treatment beside it, 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import torch
 
@@ -311,6 +311,12 @@ class Screen(NamedTuple):
         return (acts[pos].mean(0) - acts[~pos].mean(0)) / activation_std(acts)
 
 
+def _grad(x: torch.Tensor) -> torch.Tensor:
+    if x.grad is None:
+        raise RuntimeError("A screened activation took no gradient; the margin does not depend on it")
+    return x.grad
+
+
 def screen(
     model: torch.nn.Module,
     projections: Mapping[int, torch.nn.Module],
@@ -345,10 +351,11 @@ def screen(
             device = next(model.parameters()).device
             ids, mask = batch["input_ids"].to(device), batch["attention_mask"].to(device)
             with torch.enable_grad():
-                embeds = model.get_input_embeddings()(ids).detach().requires_grad_(True)
+                embedding = cast(torch.nn.Module, getattr(model, "get_input_embeddings")())  # an HF model's embedding
+                embeds = embedding(ids).detach().requires_grad_(True)
                 logits = model(inputs_embeds=embeds, attention_mask=mask).logits
                 answer_margin(logits, answer_ids).sum().backward()
-            grads = torch.stack([captured[layer].grad[:, -1].float() for layer in layers], dim=1)
+            grads = torch.stack([_grad(captured[layer])[:, -1].float() for layer in layers], dim=1)
             write = grads.sum(0) if write is None else write + grads.sum(0)
             acts.append(torch.stack([captured[layer][:, -1].detach().float() for layer in layers], dim=1).cpu())
             labels.append(batch["labels"].view(-1).cpu())
