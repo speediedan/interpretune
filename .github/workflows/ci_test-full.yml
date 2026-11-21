@@ -199,6 +199,20 @@ jobs:
             ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
+      # Hosted runners come from more than one CPU generation, and an intermittent illegal-instruction crash on the
+      # Windows leg (#1113) points at a kernel selected for an instruction set the host lacks. Logging the CPU model and
+      # the capability torch's dispatcher selected lets a crashed leg be matched to its CPU.
+      - name: Report the runner's CPU
+        continue-on-error: true
+        shell: bash
+        run: |
+          case "${RUNNER_OS}" in
+            Windows) powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" ;;
+            Linux) grep -m1 'model name' /proc/cpuinfo ;;
+            macOS) sysctl -n machdep.cpu.brand_string ;;
+          esac
+          python -c "import platform, torch; print('processor:', platform.processor()); print('torch CPU capability:', torch.backends.cpu.get_cpu_capability())"
+
       - name: Run pytest coverage w/ configured instrumentation
         id: run-pytest-coverage
         uses: ./.github/actions/run-pytest-instrumented
