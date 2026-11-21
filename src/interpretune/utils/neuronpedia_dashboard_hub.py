@@ -446,6 +446,10 @@ class DashboardStore(Protocol):
         """Upload the plan's files, honoring the same exclusions the plan reported."""
         ...
 
+    def release(self, plan: DashboardPublishPlan, target: str, **kwargs: Any) -> None:
+        """Make a pushed corpus discoverable, once its published copy has passed every check."""
+        ...
+
     def pull(self, target: str, dest: Path, **kwargs: Any) -> Path:
         """Download the corpus to ``dest``."""
         ...
@@ -501,6 +505,9 @@ class HubDatasetStore:
             ignore_patterns=publish_ignore_patterns(include_copy_rows),
             commit_message=commit_message,
         )
+
+    def release(self, plan: DashboardPublishPlan, target: str, **kwargs: Any) -> None:
+        """Nothing to do: corpus discovery lists buckets only, so a dataset repo is never discovered."""
 
     def pull(self, target: str, dest: Path, *, revision: str | None = None, token: str | None = None) -> Path:
         """Download a snapshot of the corpus at ``revision`` (a branch, tag, or commit) into ``dest``."""
@@ -570,12 +577,33 @@ class HubBucketStore:
         from huggingface_hub import HfApi
 
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
+        # The root manifest is what makes a bucket discoverable, so it is held back until `release`, after the
+        # published copy has passed every check: a corpus whose read-back failed is then never listed.
         HfApi(token=token).sync_bucket(
             source=str(plan.run_root),
             dest=self.uri(target, prefix),
-            exclude=publish_ignore_patterns(include_copy_rows),
+            exclude=[*publish_ignore_patterns(include_copy_rows), CORPUS_MANIFEST_FILE],
             delete=delete,
         )
+
+    def release(
+        self,
+        plan: DashboardPublishPlan,
+        target: str,
+        *,
+        revision: str | None = None,
+        path_in_repo: str = "",
+        token: str | None = None,
+    ) -> None:
+        """Upload the run's ``dashboards.json``, which corpus discovery lists a bucket by."""
+        from huggingface_hub import HfApi
+
+        manifest = Path(plan.run_root) / CORPUS_MANIFEST_FILE
+        if not manifest.is_file():
+            return  # the manifest-consistency check has already reported a corpus without one
+        prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
+        dest = f"{prefix}/{CORPUS_MANIFEST_FILE}" if prefix else CORPUS_MANIFEST_FILE
+        HfApi(token=token).batch_bucket_files(target, add=[(manifest, dest)], token=token)
 
     def pull(
         self,
@@ -812,8 +840,6 @@ def publish_dashboard_run(
     add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     token: str | None = None,
     store: str | None = None,
-    collection: str | None = None,
-    collection_token: str | None = None,
 ) -> DashboardPublishPlan:
     """Upload a dashboard run to the Hub. Returns the plan that was executed, with its check report.
 
@@ -830,21 +856,15 @@ def publish_dashboard_run(
     ``add_checks`` name checks to skip or to turn on; an unknown name is refused. Skips are recorded in
     the returned plan's ``checks`` and, for the dataset store, in the commit message.
 
-    ``collection`` (a Hub collection slug) registers the published bucket there once every check has passed, which is
-    how clients discover it (``interpretune.utils.neuronpedia_hub_fetch.find_dashboard_corpora``). Discovery reads
-    bucket items, so a dataset-store publish naming a collection is refused before the upload. Adding an item needs
-    ``collection.write``, which the dashboards token usually lacks, so ``collection_token`` is separate (default:
-    ``token``).
+    A corpus published to a bucket in a trusted publisher's namespace is discoverable once its ``dashboards.json`` is
+    there (``interpretune.utils.neuronpedia_hub_fetch.find_dashboard_corpora`` lists the publisher's buckets that carry
+    one), so the bucket store uploads that manifest last, only after every post-upload check has passed: a corpus
+    whose read-back failed is never discoverable.
     """
     validate_check_names(DASHBOARD_CORPUS, skip_checks, add_checks)
     plan = build_publish_plan(run_root, include_copy_rows)
     token = token or resolve_dashboards_token()
     backend = get_dashboard_store(store)
-    if collection is not None and backend.name != "bucket":
-        raise ValueError(
-            f"collection={collection!r} registers a corpus for discovery, which reads bucket items only; the"
-            f" {backend.name!r} store publishes a dataset repo. Publish to the bucket store, or drop collection=."
-        )
 
     target = PublishTarget(
         kind=DASHBOARD_CORPUS,
@@ -874,11 +894,7 @@ def publish_dashboard_run(
     )
     published = replace(target, remote_files=_published_parquet_paths(plan, repo_id, backend, revision, path_in_repo))
     report = report.merged(run_publish_checks(published, POST_UPLOAD, skip_checks=skip_checks, add_checks=add_checks))
-    if collection is not None:
-        from huggingface_hub import HfApi
-
-        api = HfApi(token=collection_token or token)
-        api.add_collection_item(collection, repo_id, "bucket", exists_ok=True, token=collection_token or token)
+    backend.release(plan, repo_id, revision=revision, path_in_repo=path_in_repo, token=token)
     return replace(plan, checks=report)
 
 
