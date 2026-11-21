@@ -2035,6 +2035,44 @@ class TestGradientReadouts:
         assert len(passes) == 2, f"an edit ran {len(passes)} traced backward passes, so the counter does not count them"
 
     @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_activations_come_back_from_the_gradient_pass(self, backend_name, hf, request, monkeypatch):
+        """``capture_activations`` returns the activation at each captured site from the baseline pass: the one a
+        forward hook reads, unchanged by a gradient edit, with the gradients the call returns without the flag, and
+        with no extra pass (the gradient-times-activation case: one traced backward, nothing edited)."""
+        import interpretune.adapters.transformer_lens.backends as tl_backends
+
+        readout = self._readouts()["logit_difference"]
+        points = [self.EDIT, self.CAPTURE]
+        forward = hf.capture(self.IDS, points)
+        backend, model, batch = self._backend(backend_name, request)
+        pre, post, value = backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        got = backend.bwd_w_intervention(
+            model, batch, self._payload(), readout, capture=points, capture_activations=True
+        )
+        assert len(got) == 4, f"capture_activations returned {len(got)} values"
+        for point in points:
+            torch.testing.assert_close(got[3][point], forward[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(got[0][point], pre[point])
+            torch.testing.assert_close(got[1][point], post[point])
+        torch.testing.assert_close(got[2], value)
+
+        owner, attr = (
+            (tl_backends, "_tl_backward") if backend_name == "transformer_lens" else (backend, "_traced_backward")
+        )
+        traced, passes = getattr(owner, attr), []
+
+        def counted(*args, **kwargs):
+            passes.append(1)
+            return traced(*args, **kwargs)
+
+        monkeypatch.setattr(owner, attr, counted)
+        grads, _, _, activations = backend.bwd_w_intervention(
+            model, batch, {}, readout, capture=points, capture_activations=True
+        )
+        assert len(passes) == 1, f"gradients and activations took {len(passes)} traced passes"
+        assert set(activations) == set(grads) == set(points)
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
     def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
         """A treatment's readout, declared as a logit difference plus a block-5 projection, executes as the
         callable readout that writes the same scalar by hand (the reference test above checks that form)."""

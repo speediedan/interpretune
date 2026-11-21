@@ -25,6 +25,8 @@ from interpretune.analysis.backends import (
     FLOWS,
     Capability,
     CaptureSupport,
+    GradientActivationResult,
+    GradientResult,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -1304,13 +1306,15 @@ class NNsightModelBackend:
         readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        capture_activations: bool = False,
+    ) -> GradientResult | GradientActivationResult:
         """Apply interventions to the gradients at hook points inside NNsight's backward tracer.
 
         A baseline trace captures the gradients (and gives the hook shapes a raw payload is canonicalized against),
         then a second applies the edits: each site's ``.grad`` is read, folded through its specs and assigned back, so
         the edited gradient is the one that flows on. Gradients are requested in reverse forward order, the order the
-        backward pass produces them in. The activations a readout reads are read inside the same trace. With no
+        backward pass produces them in. The activations a readout reads are read inside the same trace, and with
+        ``capture_activations`` the baseline trace also saves the activation at each captured site. With no
         interventions only the baseline trace runs, and the edited gradients are the baseline ones.
         """
         readout = as_readout(readout)
@@ -1334,8 +1338,15 @@ class NNsightModelBackend:
             captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
         reads = resolve_readout_sites(readout, available)
 
-        pre_grads, value = self._traced_backward(
-            model, batch, readout, latent_model_handles, {}, [*sites, *captured_names], reads
+        pre_grads, value, activations = self._traced_backward(
+            model,
+            batch,
+            readout,
+            latent_model_handles,
+            {},
+            [*sites, *captured_names],
+            reads,
+            activations_at=captured_names if capture_activations else (),
         )
         if isinstance(interventions, InterventionDict):
             intervention_dict = interventions
@@ -1344,11 +1355,12 @@ class NNsightModelBackend:
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
         pre_grads = {name: pre_grads[name] for name in captured_names}
         if not intervention_dict:  # nothing to edit: a second trace would only repeat the first (gradient capture)
-            return pre_grads, dict(pre_grads), value
-        post_grads, _ = self._traced_backward(
-            model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
-        )
-        return pre_grads, post_grads, value
+            post_grads = dict(pre_grads)
+        else:
+            post_grads, _, _ = self._traced_backward(
+                model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
+            )
+        return (pre_grads, post_grads, value, activations) if capture_activations else (pre_grads, post_grads, value)
 
     def _traced_backward(
         self,
@@ -1359,9 +1371,11 @@ class NNsightModelBackend:
         specs: Mapping[str, Sequence[InterventionSpec]],
         capture: Sequence[str],
         reads: Mapping[str, str],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        activations_at: Sequence[str] = (),
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]:
         """One traced forward and backward pass applying ``specs`` to the gradient at each named site, returning
-        the gradients at ``capture`` (each after any edit at its own site) and the readout's value.
+        the gradients at ``capture`` (each after any edit at its own site), the readout's value, and the activation
+        at each site in ``activations_at`` (the forward pass is never edited, so it is the one every pass sees).
 
         A latent model's sub-hooks are the stage values its splice produces, so a site under an attached latent model is
         read from its splice and every other site from its envoy, all in forward order. ``reads`` maps each site the
@@ -1382,6 +1396,7 @@ class NNsightModelBackend:
         tokens = batch.get("input_ids", batch.get("input"))
         last_pos = int(torch.as_tensor(tokens).shape[-1] - 1)
         saved: dict[str, Any] = {}
+        saved_activations: dict[str, Any] = {}
 
         with torch.set_grad_enabled(True), model.trace() as tracer:
             with _invoke_trace(tracer, batch):
@@ -1397,6 +1412,8 @@ class NNsightModelBackend:
                         envoy = _navigate_envoy(model, resolved.module_path)
                         value = _read_envoy_activation(envoy, resolved)
                         proxies[name] = track_gradient(value) if name in graded else value
+                for name in activations_at:
+                    saved_activations[name] = _nnsight.save(proxies[name])
                 scalar = readout(model.output.logits, {key: proxies[name] for name, key in reads.items()})
                 saved_metric = _nnsight.save(scalar)
                 with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
@@ -1415,9 +1432,11 @@ class NNsightModelBackend:
 
         if missing := sorted(set(capture) - set(saved)):
             raise ValueError(f"no gradient was captured at {missing}; none of those names resolved to a traced site")
-        return {name: torch.as_tensor(saved[name]).detach().clone() for name in capture}, torch.as_tensor(
-            saved_metric
-        ).detach()
+        return (
+            {name: torch.as_tensor(saved[name]).detach().clone() for name in capture},
+            torch.as_tensor(saved_metric).detach(),
+            {name: torch.as_tensor(saved_activations[name]).detach().clone() for name in activations_at},
+        )
 
 
 # ==============================================================================

@@ -43,7 +43,7 @@ from .oracles import (
     expected_positions,
     steering_vector,
 )
-from .ops import captured_points, stored_gradients
+from .ops import captured_points, stored_activations, stored_gradients
 from .reference import HFReference
 from .session import build_conformance_session, tokenized_prompts
 
@@ -1604,9 +1604,11 @@ class ModelBackendConformance:
     #: The logit the gradient cases differentiate, fixed so the reference and the op take one metric.
     GRADIENT_TARGET_ID: ClassVar[int] = 1000
 
-    def _gradient_store(self, suite, upstream: str, *, scope: str, vector: torch.Tensor):
+    def _gradient_store(
+        self, suite, upstream: str, *, scope: str, vector: torch.Tensor, capture_activations: bool = False
+    ):
         """``model_bwd_intervention`` adding ``vector`` to the gradient at the intervention point, capturing it
-        there and at ``upstream``."""
+        there and at ``upstream`` (and, with ``capture_activations``, the activations there too)."""
         import interpretune as it
         from interpretune import AnalysisCfg
 
@@ -1616,6 +1618,7 @@ class ModelBackendConformance:
             "interventions": payload,
             "grad_capture": [point, upstream],
             "logit_target_ids": [self.GRADIENT_TARGET_ID],
+            "capture_activations": capture_activations,
         }
         return suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
 
@@ -1663,6 +1666,44 @@ class ModelBackendConformance:
             for name in (point, upstream):
                 _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
                 _assert_close_padded(post[name], edited[name], what=f"batch {i}: the edited gradient at {name}")
+
+    @conformance_case(
+        capability=Capability.GRADIENTS,
+        flow="grad",
+        scope=PositionScope.LAST_TOKEN,
+        op="add",
+        family="hf_native",
+    )
+    def test_the_activations_beside_the_gradients_match_a_forward_capture(self, suite, hf):
+        """With ``capture_activations``, the gradient pass also stores the activation at each captured site, and it
+        is the activation an HF forward hook reads there: a gradient edit leaves the forward pass alone, so the edited
+        run's activations are the unedited ones. The baseline gradients are stored as without the flag.
+
+        Activations are compared on the real positions only: a padded position's activation depends on how a backend
+        positions padding, and no gradient or attribution reads it (its gradient is zero).
+        """
+        layer = int(suite.inputs.intervention_point.split(".")[1])
+        upstream = f"blocks.{layer - 2}.hook_out"
+        vector = self._vector(suite)
+        store = self._gradient_store(
+            suite, upstream, scope="last_token", vector=vector / vector.norm(), capture_activations=True
+        )
+        point = suite.inputs.intervention_point
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, self.GRADIENT_TARGET_ID].sum()
+
+        for i in range(len(store["grad_point_names"])):
+            ids, mask = suite.batch_inputs(i)
+            activations, pre = stored_activations(store, i), stored_gradients(store, i, "pre")
+            forward = hf.capture(ids, [point, upstream], attention_mask=mask)
+            clean = hf.gradients(ids, metric, observe=[point, upstream], attention_mask=mask)
+            real = _real_positions(mask, forward[point])
+            for name in (point, upstream):
+                _assert_close_padded(
+                    activations[name][real], forward[name][real], what=f"batch {i}: the activation at {name}"
+                )
+                _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
 
     @conformance_case(
         capability=Capability.LATENT_MODELS,

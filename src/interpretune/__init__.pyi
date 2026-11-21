@@ -747,6 +747,7 @@ def model_bwd_intervention(
         readout (object)
         grad_capture (object)
         grad_capture_sets (object)
+        capture_activations (bool)
 
     Output Schema:
         grad_point_names (string)
@@ -755,6 +756,7 @@ def model_bwd_intervention(
         post_intervention_grad_values (float32)
         bwd_intervention_metric (float32)
         intervention_grad_position_effect (float32)
+        grad_activation_values (float32)
     """
     ...
 

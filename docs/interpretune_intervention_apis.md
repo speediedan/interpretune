@@ -481,6 +481,12 @@ in declaration order, as on the forward pass.
   `grad_point_names`), the readout's value (`bwd_intervention_metric`), and `intervention_grad_position_effect`, the
   largest change in any captured gradient at each position. Without `grad_capture`, the intervention sites are
   captured, each after its own edit.
+- **Activations beside the gradients**: with `capture_activations`, the activation at each captured site is stored
+  too (`grad_activation_values`, laid out as the gradient values and described by the same `grad_shape`), read in the
+  baseline pass. The forward pass is never edited, so it is the activation both passes see, and a
+  gradient-times-activation attribution is the elementwise product of two stored fields, from one pass. At the model
+  level, `bwd_w_intervention(..., capture_activations=True)` returns
+  `(pre_grads, post_grads, value, activations)`.
 - **Sites by address**: `grad_capture` takes hook names or patterns, or one venngram site address, which
   `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
   `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
