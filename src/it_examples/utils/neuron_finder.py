@@ -189,3 +189,66 @@ def residual_medians(hidden_states: Iterable[tuple[torch.Tensor, ...]], masks: I
     if sums is None:
         raise ValueError("No texts given")
     return (sums / count).tolist()
+
+
+def activation_std(activations: torch.Tensor) -> torch.Tensor:
+    """Each neuron's own dose unit: the standard deviation of its activation over a screen set.
+
+    Args:
+        activations: ``(items, layers, units)`` activations at the screened position.
+
+    Returns:
+        ``(layers, units)``, floored at ``1e-6`` so a dead neuron's unit is finite.
+    """
+    return activations.float().std(dim=0).clamp_min(1e-6)
+
+
+def select_candidates(score: torch.Tensor, top: int) -> dict[int, list[tuple[int, int]]]:
+    """The ``top`` neurons toward each target from a ``(layers, units)`` screen score.
+
+    Returns:
+        ``{+1: [...], -1: [...]}``: the ``(layer, unit)`` pairs with the largest positive and the largest negative
+        scores, strongest first. A target of ``+1`` moves the behaviour's measure up, ``-1`` down.
+    """
+    flat = score.flatten()
+    width = score.shape[1]
+    pick = {t: torch.topk(t * flat, top).indices.tolist() for t in (1, -1)}
+    return {t: [(i // width, i % width) for i in idx] for t, idx in pick.items()}
+
+
+def edit_sign(write: torch.Tensor, layer: int, unit: int, target: int) -> int:
+    """The sign of the edit that moves the measure toward ``target`` to first order.
+
+    A neuron whose gradient (the write screen) is negative moves the measure up when its activation goes down, so the
+    edit's sign is the target's times the gradient's. Taking a screen's ranking for the edit sign moves every candidate
+    the same way, whatever its target.
+    """
+    if target not in (1, -1):
+        raise ValueError(f"A target is +1 or -1, got {target!r}")
+    return target * (1 if float(write[layer, unit]) >= 0 else -1)
+
+
+def candidate_settings(
+    write: torch.Tensor, candidates: Mapping[int, Iterable[tuple[int, int]]], dose: float
+) -> list[Setting]:
+    """:class:`Setting` entries for screened candidates at one dose, each signed by :func:`edit_sign`."""
+    return [
+        Setting(int(layer), int(unit), edit_sign(write, layer, unit, target) * float(dose))
+        for target, members in candidates.items()
+        for layer, unit in members
+    ]
+
+
+def found(signed_effects: Mapping[Any, float], control_effects: Iterable[float], q: float = 0.95) -> dict[Any, bool]:
+    """Which candidates beat the controls: a signed effect toward the target above the controls' ``q`` quantile.
+
+    Args:
+        signed_effects: Each candidate's mean change of the measure, multiplied by its target.
+        control_effects: The same for random neurons steered toward random targets (signed by their target).
+        q: The quantile of the controls a candidate must exceed.
+    """
+    controls = torch.tensor(list(control_effects), dtype=torch.float64)
+    if controls.numel() == 0:
+        raise ValueError("No control effects given")
+    threshold = float(torch.quantile(controls, q))
+    return {key: float(value) > threshold for key, value in signed_effects.items()}

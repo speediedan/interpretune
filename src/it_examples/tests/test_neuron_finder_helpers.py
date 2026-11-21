@@ -5,10 +5,15 @@ import torch
 
 from it_examples.utils.neuron_finder import (
     Setting,
+    activation_std,
     book_settings,
+    candidate_settings,
     dose_unit,
+    edit_sign,
+    found,
     parse_settings,
     residual_medians,
+    select_candidates,
     settings_book,
 )
 
@@ -88,3 +93,42 @@ def test_residual_medians_skip_the_first_token_and_padding():
     mask = torch.tensor([[1, 1, 1, 1], [0, 1, 1, 1]])
     # text 1: tokens 1..3 -> median 2; text 2: real tokens [100, 4, 6], from the second on -> [4, 6], median 4
     assert residual_medians([states], [mask]) == [pytest.approx(3.0)]
+
+
+def test_select_candidates_takes_each_target_strongest_first():
+    score = torch.tensor([[0.5, -2.0, 0.1], [3.0, -0.2, -1.0]])
+    picked = select_candidates(score, 2)
+    assert picked[1] == [(1, 0), (0, 0)]
+    assert picked[-1] == [(0, 1), (1, 2)]
+
+
+def test_edit_sign_follows_the_target_times_the_gradient():
+    write = torch.tensor([[0.5, -2.0]])
+    assert edit_sign(write, 0, 0, 1) == 1
+    assert edit_sign(write, 0, 1, 1) == -1
+    # a neuron whose gradient points down is steered down by raising its activation
+    assert edit_sign(write, 0, 1, -1) == 1
+    with pytest.raises(ValueError, match="target is"):
+        edit_sign(write, 0, 0, 0)
+
+
+def test_candidate_settings_sign_each_dose_by_its_edit():
+    write = torch.tensor([[0.5, -2.0, 0.1]])
+    settings = candidate_settings(write, {1: [(0, 0), (0, 1)], -1: [(0, 2)]}, 4.0)
+    assert settings == [Setting(0, 0, 4.0), Setting(0, 1, -4.0), Setting(0, 2, -4.0)]
+
+
+def test_activation_std_is_per_neuron_and_floored():
+    acts = torch.zeros(4, 1, 2)
+    acts[:, 0, 0] = torch.tensor([1.0, -1.0, 1.0, -1.0])
+    std = activation_std(acts)
+    assert std.shape == (1, 2)
+    assert std[0, 0] > 1.0 and std[0, 1] == pytest.approx(1e-6)
+
+
+def test_found_compares_with_the_controls_quantile():
+    controls = [0.0] * 19 + [1.0]
+    verdict = found({"a": 2.0, "b": 0.01, "c": -3.0}, controls)
+    assert verdict == {"a": True, "b": False, "c": False}
+    with pytest.raises(ValueError, match="No control"):
+        found({"a": 1.0}, [])
