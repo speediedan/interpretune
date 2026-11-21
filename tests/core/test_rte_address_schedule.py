@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.runif import RunIf
+
 pytest.importorskip(
     "finetuning_scheduler.core.tuning_scheduler", reason="finetuning-scheduler predates TuningScheduler"
 )
@@ -69,6 +71,9 @@ def _run(run: str, revision: str, tmp_path: Path, monkeypatch) -> dict:
     return json.loads(record.read_text())
 
 
+# a process of its own: it trains GPT-2 three times, once traced by nnsight (whose trace replaces coverage's trace
+# function), and the main suite already runs close to a hosted runner's memory
+@RunIf(standalone_cpu=True)
 def test_one_address_schedule_thaws_the_same_tensors_on_every_composition(
     rte_component, clean_cli_env, tmp_path, monkeypatch
 ):
