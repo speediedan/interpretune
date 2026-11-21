@@ -259,6 +259,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - A unit splice takes its units from an address book entry: a site that references a named set (`@steer`) whose address names units configures the same `UnitIntervention` as the literal address, rather than a full-width operand ([#876](https://github.com/speediedan/interpretune/issues/876))
 
+- The attention-attribution notebook's intervention arms are venngram site addresses over a small address book (`@attn`, `@mlp`, and the stack's halves `@early` and `@late`), resolved per model by `resolve_intervention_arms` in the notebook helpers, and the notebook runs the same arms on a second model family (Llama 3.2 1B by default, the `second_model` parameter) as a plain `(core, nnsight)` composition, with the same positive control ([#1016](https://github.com/speediedan/interpretune/issues/1016), [#876](https://github.com/speediedan/interpretune/issues/876))
+
+- A plain `(core, nnsight)` composition is its own model backend: the ops that run the model (`model_fwd_intervention`, `fwd_w_cache` and the rest of the model-backend surface) no longer need a latent adapter composed to reach the NNsight backend. An architecture the hook mapping does not cover still loads, without a backend. `NNsightModelBackend.for_model` builds the backend for a model's architecture, which the sae_lens and circuit-tracer compositions now use too ([#1103](https://github.com/speediedan/interpretune/issues/1103))
+
 ### Changed
 
 - `ITLensSharedConfig.default_padding_side` is retired: passing it to any TransformerLens configuration (`ITLensBridgeConfig`, `ITLensFromPretrainedConfig`, `ITLensCustomConfig`) raises a `TypeError` naming it. The adapter never applied it, since the bridge wraps the datamodule's tokenizer, which is built from `tokenizer_kwargs` before the bridge exists, so a configuration that relied on it alone silently got the tokenizer's own padding side. Set `tokenizer_kwargs.padding_side` instead, as every shipped configuration already did. `NNsightConfig.default_padding_side` is unchanged. With it gone, `tokenizer_kwargs.padding_side` is the one place a TransformerLens or SAELens composition's padding side is set: `TLensGenerationConfig.padding_side` stays an optional per-generation override that follows the tokenizer when unset, and the gemma2 benchmark configurations no longer repeat it ([#1081](https://github.com/speediedan/interpretune/issues/1081), [#126](https://github.com/speediedan/interpretune/issues/126))
@@ -427,6 +431,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - The `sae_lens_test` delta pair compares equal work: the native SAELens arm receives interpretune's generate kwargs, which the root wrapper's `*args, **kwargs` signature had hidden, so it generated the bridge's default 10 tokens against interpretune's one and its retained attention patterns differed by about 24 MiB. Its bounds are now frozen on both vendors ([#838](https://github.com/speediedan/interpretune/issues/838))
 
 - The Neuronpedia dashboard pipeline passes the configured model wrapper (and the bridge's compatibility mode) to the legacy runner when the runner accepts `--model-wrapper`. It passed neither, so the legacy runner fell back to its hooked wrapper, which TransformerLens 4.0 cannot build, and every legacy-runner leg of the dashboard benchmark failed at model initialization. A preserved baseline that predates the option keeps its own default. ([#652](https://github.com/speediedan/interpretune/issues/652))
+
+- The NNsight backend writes to a site whose module returns a tuple (an attention block's `(output, weights)`, as on GPT-2 and Llama) by rebuilding the tuple: assigning into the immutable tuple raised a `TypeError`, so every `hook_attn_out` intervention on those architectures failed ([#1103](https://github.com/speediedan/interpretune/issues/1103))
 
 ## [0.1.0] - 2025-XX-XX
 
