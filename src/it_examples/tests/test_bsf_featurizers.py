@@ -42,3 +42,16 @@ def test_the_binding_addresses_one_block_per_group():
     bsf = BlockSparseFeaturizer(_Tiny().state())
     binding = bsf.binding("bsf")
     assert binding.n_blocks == 6 and binding.block_size == 3 and binding.layer == 3
+
+
+def test_the_decision_book_names_one_block_per_set_and_loads():
+    pytest.importorskip("venngram")
+    from venngram.book import AddressBook
+
+    from it_examples.utils.bsf_featurizers import decision_book
+
+    book = decision_book(model_revision="0" * 40)
+    assert book["sets"]["resid_yes"] == {"features": "bsf_resid", "layers": [17], "units": [327]}
+    assert book["sets"]["jspace_no"]["space"] == "jlens"
+    loaded = AddressBook.from_mapping(book)
+    assert sorted(loaded.sets()) == ["jspace_no", "jspace_yes", "resid_no", "resid_yes"]

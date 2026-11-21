@@ -128,3 +128,39 @@ class _Tiny:
             "layer": 3,
             "space": "resid",
         }
+
+
+#: The blocks that carry the answer in #708's evaluation set (377 RTE answer positions), ranked by the AUROC of the
+#: block's code norm against the model answering Yes: one toward each answer in each space.
+DECISION_BLOCKS = {"resid": {"yes": 327, "no": 3504}, "jspace": {"yes": 1048, "no": 415}}
+
+
+def decision_book(
+    *, model_revision: str, blocks: dict[str, dict[str, int]] | None = None, jlens_space: str = "jlens"
+) -> dict[str, Any]:
+    """A checkpoint address book naming the decision blocks of both featurizers.
+
+    A block index means something for one featurizer trained on one checkpoint, so the book pins
+    ``google/gemma-3-1b-it`` at ``model_revision`` (unprocessed basis). Each set selects one block,
+    ``features:bsf_<space> & layers:17 & units:[b]``, and the J-space featurizer's sets carry ``space`` so a consumer
+    knows their rows are in the lens's coordinates.
+    """
+    blocks = DECISION_BLOCKS if blocks is None else blocks
+    sets: dict[str, Any] = {}
+    for space, by_answer in blocks.items():
+        for answer, block in by_answer.items():
+            entry: dict[str, Any] = {"features": f"bsf_{space}", "layers": [17], "units": [int(block)]}
+            if space == "jspace":
+                entry["space"] = jlens_space
+            sets[f"{space}_{answer}"] = entry
+    return {
+        "schema_version": 1,
+        "name": "gemma-3-1b-it-bsf-l17-decision",
+        "description": "The blocks of #708's layer-17 featurizers that carry gemma-3-1b-it's Yes or No on RTE",
+        "portability": "checkpoint",
+        "applies_to": {
+            "architectures": ["Gemma3ForCausalLM"],
+            "models": [{"id": "google/gemma-3-1b-it", "revision": model_revision, "basis": "unprocessed"}],
+        },
+        "sets": sets,
+    }
