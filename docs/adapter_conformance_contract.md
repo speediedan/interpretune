@@ -65,9 +65,10 @@ session config, its runtime declarations, its forward family, and how its compon
 ## How cases are selected
 
 The gate is what the composed module's components (its model backend and any analysis backend) **declare at
-runtime**: `capabilities` from the one `Capability` namespace, the support records (`intervention_support`,
-`latent_model_support`, `capture_support(model)`, `attribution_graph_support`), and `requires`, the capabilities a
-component needs another component to provide (circuit-tracer's analysis backend requires nothing: it differentiates
+runtime**: `capabilities` from the one `Capability` namespace of core surfaces, the support records
+(`intervention_support`, `latent_model_support`, `capture_support(model)`), `technique_support`, which maps each
+technique the component implements (`attribution_graph`, `head_attribution`, or one a third party registers) to its
+typed `TechniqueSupport` record, and `requires`, the capabilities a component needs another component to provide (circuit-tracer's analysis backend requires nothing: it differentiates
 through its own replacement model). `get_module_capabilities` refuses, a requirement no other component meets. A case gates
 on who provides a capability, never on which kind of component declares it, and an `INTERVENTION` case names the
 target it acts on (`activation` by default): two components may provide one target, and a gate on such a target
@@ -164,7 +165,8 @@ Gate `GRADIENTS`:
 | the gradient op stores the declared schema | structural | `logit_diffs_attr_grad` yields per-hook attribution `[rows, d_sae]`, finite, zero off the alive set, non-zero somewhere |
 | the gradient predicts a small perturbation to first order | causal (direct) | scaling the strongest latent by $1 + \varepsilon$ at the answer position moves the summed logit difference by $\varepsilon$ times its stored attribution (activation times gradient), within ten percent; the unperturbed sum is first checked against the op's own, so both paths are known to see one forward |
 
-Gate `ATTRIBUTION_GRAPH` (with `attribution_graph_support`), on op outputs only:
+Gate on the `attribution_graph` technique (exactly one component declares an `AttributionGraphSupport` record), on op
+outputs only:
 
 | case | oracle | asserts |
 | --- | --- | --- |
@@ -212,8 +214,9 @@ runs the refusal case, and a run in which no case applies fails. See
 
 Ops declare what they need beside `required_capabilities`: the tensor ops named in `required_ops` (the loader
 partitions them from the composition ops the same key names) and `required_position_scopes`, the configurations of
-the `intervention` surface the op will ask a backend for. A
-composite carries the union of its parts' axes plus its own. `OpCollectionConformance` validates a collection against
+the `intervention` surface the op will ask a backend for, and `required_techniques`, the techniques it executes, each
+resolved to the one component declaring a typed record for it (none, or two, is refused by name). A
+composite carries the union of its parts' axes and techniques plus its own. `OpCollectionConformance` validates a collection against
 a target through the dispatcher's own definitions:
 
 ```python
