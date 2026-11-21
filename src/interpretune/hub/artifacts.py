@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,19 @@ ARTIFACT_SCHEMA_VERSION = 2
 ARTIFACT_SCHEMA_MIN_READABLE = 1
 
 ANALYSIS_STORE_KIND = "analysis-store"
+
+#: The uncompressed byte target for a published store's Parquet row groups (``datasets`` sizes row groups from
+#: ``datasets.config.MAX_ROW_GROUP_SIZE``, 100MB by default, and ``push_to_hub`` takes no row-group argument). Measured
+#: on a 142 MB store of float tensor columns, streamed with projection: smaller groups make a row cheaper to reach (the
+#: first row of every column cost 9.5 MB at 4MB, 34 MB at 16MB and the whole 143 MB file at 100MB), while each group
+#: costs at least one range request per projected column and a fallback dictionary page per float column (a scan of two
+#: scalar columns took 38 requests at 4MB, 11 at 16MB and 4 at 100MB; the file grew 17% at 4MB and 6% at 16MB). 16MB
+#: balances the two. A store whose rows are each larger than the target gets one row per group whatever it is.
+ANALYSIS_STORE_ROW_GROUP_SIZE = "16MB"
+
+#: ``HfFileSystem``'s read-ahead block for a streamed pull. Its 5 MiB default is fetched on every range request, so a
+#: projected read of two small columns cost 5.4 MB of transfer where 64 KiB blocks cost 197 KB.
+STREAMING_BLOCK_SIZE = 64 * 1024
 
 #: The first schema whose envelopes must carry a ``subject`` block. Version 2 made it mandatory, since a store says
 #: nothing usable about what it was computed on without it; a version-1 envelope is still read, with no subject.
@@ -234,6 +248,7 @@ def build_analysis_store_envelope(
 
     from interpretune.hub.components import _installed_version
 
+    _refuse_streamed(store, "build an envelope for")
     dataset = store.dataset
     if dataset is None:
         raise ArtifactEnvelopeError("Cannot build an envelope for an AnalysisStore with no dataset loaded.")
@@ -283,6 +298,47 @@ def build_analysis_store_envelope(
     return validate_artifact_envelope(envelope, source="<writer>")
 
 
+def _row_group_bytes(row_group_size: int | str) -> int:
+    """``row_group_size`` in bytes, refusing a size ``datasets`` would not parse or that is not positive."""
+    from datasets.utils.py_utils import convert_file_size_to_int
+
+    try:
+        size = convert_file_size_to_int(row_group_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"row_group_size={row_group_size!r} is not a size: pass bytes as an int, or a string such as '16MB'."
+        ) from exc
+    if size <= 0:
+        raise ValueError(f"row_group_size={row_group_size!r} must be a positive size.")
+    return size
+
+
+@contextmanager
+def _row_group_target(row_group_size: int | str):
+    """Size the row groups ``Dataset.push_to_hub`` writes inside this block.
+
+    ``push_to_hub`` takes no row-group argument and reads ``datasets.config.MAX_ROW_GROUP_SIZE`` when it computes its
+    writer batch, so the target is set there for the push and restored after it, also when the push raises.
+    """
+    import datasets.config
+
+    previous = datasets.config.MAX_ROW_GROUP_SIZE
+    datasets.config.MAX_ROW_GROUP_SIZE = row_group_size
+    try:
+        yield
+    finally:
+        datasets.config.MAX_ROW_GROUP_SIZE = previous
+
+
+def _refuse_streamed(store, action: str) -> None:
+    """A streamed store has no table to publish; say so rather than report it as empty."""
+    if getattr(store, "stream", None) is not None:
+        raise ArtifactEnvelopeError(
+            f"Cannot {action} a streamed AnalysisStore: a stream has no table to write. Pull the store without"
+            " `streaming=True` (or build a Dataset from its rows) and publish that."
+        )
+
+
 def push_analysis_store(
     store,
     repo_id: str,
@@ -294,6 +350,7 @@ def push_analysis_store(
     skip_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     subject=None,
+    row_group_size: int | str = ANALYSIS_STORE_ROW_GROUP_SIZE,
 ) -> str:
     """Publish an AnalysisStore as a dataset repo: parquet interchange + envelope + generated card.
 
@@ -307,6 +364,10 @@ def push_analysis_store(
     already live. ``skip_checks`` / ``add_checks`` name checks to skip or turn on (unknown names are refused before
     any network call), and skips are recorded in the envelope's ``provenance``. ``subject`` overrides the one the
     store was stamped with; a store with neither is refused before any network call.
+
+    ``row_group_size`` is the uncompressed byte target for the Parquet row groups (bytes, or a string such as
+    ``"16MB"``), recorded in the envelope as ``artifacts.interchange.row_group_target_bytes``. The default,
+    :data:`ANALYSIS_STORE_ROW_GROUP_SIZE`, is measured for streamed, projected reads; a streamed store is refused.
     """
     import io
 
@@ -323,6 +384,8 @@ def push_analysis_store(
     )
 
     validate_check_names(ANALYSIS_STORE, skip_checks, add_checks)
+    row_group_bytes = _row_group_bytes(row_group_size)
+    _refuse_streamed(store, "push")
     if store.dataset is None:
         raise ArtifactEnvelopeError("Cannot push an AnalysisStore with no dataset loaded.")
     subject = _store_subject(store, subject)  # refused before any network call
@@ -346,10 +409,17 @@ def push_analysis_store(
         identity = None  # first publish (no envelope yet)
 
     # parquet interchange: push_to_hub converts per-shard; the LOCAL store remains Arrow (R9)
-    store.dataset.push_to_hub(repo_id, split=store.split, private=private, token=token, commit_message=commit_message)
+    with _row_group_target(row_group_bytes):
+        store.dataset.push_to_hub(
+            repo_id, split=store.split, private=private, token=token, commit_message=commit_message
+        )
     parquet_files = sorted(f for f in api.list_repo_files(repo_id, repo_type="dataset") if f.endswith(".parquet"))
     envelope = build_analysis_store_envelope(
-        store, identity=identity, provenance=provenance, interchange={"files": parquet_files}, subject=subject
+        store,
+        identity=identity,
+        provenance=provenance,
+        interchange={"files": parquet_files, "row_group_target_bytes": row_group_bytes},
+        subject=subject,
     )
     api.upload_file(
         path_or_fileobj=io.BytesIO(json.dumps(envelope, indent=1, sort_keys=True).encode("utf-8")),
@@ -379,12 +449,55 @@ def push_analysis_store(
     return sha
 
 
+def _published_parquet_urls(repo_id: str, commit: str, envelope: dict) -> list[str]:
+    """``hf://`` paths of the Parquet files the envelope lists, at ``commit``; refused when it lists none.
+
+    The listed files are read rather than a path convention, so a reader streams exactly what the writer published.
+    """
+    files = (envelope["artifacts"].get("interchange") or {}).get("files")
+    if not files:
+        raise ArtifactEnvelopeError(
+            f"{repo_id}@{commit}: the envelope lists no Parquet files (artifacts.interchange.files), so there is"
+            " nothing named to stream. Pull it without `streaming=True`, or re-publish it with a current interpretune."
+        )
+    return [f"hf://datasets/{repo_id}@{commit}/{name}" for name in files]
+
+
+def _stream_parquet(
+    urls: list[str], split: str, *, columns: list[str] | None, storage_options: dict, token: str | None
+):
+    """A ``datasets`` stream over ``urls``, reading only ``columns`` and only the row groups a read reaches.
+
+    ``storage_options`` is keyed by filesystem protocol (``{"hf": {"block_size": ...}}``); ``HfFileSystem`` takes the
+    block size in its constructor, which is how a nested key reaches it and a flat one does not.
+
+    pyarrow pre-buffers every row group's projected column chunks when a scan starts, so by default reading one row
+    fetches the whole file however its row groups are sized; ``pre_buffer=False`` lets a read stop where it stops.
+    """
+    import pyarrow.dataset as pads
+    from datasets import load_dataset
+
+    return load_dataset(
+        "parquet",
+        data_files={split: urls},
+        split=split,
+        streaming=True,
+        columns=columns,
+        token=token,
+        storage_options=storage_options,
+        fragment_scan_options=pads.ParquetFragmentScanOptions(pre_buffer=False),
+    )
+
+
 def pull_analysis_store(
     repo_id: str,
     *,
     revision: str | None = None,
     cache_dir: Path | None = None,
     token: str | None = None,
+    streaming: bool = False,
+    columns: list[str] | None = None,
+    block_size: int = STREAMING_BLOCK_SIZE,
 ):
     """Fetch an analysis-store artifact and hydrate it: envelope-first, formatter re-attached.
 
@@ -392,6 +505,11 @@ def pull_analysis_store(
     are fetched from the SAME commit. Returns a ready ``AnalysisStore`` whose interpretune
     formatter is re-attached from the envelope's serialized ``col_cfg`` — steering-capable graph
     hydration then flows through the normal ``AnalysisBackend`` seam with no pipeline re-run.
+
+    ``streaming=True`` downloads nothing up front: the store streams the Parquet files the envelope lists, at the
+    envelope's commit, through range requests of ``block_size`` bytes, reading only ``columns`` when they are named.
+    It can be iterated and read by column but not indexed by position (see ``AnalysisStore``). ``columns`` projects a
+    streamed read, so it is refused without ``streaming=True``.
     """
     from datasets import load_dataset
     from huggingface_hub import hf_hub_download, snapshot_download
@@ -399,6 +517,11 @@ def pull_analysis_store(
     from interpretune.analysis import AnalysisStore
     from interpretune.hub.components import _TELEMETRY
 
+    if columns is not None and not streaming:
+        raise ValueError(
+            "columns= projects a streamed read, and a full pull downloads every column regardless. Pass"
+            " `streaming=True` with it, or pull the whole store and call `select_columns` on it."
+        )
     root = str(cache_dir or ensure_writable_cache_root(IT_ARTIFACTS_HUB_CACHE, IT_ARTIFACTS_HUB_CACHE_SETTING))
     env_path = hf_hub_download(
         repo_id, IT_ARTIFACT_ENVELOPE, repo_type="dataset", revision=revision, cache_dir=root, token=token, **_TELEMETRY
@@ -407,11 +530,16 @@ def pull_analysis_store(
         json.loads(Path(env_path).read_text(encoding="utf-8")), source=f"{repo_id}@{revision or 'main'}"
     )
     commit = Path(env_path).parts[Path(env_path).parts.index("snapshots") + 1]
-    snapshot = snapshot_download(
-        repo_id, repo_type="dataset", revision=commit, cache_dir=root, token=token, **_TELEMETRY
-    )
     split = envelope["artifacts"].get("split") or "validation"
-    dataset = load_dataset(str(snapshot), split=split)
+    if streaming:
+        urls = _published_parquet_urls(repo_id, commit, envelope)
+        hf_options = {"hf": {"block_size": block_size, "token": token}}
+        dataset = _stream_parquet(urls, split, columns=columns, storage_options=hf_options, token=token)
+    else:
+        snapshot = snapshot_download(
+            repo_id, repo_type="dataset", revision=commit, cache_dir=root, token=token, **_TELEMETRY
+        )
+        dataset = load_dataset(str(snapshot), split=split)
     # the formatter contract is SERIALIZED col_cfg (OpSchemaExt runs ColCfg.from_dict itself), so
     # the envelope block passes straight through as format kwargs; a named analysis backend
     # re-attaches the hydration seam (graph consumers get Graph objects, not primitive columns)

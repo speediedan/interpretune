@@ -286,7 +286,8 @@ class RangeReadCheck:
 
     It reads the footer and the first column chunk of the first row group (the requests DuckDB's ``read_parquet`` makes
     against the Hub), checks that the chunk decodes to the row count the footer declares, and reports the bytes
-    requested through the file handle against the file's size. Readers fetch the last 64 KiB to find the footer, so for
+    requested through the file handle against the file's size, and the file's row groups (how a streamed read of it
+    will be cut). Readers fetch the last 64 KiB to find the footer, so for
     a file smaller than that the count covers the whole file, and an already-read range requested twice counts twice.
     It is the only check that reads the artifact as published, so it is the one that catches a transport which
     rewrote it.
@@ -330,6 +331,7 @@ class RangeReadCheck:
                 first = parquet.schema_arrow.names[0]
                 table = parquet.read_row_group(0, columns=[first])
                 declared = parquet.metadata.row_group(0).num_rows
+                groups = [parquet.metadata.row_group(i).num_rows for i in range(parquet.metadata.num_row_groups)]
         except Exception as exc:  # any failure to read back is the finding
             return CheckResult(
                 self.name, False, f"reading {path} back failed: {type(exc).__name__}: {exc}", self.REMEDY
@@ -345,7 +347,8 @@ class RangeReadCheck:
             self.name,
             True,
             f"{path}: footer and row group 0 of column {first!r} read back "
-            f"({counted.bytes_read} bytes requested, of a {size}-byte file)",
+            f"({counted.bytes_read} bytes requested, of a {size}-byte file); {len(groups)} row groups of "
+            f"{min(groups)} to {max(groups)} rows",
         )
 
 
