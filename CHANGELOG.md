@@ -372,6 +372,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- TransformerLens backend capture and intervention resolve a transcoder's internal hooks through SAELens's public resolver, so canonical output-site names, output aliases and wildcard interventions reach the registered feature activations instead of advertising nonexistent input-site sub-hooks ([#929](https://github.com/speediedan/interpretune/issues/929)).
+
 - A weight edit on a tensor of an attached latent model or intervention no longer makes the module's tunable view refuse to build. Since roles were declared by address, the latent model's or intervention's address covered the edit's operand, and two role addresses gave it different roles. `BaseITModule.tunable_roles()` now declares weight edits' operands by name, and a name entry wins over an address, so the edit's role holds there as it did before ([#1098](https://github.com/speediedan/interpretune/issues/1098))
 
 - The rte component (`speediedan/rte`, pinned at `b1a920fc`) shuffles its training split by default, renders every task prompt as the sparsity chain does (a space after the premise), and tokenizes chat-template text with one BOS: the template already starts with `<bos>`, so gemma-3 inputs began `[2, 2, ...]`. Test sessions pin shuffling off unless a test asks for it, and prepared test subsets are keyed by entrypoint as well as tokenizer, so a warm cache can no longer serve another entrypoint's rendering ([#923](https://github.com/speediedan/interpretune/issues/923))
