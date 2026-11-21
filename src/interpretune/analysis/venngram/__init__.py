@@ -30,6 +30,7 @@ from interpretune.analysis.venngram.charts import (
 )
 from interpretune.analysis.venngram.export import export_book
 from interpretune.analysis.venngram.fetch import FetchedRecipe, load_recipe
+from interpretune.analysis.venngram.graphs import export_graph_subset
 from interpretune.analysis.venngram.latent_edits import LATENT_EDIT_OPS, LatentEdit, block_edit_spec, latent_edit_spec
 from interpretune.analysis.venngram.latents import (
     LatentBinding,
@@ -79,6 +80,7 @@ __all__ = [
     "evaluate_readout_case",
     "executed_readouts",
     "export_book",
+    "export_graph_subset",
     "latent_edit_spec",
     "load_recipe",
     "normalized_unit_doses",
