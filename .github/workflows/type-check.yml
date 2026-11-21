@@ -2,7 +2,7 @@ name: Stale Stubs and Type Checks
 
 on:
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
