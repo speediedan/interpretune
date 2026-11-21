@@ -1,0 +1,21 @@
+# The three-phase GPT-2 schedule of `rte_ft.gpt2.yaml`, written in venngram addresses rather than tensor names, so the
+# same file runs on every composition of the model: the core/HF composition (`model.transformer...`), TransformerLens
+# (`blocks.<i>.attn.W_Q`, ...) and nnsight (`hf_model.transformer...`). Each address resolves through GPT-2's component
+# map to the composition's own tensors, and `runs/rte_ft.gpt2.{core.addresses,transformer_lens,nnsight}.yaml` check
+# that every phase thaws the same tensors of the underlying model on each.
+#
+# GPT-2 small has 12 blocks; `layers:-2:` is the last two (10 and 11) and `layers:-6:-2` the four before them. The LM
+# head is tied to the token embedding, which no phase thaws.
+0:
+  params:
+  - "component:ln_final"
+  - "layers:-2: & component:mlp.*"
+  max_transition_epoch: 2
+1:
+  params:
+  - "layers:-2: & (component:attn.* | component:ln*)"
+  lr: 3.0e-05
+2:
+  params:
+  - "layers:-6:-2"
+  lr: 3.0e-05
