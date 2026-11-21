@@ -127,6 +127,8 @@ ignore:
   - src/it_examples/notebooks/publish/runners/**
   # so is the role-kinds tuning notebook
   - src/it_examples/notebooks/publish/tuning/**
+  # so is the gradient-readouts notebook
+  - src/it_examples/notebooks/publish/gradient_readouts/**
   # benchmarks run in no pipeline phase; the warm manifest is read only by the hosted matrix
   - tests/benchmarks/**
   - tests/hf_warm_manifest.yaml
