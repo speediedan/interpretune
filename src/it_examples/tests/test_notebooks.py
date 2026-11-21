@@ -636,10 +636,12 @@ def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch)
         "Readout at unembed.hook_in",
         "Causal steering at",
         "features of each stage",
+        "State separation between the groups",
+        "each stage&#x27;s attribution graph targets the last position",
     ):
         assert marker in shown, f"the notebook showed no {marker!r} table: a section did not run"
     # a figure shown as plotly JSON alone is dropped by the docs build, so every figure must be embedded as HTML
-    assert shown.count("Plotly.newPlot") == 3, "the cosine matrix and both projections must render as HTML figures"
+    assert shown.count("Plotly.newPlot") == 4, "the cosine matrix and all three projections must render as HTML figures"
     _cleanup_notebook_artifacts()
 
 

@@ -146,6 +146,59 @@ def display_notebook_table(
     )
 
 
+def _token_text(token: str) -> str:
+    """A tokenizer piece as a reader sees it: the SentencePiece space marker as a space, a newline as a return sign."""
+    return token.replace("\u2581", " ").replace("\n", "\u23ce")
+
+
+def build_token_positions_html(
+    tokens: Sequence[str],
+    marks: Mapping[int, tuple[str, str]],
+    *,
+    title: str,
+    caption: str = "",
+) -> str:
+    """One prompt as a strip of token chips, the marked positions coloured and labelled beneath.
+
+    ``marks`` maps a position to ``(label, colour)``; positions sharing a label (a word's span) share its colour, and
+    the legend lists each label once. Every chip carries its position on hover. Token text is escaped; nothing is HTML.
+    """
+    if bad := sorted(pos for pos in marks if not 0 <= pos < len(tokens)):
+        raise ValueError(f"marked positions {bad} are outside the prompt's {len(tokens)} tokens")
+    chips = []
+    for pos, token in enumerate(tokens):
+        label, colour = marks.get(pos, ("", ""))
+        style = f"background:{html.escape(colour, quote=True)};color:white;font-weight:600" if label else ""
+        under = f'<span class="lab">{html.escape(label)}</span>' if label else ""
+        chips.append(
+            f'<span class="tok" title="position {pos}{": " + html.escape(label) if label else ""}">'
+            f'<span class="txt" style="{style}">{html.escape(_token_text(token)) or "&nbsp;"}</span>{under}</span>'
+        )
+    legend = dict.fromkeys(marks.values())
+    swatches = "".join(
+        f'<span class="sw"><span style="background:{html.escape(colour, quote=True)}"></span>'
+        f"{html.escape(label)}</span>"
+        for label, colour in legend
+    )
+    return f"""<style>
+    .it-tokens {{font-family:system-ui,sans-serif; font-size:13px; margin:12px 0;}}
+    .it-tokens .tok {{display:inline-flex; flex-direction:column; align-items:center; margin:1px; vertical-align:top;}}
+    .it-tokens .txt {{font-family:monospace; padding:2px 4px; border-radius:3px; background:#78b4f018;
+    white-space:pre;}}
+    .it-tokens .lab {{font-size:10px; margin-top:1px;}}
+    .it-tokens .sw {{margin-right:14px; white-space:nowrap; font-size:12px;}}
+    .it-tokens .sw span {{display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle;}}
+    </style><div class="it-tokens"><div><strong>{html.escape(title)}</strong></div>
+    <div>{html.escape(caption)}</div><div style="line-height:2.2">{"".join(chips)}</div><div>{swatches}</div></div>"""
+
+
+def display_token_positions(
+    tokens: Sequence[str], marks: Mapping[int, tuple[str, str]], *, title: str, caption: str = ""
+) -> None:
+    """Display :func:`build_token_positions_html` in a notebook or its rendered documentation."""
+    display(HTML(build_token_positions_html(tokens, marks, title=title, caption=caption)))
+
+
 def get_topk(
     logits: torch.Tensor,
     tokenizer,
