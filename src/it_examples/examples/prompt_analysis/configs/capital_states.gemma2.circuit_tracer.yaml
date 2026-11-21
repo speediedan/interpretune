@@ -53,7 +53,6 @@ registered_cfg:
         class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
         init_args:
           model_name: gemma-2-2b
-          default_padding_side: left  # to pad on left
       circuit_tracer_cfg:
         class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:

@@ -26,7 +26,8 @@ class ITLensSharedConfig(ITSerializableCfg):
     """TransformerLens configuration shared across both `from_pretrained` and config based instantiation modes."""
 
     move_to_device: bool | None = True
-    default_padding_side: Literal["left", "right"] | None = "right"
+    # There is no ``default_padding_side``: the bridge wraps the datamodule's tokenizer, which is built (and may already
+    # have tokenized the data) before the bridge exists, so set ``tokenizer_kwargs.padding_side`` instead.
 
 
 @dataclass(kw_only=True)

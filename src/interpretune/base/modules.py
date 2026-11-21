@@ -10,7 +10,7 @@ from interpretune.tuning.interventions import (
     intervention_role_addresses,
 )
 from interpretune.tuning.latents import latent_model_placements, latent_model_role_addresses
-from interpretune.tuning.weights import weight_edit_role_addresses
+from interpretune.tuning.weights import weight_edit_roles
 from interpretune.tuning.views import attach_tunable_view, merge_roles
 from interpretune.utils import MisconfigurationException
 
@@ -179,12 +179,14 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         Cooperative: mixins add theirs to ``super()``'s with :func:`~interpretune.tuning.views.merge_roles`, which
         joins two addresses given for one role. This base declares the roles of the latent models and interventions
         attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact`` for a frozen one:
-        :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the operands of the
-        weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
-        :mod:`interpretune.tuning.weights`), each by address.
+        :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), each by address, and of the
+        operands of the weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
+        :mod:`interpretune.tuning.weights`) by name. An edit's operand may sit under an attached latent model or
+        intervention, whose address covers it, and a name entry wins over an address, so the edit's role holds
+        there (#1098).
         """
         return merge_roles(
-            latent_model_role_addresses(self), intervention_role_addresses(self), weight_edit_role_addresses(self)
+            latent_model_role_addresses(self), intervention_role_addresses(self), weight_edit_roles(self)
         )
 
     def model_init(self) -> None:
