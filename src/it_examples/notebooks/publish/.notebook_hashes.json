@@ -5,7 +5,7 @@
   "notebooks/dev/attribution_analysis/analysis_injection_config.yaml": "f3ef5c9c2bd7faf09d0d2c2e712b6dfbe721e1d38dafab74536a3666d4a12183",
   "notebooks/dev/attribution_analysis/analysis_points.py": "7ccd7198969660fb10b9759b6e418b2d8fcc562ffba9bccba99ae80b071e45c9",
   "notebooks/dev/attribution_analysis/attribution_analysis.ipynb": "56be0e7af78d1d61619807f8961429f9742ba65629b248399c3f8a400f87d935",
-  "notebooks/dev/circuit_tracer_examples/attention_attribution_analysis.ipynb": "dc58515f2ab4d76ab6ee16fe3ae0c6f72f09c9d486a1cf89a3a1b022ba56dc59",
+  "notebooks/dev/circuit_tracer_examples/attention_attribution_analysis.ipynb": "43d1a74e7de107413f167ec4e4d096250ff8247c431cbdb18c25328269615b99",
   "notebooks/dev/circuit_tracer_examples/attention_attribution_injection_config.yaml": "a5daaf37b1c4c441c3fb7d5817313de733bb5621954b323e79271afe27ae6276",
   "notebooks/dev/circuit_tracer_examples/attention_attribution_points.py": "0209bb6dfb4bdbf702fcd66fd01340735bb996167365ea96cf9bbcefa78e3dba",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "cee6315d7a74200aba3f82dedd5d22c88ac560585564e3f7c7f096625cb90545",
@@ -33,6 +33,7 @@
   "notebooks/dev/example_op_collections/op_collection_demo_utils.py": "a7a739e9457dade95ee0e4480e3ac855db352127de816c04032dc26f658f65ec",
   "notebooks/dev/example_op_collections/op_collection_example.ipynb": "7249d103fd6f2fcb9b9d7f7bb890e45f495bbdca69b8eaf6ceb2aa82babdd383",
   "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "3431e19ac03346eba77ba0abc4efcab5d47f1221d0cd3eac3f248a2c9c9ffaa7",
+  "notebooks/dev/neuron_communities/neuron_communities_replication.ipynb": "58287965e50fcce7a88af1503866a6457e694f936b42e6e8473ce3ce53b48f52",
   "notebooks/dev/neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb": "7fee9f2a76bb73487f7a9966af71a7f5c8c7b0d7d2688f7b692c16acf5e4bf97",
   "notebooks/dev/quickstart/cpu_quickstart.ipynb": "47d1c428876a12d32a5766654d3975bb15190f80b0dc7757c702b23fcfb959d2",
   "notebooks/dev/runners/runner_flexibility_demo.ipynb": "abced250a4c8e44e1b8d4ddb65c66bdca6401ac92e58b76aaefe2feb1b500a67",
@@ -47,5 +48,5 @@
   "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-310.pyc": "f8562d08fe5158376862c62e0bab25d55ed7a6ac321a5cd503c4fe61ddc136e3",
   "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-312.pyc": "23cc4b9179e33e8154381cbeded275ce9195c8a0924deee610462662cdf2047c",
   "notebooks/dev/saelens_adapter_example/sl_utils/sl_mem_utils.py": "e5d212369c23b6ebfef3d25a0642b8f1a87e430964c1ae8d55607f88b6228654",
-  "notebooks/dev/shared_analysis/shared_analysis_roundtrip.ipynb": "8ccf00190d004739177766d5f810266bcba6d7dc257a3ef46121da1fc9f181ec"
+  "notebooks/dev/shared_analysis/shared_analysis_roundtrip.ipynb": "58c9b0f191591d85dc38002cc349a6016c99a9af31111929c0c92a828d271b34"
 }

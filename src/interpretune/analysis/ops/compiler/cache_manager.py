@@ -38,7 +38,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    skip the axis check and fail late at the backend, and report every op as unsampled.
 # 9: `required_intervention_modes` becomes `required_tensor_ops` (the tensor ops a definition's `required_ops` names,
 #    partitioned from the composition ops at load); a cache carrying the old field would build ops without it.
-CACHE_FORMAT_VERSION = "9"
+# 10: adds `required_techniques` (the techniques an op executes, bound to a component's typed record); a cache without
+#    the field would build the six technique ops with no gate at all.
+CACHE_FORMAT_VERSION = "10"
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,8 @@ class OpDef:
     # (one key names both kinds; the loader partitions it).
     required_tensor_ops: list[str] = field(default_factory=list)
     required_position_scopes: list[str] = field(default_factory=list)
+    # The techniques the op executes, by name, resolved against the components' `technique_support` records.
+    required_techniques: list[str] = field(default_factory=list)
     # An optional `conformance:` block from the definition: `run_inputs` the op runs on end to end in a
     # conformance suite (OpCollectionConformance). Declared beside the op so a collection carries its own
     # executable example; absent means the suite reports the op as unsampled rather than inventing inputs.
@@ -105,6 +109,7 @@ class OpDef:
             "required_capabilities": self.required_capabilities,
             "required_tensor_ops": self.required_tensor_ops,
             "required_position_scopes": self.required_position_scopes,
+            "required_techniques": self.required_techniques,
             "conformance": self.conformance,
             "composition": self.composition,
             "op_state": self.op_state.to_dict() if self.op_state is not None else None,
@@ -512,7 +517,7 @@ class OpDefinitionsCacheManager:
             fields.append(f"required_ops={op_def.required_ops!r}")
         if op_def.required_capabilities:
             fields.append(f"required_capabilities={op_def.required_capabilities!r}")
-        for axis in ("required_tensor_ops", "required_position_scopes"):
+        for axis in ("required_tensor_ops", "required_position_scopes", "required_techniques"):
             if value := getattr(op_def, axis):
                 fields.append(f"{axis}={value!r}")
         if op_def.conformance is not None:

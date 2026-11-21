@@ -224,7 +224,7 @@ class CircuitTracerTLGemma2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left"
+            model_name="gemma-2-2b"
         )
     )
     generative_step_cfg: GenerativeClassificationConfig | None = field(
@@ -262,7 +262,7 @@ class LightningTLGPT2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
+            model_name="gpt2-small"
         )
     )
 ```
@@ -450,7 +450,6 @@ gemma2.rte.circuit_tracer_tl:
           class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
           init_args:
             model_name: gemma-2-2b
-            default_padding_side: left
             # NOTE: circuit-tracer's TransformerLens backend is unavailable pending upstream TL 4.0
             # support; use backend: nnsight for circuit-tracer compositions meanwhile.
         circuit_tracer_cfg:

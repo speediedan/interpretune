@@ -291,3 +291,34 @@ def test_plot_state_read_one_panel_per_position():
     traces: list[Any] = list(aah.plot_state_read(reads, {0: "first", 1: "second"}, "t", "y").data)
     assert len(traces) == 4 and [t.name for t in traces if t.showlegend] == ["Dallas", "Detroit"]
     assert list(traces[2].y) == [1.0, 2.0]  # panels in position order, prompts within: Dallas at position 1
+
+
+@pytest.mark.parametrize("n_layers", [26, 16, 12])
+def test_intervention_arms_resolve_on_any_depth(n_layers):
+    half = n_layers // 2
+    sites = aah.resolve_intervention_arms(n_layers)
+    assert set(sites) == set(aah.INTERVENTION_ARMS)
+    assert sites["attention, all layers"] == tuple(f"blocks.{layer}.hook_attn_out" for layer in range(n_layers))
+    assert sites["MLP, late half"] == tuple(f"blocks.{layer}.hook_mlp_out" for layer in range(half, n_layers))
+    early, late = set(sites["attention, early half"]), set(sites["attention, late half"])
+    assert not early & late and early | late == set(sites["attention, all layers"])
+    both = set(sites["attention, all layers"]) | set(sites["MLP, all layers"])
+    assert set(sites["both, all layers"]) == both and len(sites["both, all layers"]) == 2 * n_layers
+
+
+def test_intervention_arms_take_another_book():
+    sites = aah.resolve_intervention_arms(
+        4, {"attention, last layer": "@attn & layers:-1"}, aah.intervention_arm_sets(4)
+    )
+    assert sites == {"attention, last layer": ("blocks.3.hook_attn_out",)}
+
+
+def test_module_tokenizer_prefers_the_replacement_models_then_the_configs():
+    replacement, configured = object(), object()
+    with_both = SimpleNamespace(
+        replacement_model=SimpleNamespace(tokenizer=replacement), it_cfg=SimpleNamespace(tokenizer=configured)
+    )
+    assert aah.module_tokenizer(with_both) is replacement
+    assert aah.module_tokenizer(SimpleNamespace(it_cfg=SimpleNamespace(tokenizer=configured))) is configured
+    with pytest.raises(ValueError, match="no tokenizer"):
+        aah.module_tokenizer(SimpleNamespace(it_cfg=SimpleNamespace(tokenizer=None)))
