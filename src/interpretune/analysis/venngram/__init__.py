@@ -11,7 +11,9 @@ differentiates; a site address resolves to the hook names it selects; and export
 as a book carrying a treatment; nothing here executes a treatment. A latent address resolves to blocks of loaded
 latent models and named subspaces (:class:`LatentCatalog`), whose coordinates are read and edited in an explicit,
 versioned frame (:class:`LatentFrame`), chart (:class:`LatentChart`) and, for features expressed in a mapped space,
-linear space (:class:`LinearSpace`).
+linear space (:class:`LinearSpace`). A frame or chart edit of one feature block compiles into a spec a backend runs
+natively at the block's latent sub-hook (:func:`latent_edit_spec`), and a whole block's edit into a core op on its
+columns (:func:`block_edit_spec`).
 
 venngram is imported on first use, so importing interpretune does not import it.
 
@@ -35,6 +37,7 @@ from interpretune.analysis.venngram.charts import (
 from interpretune.analysis.venngram.export import export_book
 from interpretune.analysis.venngram.fetch import FetchedRecipe, load_recipe
 from interpretune.analysis.venngram.graphs import export_graph_subset
+from interpretune.analysis.venngram.latent_edits import LATENT_EDIT_OPS, LatentEdit, block_edit_spec, latent_edit_spec
 from interpretune.analysis.venngram.latents import (
     LatentBinding,
     LatentCatalog,
@@ -62,12 +65,14 @@ from interpretune.analysis.venngram.support import (
 from interpretune.analysis.venngram.values import normalized_unit_doses
 
 __all__ = [
+    "LATENT_EDIT_OPS",
     "ChartKind",
     "FetchedRecipe",
     "GraphSubsetOverlap",
     "LatentBinding",
     "LatentCatalog",
     "LatentChart",
+    "LatentEdit",
     "LatentFrame",
     "LatentSelection",
     "LatentTarget",
@@ -77,12 +82,14 @@ __all__ = [
     "UnitSiteSelection",
     "chart_kind",
     "charts_from_book",
+    "block_edit_spec",
     "check_recipe",
     "evaluate_readout_case",
     "executed_readouts",
     "export_book",
     "export_graph_subset",
     "graph_subset_overlap",
+    "latent_edit_spec",
     "load_recipe",
     "normalized_unit_doses",
     "recipe_feature_interventions",

@@ -181,7 +181,7 @@ class LatentFrame:
         _basis(self.rows, f"frame {self.name!r} version {self.version!r}")
         rows = self.rows.detach().to(device="cpu", dtype=torch.float64)
         gram = rows @ rows.T
-        identity = torch.eye(len(rows), dtype=rows.dtype)
+        identity = torch.eye(len(rows), dtype=rows.dtype, device=rows.device)
         if not torch.allclose(gram, identity, atol=self.atol, rtol=0):
             error = float((gram - identity).abs().max())
             raise MisconfigurationException(f"frame {self.name!r} is not orthonormal (maximum Gram error {error:g})")

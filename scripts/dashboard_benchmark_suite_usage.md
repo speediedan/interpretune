@@ -24,7 +24,8 @@ detached preserved-baseline worktrees (applying the audited patches from
 classification/rationale), manages the neuronpedia local-stack `.env` defaults (Postgres host
 port/data dir + HF cache paths, appended only when missing) and checks the local Postgres
 (reporting how to start it if it is not reachable), builds the integrated benchmark venv via
-`scripts/build_it_env.sh` (SAEDashboard + SAELens editable from source), offers to build any
+`scripts/build_it_env.sh` (SAEDashboard editable from source; sae-lens is the released package the pins
+install), offers to build any
 missing benchmark prompt datasets (the pretokenization commands of record — tokenizer-only,
 CPU, a few minutes per set), and writes a `benchmark_env.sh` you source before running the
 suite:
@@ -72,7 +73,9 @@ Host-specific locations are resolved from the environment with portable defaults
 - `IT_BENCH_PYTHON` / `IT_BENCH_PY_SPY` select the benchmark interpreter and py-spy binary; they default to the
   running interpreter and its sibling `py-spy`.
 - Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
-  and `NEURONPEDIA_UTILS_ROOT`.
+  and `NEURONPEDIA_UTILS_ROOT`. The SAELens root only names a checkout: lineage records it when the installed
+  sae-lens comes from it, and the preserved-baseline legs pass theirs explicitly. The current legs import the
+  installed sae-lens release, so a checkout there is never put on their `PYTHONPATH`.
 - `IT_NP_PROFILE_CACHE_DEVICE` picks the path whose filesystem is used for IO utilization sampling; it defaults to
   the Neuronpedia cache root.
 

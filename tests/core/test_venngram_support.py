@@ -52,7 +52,7 @@ class TestDerivedSupport:
         support = _support()
         # every core venngram op has a native mode now, `scale` included
         assert support.ops == frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
-        assert support.tokens == frozenset({"all", "last"})
+        assert support.tokens == frozenset({"all", "last", "positions"})
         assert support.targets == frozenset({"units", "activation"}) and support.values == frozenset(
             {"dose", "doses", "from"}
         )

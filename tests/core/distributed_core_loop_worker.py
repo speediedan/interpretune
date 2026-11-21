@@ -88,6 +88,12 @@ def main() -> None:
     parser.add_argument("--transcoder-site", default=None, help="splice a transcoder over this module")
     parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
     parser.add_argument("--memprof-fsdp", action="store_true", help="profile every training step with FSDP2MemTracker")
+    parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="shuffle the training split (off by default: a one-process reference and the ranks' DistributedSampler "
+        "shares draw different orders, so a run compared with one reads the split in order)",
+    )
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -117,7 +123,11 @@ def main() -> None:
         max_epochs=args.max_epochs or (2 if args.phased else 1),
         limit_train_batches=3,
         limit_val_batches=2,
-        dm_override_cfg={"train_batch_size": batch_size, "eval_batch_size": batch_size},
+        dm_override_cfg={
+            "train_batch_size": batch_size,
+            "eval_batch_size": batch_size,
+            "dataloader_kwargs": {"num_workers": 0, "pin_memory": False, "shuffle": args.shuffle},
+        },
         # no dropout: each rank draws from its own RNG stream, the reference from one
         model_cfg={"model_args": {"max_seq_len": 200, "n_layers": 2, "dropout_p": 0.0}},
         memprofiler_cfg=memprofiler_cfg,
