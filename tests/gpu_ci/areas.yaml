@@ -216,6 +216,7 @@ areas:
       - src/interpretune/runners/analysis.py
       - src/interpretune/hub/opcollections.py
       - src/interpretune/hub/artifacts.py
+      - src/interpretune/hub/subject.py
       - src/interpretune/hub/hookmaps.py
     tests:
       - tests/core/test_backend_conformance.py::TestCircuitTracerConformance

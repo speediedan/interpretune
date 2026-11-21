@@ -6,5 +6,6 @@
   "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_a_batch_above_the_declared_limit_is_refused_by_name": "gated on single_prompt=True: the circuit-tracer target is not declared single-prompt, so there is no batch limit to refuse",
   "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_supplied_settings_survive_composition": "the circuit-tracer conformance target supplies no module_cfg_extras, so there is no supplied setting to check",
   "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_all_positions_is_refused": "a negative conformance case: the circuit-tracer target declares the all-positions scope, so there is no refusal to check (its positive twin runs instead)",
-  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_last_token_is_refused": "a negative conformance case: the circuit-tracer target declares the last-token scope, so there is no refusal to check (its positive twin runs instead)"
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_last_token_is_refused": "a negative conformance case: the circuit-tracer target declares the last-token scope, so there is no refusal to check (its positive twin runs instead)",
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_positions_is_refused": "a negative conformance case: the circuit-tracer target declares the positions scope, so there is no refusal to check (its positive twin runs instead)"
 }
