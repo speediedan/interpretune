@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import types
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
@@ -185,7 +186,15 @@ LAYER_NORM_EPS = 1e-5
 
 @dataclass
 class SASARelease:
-    """A released SASA model: encoder, decoder rows grouped in blocks of ``rank``, and its per-token group gate."""
+    """A released SASA model: encoder, decoder rows grouped in blocks of ``rank``, and its per-token group gate.
+
+    It is also a latent model a model backend can attach (``latent_model_handles=[release]``), so a frame or chart
+    edit of one block runs natively at ``blocks.{layer}.hook_resid_pre.hook_sae_acts_post``. Its codes are carried at
+    the original activation scale (the layer-normalized codes times each token's scale), so a block's decoded value
+    $a_B D_B$ is the block's contribution to the residual stream, :meth:`contribution`, and an edit of it moves the
+    residual stream by exactly the edit. With the error term the attached model leaves the clean forward pass
+    unchanged.
+    """
 
     name: str
     layer: int
@@ -195,6 +204,34 @@ class SASARelease:
     rank: int
     k_groups: int
     threshold: float | None = None
+    io_dtype: torch.dtype = torch.float32
+
+    use_error_term = True
+
+    @property
+    def cfg(self) -> Any:
+        """The hook the release reads and writes, where a model backend splices it."""
+        return types.SimpleNamespace(metadata=types.SimpleNamespace(hook_name=f"blocks.{self.layer}.hook_resid_pre"))
+
+    @property
+    def W_dec(self) -> torch.Tensor:
+        """The decoder rows, under the name a latent model exposes them by."""
+        return self.w_dec
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Gated codes at the activation scale, ``(..., n_groups * rank)``: a group's codes where its pre-
+        activation norm passes the gate, times the token's scale, else zero."""
+        if self.threshold is None:
+            raise ValueError("calibrate the group gate first (calibrate_threshold)")
+        flat = x.reshape(-1, x.shape[-1])
+        pre, scale = self.pre_activations(flat)
+        codes = pre * (pre.norm(dim=-1, keepdim=True) > self.threshold) * scale[:, :, None]
+        return codes.reshape(*x.shape[:-1], -1)
+
+    def decode(self, acts: torch.Tensor) -> torch.Tensor:
+        """The codes' reconstruction in the model's activation dtype (the layer norm's mean is left to the error
+        term)."""
+        return (acts.to(self.w_dec) @ self.w_dec).to(self.io_dtype)
 
     @property
     def n_groups(self) -> int:
@@ -234,8 +271,18 @@ class SASARelease:
         return (codes @ self.block(group)) * scale
 
 
-def load_sasa(repo_id: str, checkpoint: str, *, device: str, revision: str | None = None) -> SASARelease:
-    """Download one SASA checkpoint (an SAELens-format ``cfg.json`` and ``sae_weights.safetensors``)."""
+def load_sasa(
+    repo_id: str,
+    checkpoint: str,
+    *,
+    device: str,
+    revision: str | None = None,
+    io_dtype: torch.dtype = torch.float32,
+) -> SASARelease:
+    """Download one SASA checkpoint (an SAELens-format ``cfg.json`` and ``sae_weights.safetensors``).
+
+    ``io_dtype`` is the dtype the model's activations run in, which an attached release writes back.
+    """
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
@@ -248,7 +295,14 @@ def load_sasa(repo_id: str, checkpoint: str, *, device: str, revision: str | Non
     w = load_file(weights, device=device)
     layer = int(cfg["metadata"]["hook_name"].split(".")[1])
     return SASARelease(
-        "sasa", layer, w["W_enc"].float(), w["b_enc"].float(), w["W_dec"].float(), cfg["group_rank"], cfg["k_groups"]
+        "sasa",
+        layer,
+        w["W_enc"].float(),
+        w["b_enc"].float(),
+        w["W_dec"].float(),
+        cfg["group_rank"],
+        cfg["k_groups"],
+        io_dtype=io_dtype,
     )
 
 
@@ -552,12 +606,10 @@ def chart_edits(
     An edit maps the captured state at the name column and the member index to a new state, which ``replace``
     writes at that column. ``replace`` takes one operand for the whole batch, so each prompt runs alone.
     """
-    n = len(ids)
-    sums = {name: {"P(answer)": 0.0, "P(shifted answer)": 0.0, "shifted is top": 0.0} for name in ["none", *edits]}
+    tally = _ShiftTally(["none", *edits], ids)
     for text, column, member, answer in prompts:
         batch = {"input_ids": torch.tensor([tokenizer(text)["input_ids"]], device=device)}
         h = capture(model, backend, batch, site)[0, column]
-        shifted = (answer + 1) % n
         logits = {}
         clean = None
         for name, edit in edits.items():
@@ -566,13 +618,108 @@ def chart_edits(
             )
         if clean is None:
             raise ValueError("chart_edits needs at least one edit to run")
-        logits["none"] = clean
+        tally.add({"none": clean, **logits}, answer)
+    return tally.percentages(len(prompts))
+
+
+class _ShiftTally:
+    """Per edit: the probability of the expected answer and of the next member, and how often the next member is
+    the top one."""
+
+    def __init__(self, names: Sequence[str], ids: Sequence[int]) -> None:
+        self.ids = list(ids)
+        self.sums = {name: {"P(answer)": 0.0, "P(shifted answer)": 0.0, "shifted is top": 0.0} for name in names}
+
+    def add(self, logits: dict[str, torch.Tensor], answer: int) -> None:
+        shifted = (answer + 1) % len(self.ids)
         for name, out in logits.items():
-            probs = out[0, -1].float().softmax(-1)[list(ids)]
-            sums[name]["P(answer)"] += float(probs[answer])
-            sums[name]["P(shifted answer)"] += float(probs[shifted])
-            sums[name]["shifted is top"] += float(int(probs.argmax()) == shifted)
-    return {name: {k: 100 * v / len(prompts) for k, v in row.items()} for name, row in sums.items()}
+            probs = out[0, -1].float().softmax(-1)[self.ids]
+            self.sums[name]["P(answer)"] += float(probs[answer])
+            self.sums[name]["P(shifted answer)"] += float(probs[shifted])
+            self.sums[name]["shifted is top"] += float(int(probs.argmax()) == shifted)
+
+    def percentages(self, n: int) -> dict[str, dict[str, float]]:
+        return {name: {k: 100 * v / n for k, v in row.items()} for name, row in self.sums.items()}
+
+
+def native_edits(
+    model,
+    backend,
+    tokenizer,
+    release: SASARelease,
+    prompts,
+    edits: dict[str, Callable[[int], tuple[str, Any]]],
+    ids: Sequence[int],
+    device: str,
+) -> dict[str, dict[str, float]]:
+    """:func:`chart_edits` for edits compiled to run natively at the release's latent sub-hook.
+
+    An edit maps the member index to ``(hook, spec)`` from ``latent_edit_spec``; it is placed at the prompt's name
+    column and runs as one op inside the forward pass, with no capture step, the release attached.
+    """
+    tally = _ShiftTally(["none", *edits], ids)
+    for text, column, member, answer in prompts:
+        batch = {"input_ids": torch.tensor([tokenizer(text)["input_ids"]], device=device)}
+        logits = {}
+        clean = None
+        for name, edit in edits.items():
+            hook, spec = edit(member)
+            clean, logits[name] = backend.fwd_w_intervention(
+                model, batch, {hook: at_column(spec, column)}, latent_model_handles=[release]
+            )
+        if clean is None:
+            raise ValueError("native_edits needs at least one edit to run")
+        tally.add({"none": clean, **logits}, answer)
+    return tally.percentages(len(prompts))
+
+
+def at_column(spec: Any, column: int) -> Any:
+    """A compiled latent edit placed at one explicit position: its dose operand, one row for that position."""
+    dose = torch.as_tensor(spec.intervention_tensor).reshape(1)
+    return spec._replace(intervention_tensor=dose, position_scope="positions", positions=(column,))
+
+
+def native_matches_functional(
+    model,
+    backend,
+    release: SASARelease,
+    catalog,
+    target,
+    batch: dict[str, torch.Tensor],
+    column: int,
+    site: str,
+    hook: str,
+    spec: Any,
+) -> dict[str, float]:
+    """Run a compiled latent edit natively, and the same edit functionally, on one batch, and compare the logits.
+
+    The functional run captures the site state $h$ at ``column``, takes the block's contribution
+    $v = a_B D_B$ from the release's own encoder, applies the catalog's edit of it (the same
+    ``LatentEdit.edit_values`` the native op runs, dose included), and writes $h + (v' - v)$ back with ``replace``,
+    one operand per batch row (each prompt's state differs). The two should agree to the activation dtype's rounding.
+    """
+    from interpretune.analysis.backends.interventions import InterventionSpec
+
+    h = capture(model, backend, batch, site)[:, column]
+    edit = spec.params["latent_edit"]
+    columns = list(spec.unit_indices)
+    rows = edit.decoder_rows().to(h)
+    v = release.encode(h).float()[:, columns] @ rows
+    dose = float(torch.as_tensor(spec.intervention_tensor))
+    edited = h + dose * (edit.edit_values(v) - v)
+    functional = {
+        site: InterventionSpec(
+            edited[:, None], op="replace", position_scope="positions", positions=(column,), operand_per_row=True
+        )
+    }
+    clean, by_hand = backend.fwd_w_intervention(model, batch, functional)
+    _, native = backend.fwd_w_intervention(
+        model, batch, {hook: at_column(spec, column)}, latent_model_handles=[release]
+    )
+    return {
+        "native vs functional": float((native[:, -1].float() - by_hand[:, -1].float()).abs().max()),
+        "edit moved": float((native[:, -1].float() - clean[:, -1].float()).abs().max()),
+    }
 
 
 def hand_written_removal(
