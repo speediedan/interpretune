@@ -653,9 +653,20 @@ def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch)
     )
     nb = json.loads(output_notebook.read_text(encoding="utf-8"))
     outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
-    text = "".join("".join(out.get("text", [])) for out in outputs)
-    for marker in ("probe examples answered as expected", "readout at unembed.hook_in", "causal steering at"):
-        assert marker in text, f"the notebook printed no {marker!r} line: a section did not run"
+    # the results are notebook UI tables and figures (HTML), so the checks read their titles
+    shown = "".join("".join(out.get("data", {}).get("text/html", "")) for out in outputs)
+    for marker in (
+        "The probe prompts",
+        "probe examples answered as expected",
+        "Readout at unembed.hook_in",
+        "Causal steering at",
+        "features of each stage",
+        "State separation between the groups",
+        "each stage&#x27;s attribution graph targets the last position",
+    ):
+        assert marker in shown, f"the notebook showed no {marker!r} table: a section did not run"
+    # a figure shown as plotly JSON alone is dropped by the docs build, so every figure must be embedded as HTML
+    assert shown.count("Plotly.newPlot") == 4, "the cosine matrix and all three projections must render as HTML figures"
     _cleanup_notebook_artifacts()
 
 
@@ -797,6 +808,51 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     ]
     assert any("store rows:" in t for t in texts), "quickstart did not land results in a store"
 
+    _cleanup_notebook_artifacts()
+
+
+def test_gradient_readouts_notebook(tmp_path: Path):
+    """Gradient readouts (#1032): a probe, an SAE feature and a gradient edit on gpt2, CPU-only.
+
+    No GPU marks, no token gates. The revision pins the local-publish snapshot so the test validates the in-tree config
+    without a hub push; the notebook defaults to the recorded pin. The notebook asserts its own controls (the ablation
+    hook ran, the SAE read directly matches the readout), so an error-free run means they held.
+    """
+    import nbformat
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "gradient_readouts" / "gradient_readouts.ipynb",
+        parameters={"REVISION": rev},
+        output_dir=output_dir,
+    )
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    shown = "".join(
+        "".join(html) if isinstance(html := o.get("data", {}).get("text/html", ""), list) else html
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+        if o.output_type == "display_data"
+    )
+    # the results are notebook UI tables (HTML), so the check reads the last two moves' table titles
+    assert "Rejecting the probe direction from the gradient" in shown, "the notebook did not reach the op path"
+    assert "Declared and callable probe readouts" in shown, "the notebook did not reach the declared readout"
     _cleanup_notebook_artifacts()
 
 
@@ -947,6 +1003,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
+        "gradient_readouts/gradient_readouts.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "neuron_communities/neuron_communities_replication.ipynb",

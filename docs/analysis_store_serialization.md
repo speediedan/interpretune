@@ -138,6 +138,11 @@ Two blocks with opposite rules:
 - `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
   detection without identity churn.
 
+`artifacts.interchange` records how the Parquet was written: `files`, the published Parquet paths, and
+`row_group_target_bytes`, the row-group size target of the push. A streamed pull reads exactly the listed `files`
+at the envelope's commit rather than assuming a path layout, and refuses an envelope that lists none. Both fields are
+additive, so they needed no schema bump; see [Streaming a store](finding_analysis_stores.md#streaming-a-store).
+
 ### The `subject` block: what the store was computed on
 
 A store's columns mean something only against the model, tokenizer, component map and latent
