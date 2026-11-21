@@ -720,7 +720,10 @@ class NNsightModelBackend:
                 hidden_pre = feature_acts
                 has_hidden_pre = False
 
+            edited = hook_fn is not None
+
             if last_pos is not None and stage_interventions.get("hook_sae_acts_pre"):
+                edited = True
                 for spec in stage_interventions["hook_sae_acts_pre"]:
                     hidden_pre = apply_intervention(hidden_pre, spec, last_pos=last_pos)
                 if has_hidden_pre:
@@ -732,12 +735,18 @@ class NNsightModelBackend:
                 dummy = _DummyHookPoint(name=f"{hook_name}.hook_sae_acts_post")
                 feature_acts = hook_fn(feature_acts, dummy)
 
-            if last_pos is not None:
-                for spec in stage_interventions.get("hook_sae_acts_post", ()):
+            if last_pos is not None and stage_interventions.get("hook_sae_acts_post"):
+                edited = True
+                for spec in stage_interventions["hook_sae_acts_post"]:
                     feature_acts = apply_intervention(feature_acts, spec, last_pos=last_pos)
 
             sae_out = sae.decode(feature_acts)
-            sae_error = act_input - sae_out
+            # The error term is the input minus the CLEAN reconstruction, unedited and carrying no gradient, as SAELens
+            # computes it. Taken from the edited reconstruction it would absorb the edit: the output would be the input
+            # again, and every edit or gradient at a latent sub-hook would cancel exactly. The clean pass re-encodes,
+            # as SAELens does, because a layer-normalizing SAE's decode consumes the statistics its encode stored.
+            clean_out = sae.decode(sae.encode(act_input)) if edited else sae_out
+            sae_error = (act_input - clean_out).detach()
             if last_pos is not None:
                 for spec in stage_interventions.get("hook_sae_error", ()):
                     sae_error = apply_intervention(sae_error, spec, last_pos=last_pos)
