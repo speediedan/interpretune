@@ -1111,6 +1111,7 @@ class TestTLFwdWHooksBatched:
         mock_model.run_with_hooks_with_saes.side_effect = [fake_logits_1, fake_logits_2]
         sae_handle = MagicMock()
         sae_handle.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
+        mock_model.get_sae_hook_name.side_effect = lambda sae, suffix: f"{sae.cfg.metadata.hook_name}.{suffix}"
 
         hook_configs = [
             [("blocks.0.hook_resid_post.hook_sae_acts_post", lambda t, h: t)],
