@@ -84,6 +84,12 @@ class InterventionSpec(NamedTuple):
             sequence tensor. Padding is included in this coordinate system; indices are never shifted per example.
             ``intervention_tensor`` has one leading row per listed position, in the same order. Its remaining axes
             are that position's operand, including a complete basis for a span op. Other scopes require ``None``.
+        operand_per_row: With ``position_scope="positions"``, read ``intervention_tensor`` as one operand set per
+            batch row, ``(batch, n_positions, ...)``: row $i$'s operands edit prompt $i$, for an edit whose value
+            depends on the prompt. Without it the operands are ``(n_positions, ...)`` and apply to every row. The
+            flag is explicit rather than inferred from the shape, because a span op's operand already carries a
+            leading axis (``(n_positions, k, d)``), which no shape test can tell apart from a batch axis. A batch
+            axis that does not match the batch is refused by name. Other scopes require ``False``.
         use_intervention_tensor_as_basis: Controls which vector defines the projection basis in
             ``"project"`` mode. ``True`` means project the current hook input onto the span of
             ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
@@ -109,6 +115,7 @@ class InterventionSpec(NamedTuple):
     unit_indices: tuple[int, ...] | None = None
     positions: tuple[int, ...] | None = None
     params: Mapping[str, Any] | None = None
+    operand_per_row: bool = False
 
 
 InterventionValue: TypeAlias = Any
@@ -326,14 +333,22 @@ def _validate_intervention_spec(
     op = normalize_op(spec.op)
     positions = _explicit_positions(spec)
     if positions is not None:
-        if tensor.ndim == 0 or tensor.shape[0] != len(positions):
+        per_row = bool(spec.operand_per_row)
+        axis = 1 if per_row else 0
+        if tensor.ndim <= axis or tensor.shape[axis] != len(positions):
+            layout = "(batch, n_positions, ...)" if per_row else "(n_positions, ...)"
             raise ValueError(
-                f"hook '{hook_name}': positions requires one leading operand row per position "
-                f"({len(positions)}), got {tuple(tensor.shape)}"
+                f"hook '{hook_name}': positions requires one operand row per position ({len(positions)}) laid out "
+                f"{layout}, got {tuple(tensor.shape)}"
             )
-        for operand in tensor:
+        for operand in tensor.flatten(0, 1) if per_row else tensor:
             _validate_intervention_spec(
-                spec._replace(intervention_tensor=operand, position_scope=PositionScope.LAST_TOKEN, positions=None),
+                spec._replace(
+                    intervention_tensor=operand,
+                    position_scope=PositionScope.LAST_TOKEN,
+                    positions=None,
+                    operand_per_row=False,
+                ),
                 target_shape,
                 hook_name,
             )
@@ -386,6 +401,7 @@ def _validate_intervention_spec(
         unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
         positions=positions,
         params=spec.params,
+        operand_per_row=False,
     )
 
 
@@ -553,6 +569,7 @@ def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_sc
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
         "unit_indices": None if value.get("unit_indices") is None else tuple(value["unit_indices"]),
         "positions": value.get("positions"),
+        "operand_per_row": bool(value.get("operand_per_row", False)),
     }
 
 
@@ -1041,6 +1058,8 @@ def apply_intervention(
         spec = _validate_intervention_spec(spec, get_intervention_target_shape(value), "position-set intervention")
         if any(position >= value.shape[1] for position in positions):
             raise ValueError(f"positions {positions} exceed sequence length {value.shape[1]}")
+        if spec.operand_per_row:
+            return _apply_per_row(value, spec, positions)
         for index, position in enumerate(positions):
             operand = spec._replace(intervention_tensor=spec.intervention_tensor[index])
             value[:, position, ...] = _apply_op_to_region(value[:, position, ...], operand)
@@ -1059,11 +1078,28 @@ def apply_intervention(
     raise NotImplementedError(f"unsupported hook position scope {scope.value!r}")
 
 
+def _apply_per_row(value: torch.Tensor, spec: InterventionSpec, positions: tuple[int, ...]) -> torch.Tensor:
+    """Apply row ``b``'s operand for each listed position to batch row ``b`` alone."""
+    operands = spec.intervention_tensor
+    if operands.shape[0] != value.shape[0]:
+        raise ValueError(
+            f"operand_per_row: the operand has {operands.shape[0]} batch rows but the batch has {value.shape[0]}; "
+            "each prompt needs its own operand set"
+        )
+    for row in range(value.shape[0]):
+        for index, position in enumerate(positions):
+            operand = spec._replace(intervention_tensor=operands[row, index], operand_per_row=False)
+            value[row : row + 1, position, ...] = _apply_op_to_region(value[row : row + 1, position, ...], operand)
+    return value
+
+
 def _explicit_positions(spec: InterventionSpec) -> tuple[int, ...] | None:
     """Validate absolute, zero-based indices into the padded sequence, retaining their operand order."""
     if normalize_position_scope(spec.position_scope) != PositionScope.POSITIONS:
         if spec.positions is not None:
             raise ValueError("positions is only valid with position_scope='positions'")
+        if spec.operand_per_row:
+            raise ValueError("operand_per_row is only valid with position_scope='positions'")
         return None
     positions = spec.positions
     if not isinstance(positions, Sequence) or isinstance(positions, (str, bytes)) or not positions:

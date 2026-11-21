@@ -1,0 +1,26 @@
+# #931 Part 2, placement in place of a loss: the recipe of `kug_lrsd.qwen2_5_1_5b.core.yaml` (same model, data,
+# optimizer, 50 epochs) on cross-entropy alone, training only the adapters of blocks 7 to 20 of 28 (0.25L to 0.75L)
+# from the start. It tests the paper's misalignment account directly, which the paper did not run:
+#
+#   interpretune --run_command train --config hub://speediedan/knowing-using/runs/kug_mid_only.qwen2_5_1_5b.core.yaml
+#
+# Its matched arms are the plain and LRSD runs of the same seeds (848, 1, 2).
+session_ref: speediedan/knowing-using:kug_lrsd.qwen2_5_1_5b.core
+seed_everything: 848
+registered_cfg:
+  module_cfg:
+    init_args:
+      lrsd_lambda: 0.0
+run_cfg:
+  max_epochs: 50
+  precision: bf16-mixed
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/knowing-using/ft_schedules/kug_mid_only.qwen2_5_1_5b.yaml
+        tuning_scheduler_kwargs:
+          max_depth: -1
+    - class_path: knowing_using.ExactMatchReport
+      init_args:
+        precision: bf16-mixed
+        log_path: kug_mid_only.qwen2_5_1_5b.core.exact_match.json
