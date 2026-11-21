@@ -556,6 +556,75 @@ class KUGSteps:
 class KUGModule(KUGSteps, torch.nn.Module): ...
 
 
+# -- phases as experimental stages ---------------------------------------------------------------------------------
+
+
+class MetricThresholdTransition:
+    """A finetuning-scheduler transition policy that opens the next phase once an epoch metric reaches a threshold.
+
+    With :class:`ExactMatchReport` before ``FTSCoreCallback`` in the run's callbacks, ``monitor: mem_em`` opens the
+    next phase in the epoch memorization first reaches ``threshold``. It never ends the final phase, and an epoch
+    without the metric continues the phase.
+
+    Args:
+        monitor: The epoch metric watched.
+        threshold: The value that opens the next phase.
+        mode: ``"max"`` advances once the metric is at least ``threshold``, ``"min"`` once it is at most.
+    """
+
+    granularity = frozenset({"epoch"})
+
+    def __init__(self, monitor: str = "mem_em", threshold: float = 0.9, mode: str = "max") -> None:
+        if mode not in ("max", "min"):
+            raise MisconfigurationException(f"`mode` must be 'max' or 'min', got {mode!r}.")
+        self.monitor, self.threshold, self.mode = monitor, float(threshold), mode
+
+    def evaluate(self, ctx: Any) -> Any:
+        from finetuning_scheduler.core.transitions import Decision
+
+        if ctx.is_final_phase or (value := ctx.metrics.get(self.monitor)) is None:
+            return Decision.CONTINUE
+        value = float(value)
+        if value >= self.threshold if self.mode == "max" else value <= self.threshold:
+            return Decision.ADVANCE, f"{self.monitor} {value:.4f} reached {self.threshold}"
+        return Decision.CONTINUE
+
+    def reset(self, depth: int) -> None:
+        pass
+
+    def state_dict(self) -> dict[str, Any]:
+        return {}
+
+    def load_state_dict(self, state_dict: Mapping[str, Any]) -> None:
+        pass
+
+    def config(self) -> dict[str, Any]:
+        return {
+            "class_path": f"{type(self).__module__}.{type(self).__qualname__}",
+            "init_args": {"monitor": self.monitor, "threshold": self.threshold, "mode": self.mode},
+        }
+
+
+class PhaseLRSD:
+    """A finetuning-scheduler phase-start hook that sets the module's LRSD settings from the phase's
+    ``phase_config``.
+
+    A phase's ``phase_config`` may name any :class:`KUGLRSDSettings` field (``lrsd_lambda: 1.0`` turns the term on);
+    a phase without one keeps the settings it inherits. Configured as ``phase_hooks: {start: [{class_path:
+    knowing_using.PhaseLRSD}]}`` in ``FTSCoreCallback``'s ``tuning_scheduler_kwargs``.
+    """
+
+    def __call__(self, event: Any) -> None:
+        settings = dict(event.phase_config or {})
+        if unknown := sorted(set(settings) - set(KUGLRSDSettings.__dataclass_fields__)):
+            raise MisconfigurationException(
+                f"phase {event.depth}'s phase_config names unknown LRSD settings {unknown}."
+            )
+        it_cfg = event.tuning_scheduler.model.it_cfg
+        for name, value in settings.items():
+            setattr(it_cfg, name, value)
+
+
 # -- reporting exact match on the core loop ------------------------------------------------------------------------
 
 
@@ -657,6 +726,8 @@ __all__ = [
     "KUGModule",
     "KUGPromptConfig",
     "KUGSteps",
+    "MetricThresholdTransition",
+    "PhaseLRSD",
     "build_kug_splits",
     "clip_optimizer_grads",
     "completion_cross_entropy",

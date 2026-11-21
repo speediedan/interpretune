@@ -908,3 +908,100 @@ class TestPushPublishChecks:
         with pytest.raises(PublishedArtifactCheckError, match="was published"):
             push_analysis_store(small_store, "me/store")
         assert api.upload_file.call_count == 2  # envelope and card are already up: the artifact is live
+
+
+class TestPublishedRowGroups:
+    """Row groups are sized for streamed reads, through the one setting ``Dataset.push_to_hub`` reads."""
+
+    def test_the_target_reaches_the_writer_batch_push_to_hub_computes(self, small_store, tmp_path):
+        """``push_to_hub`` sizes row groups from ``datasets.config.MAX_ROW_GROUP_SIZE`` at call time; if a
+        ``datasets`` release stops reading it there, the target silently stops reaching the files and this
+        fails."""
+        import pyarrow.parquet as pq
+        from datasets import Dataset
+        from datasets.arrow_writer import get_writer_batch_size_from_data_size
+
+        from interpretune.hub.artifacts import _row_group_target
+
+        dataset = Dataset.from_dict({"values": [[float(i)] * 256 for i in range(64)]})
+        nbytes = dataset._estimate_nbytes()
+        default_rows = get_writer_batch_size_from_data_size(len(dataset), nbytes)
+        with _row_group_target(nbytes // 8):
+            rows = get_writer_batch_size_from_data_size(len(dataset), nbytes)
+        assert default_rows >= len(dataset) and rows == len(dataset) // 8
+        path = tmp_path / "grouped.parquet"
+        dataset.to_parquet(str(path), batch_size=rows)
+        assert pq.ParquetFile(path).metadata.num_row_groups == 8
+
+    def test_the_target_is_restored_after_the_block_even_when_it_raises(self):
+        import datasets.config
+
+        from interpretune.hub.artifacts import _row_group_target
+
+        before = datasets.config.MAX_ROW_GROUP_SIZE
+        with pytest.raises(RuntimeError, match="push failed"):
+            with _row_group_target(1024):
+                assert datasets.config.MAX_ROW_GROUP_SIZE == 1024
+                raise RuntimeError("push failed")
+        assert datasets.config.MAX_ROW_GROUP_SIZE == before
+
+    @pytest.mark.parametrize("size, match", [("lots", "is not a size"), (0, "must be a positive"), (-5, "positive")])
+    def test_an_unusable_size_is_refused_by_name(self, size, match):
+        from interpretune.hub.artifacts import _row_group_bytes
+
+        with pytest.raises(ValueError, match=match):
+            _row_group_bytes(size)
+
+    def test_sizes_parse_as_datasets_parses_them(self):
+        from interpretune.hub.artifacts import ANALYSIS_STORE_ROW_GROUP_SIZE, _row_group_bytes
+
+        assert _row_group_bytes(ANALYSIS_STORE_ROW_GROUP_SIZE) == 16 * 10**6
+        assert _row_group_bytes(4096) == 4096
+
+
+class TestPushRowGroupTarget:
+    """The push applies the target while ``push_to_hub`` runs and records it; refusals land before any network
+    call."""
+
+    PARQUET = TestPushPublishChecks.PARQUET
+    hub = TestPushPublishChecks.hub
+    _uploaded_envelope = staticmethod(TestPushPublishChecks._uploaded_envelope)
+
+    def test_push_to_hub_runs_under_the_target_and_the_envelope_records_it(self, small_store, hub, monkeypatch):
+        import datasets.config
+
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        seen = []
+        monkeypatch.setattr(
+            type(small_store.dataset),
+            "push_to_hub",
+            lambda self, *a, **k: seen.append(datasets.config.MAX_ROW_GROUP_SIZE),
+        )
+        before = datasets.config.MAX_ROW_GROUP_SIZE
+        push_analysis_store(small_store, "me/store", row_group_size="4MB")
+        assert seen == [4 * 10**6]
+        assert datasets.config.MAX_ROW_GROUP_SIZE == before
+        interchange = self._uploaded_envelope(api)["artifacts"]["interchange"]
+        assert interchange["row_group_target_bytes"] == 4 * 10**6
+        assert interchange["files"] == [self.PARQUET]
+
+    def test_an_unusable_size_is_refused_before_any_network_call(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        with pytest.raises(ValueError, match="is not a size"):
+            push_analysis_store(small_store, "me/store", row_group_size="lots")
+        api.create_repo.assert_not_called()
+
+    def test_a_streamed_store_is_refused_before_any_network_call(self, small_store, hub):
+        from interpretune.analysis import AnalysisStore
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        streamed = AnalysisStore(dataset=small_store.dataset.with_format(None).to_iterable_dataset())
+        streamed.subject = SMALL_STORE_SUBJECT
+        with pytest.raises(ArtifactEnvelopeError, match="streamed AnalysisStore"):
+            push_analysis_store(streamed, "me/store")
+        api.create_repo.assert_not_called()

@@ -1,0 +1,33 @@
+# #931 Part 2, phases as experimental stages.
+# The LRSD recipe of `kug_lrsd.qwen2_5_1_5b.core.yaml` (same model, data, optimizer, 50 epochs), with the alignment
+# term held back until memorization saturates:
+#
+#   interpretune --run_command train --config hub://speediedan/knowing-using/runs/kug_gated.qwen2_5_1_5b.core.yaml
+#
+# The schedule's phase 0 trains every block's adapters on cross-entropy alone. `MetricThresholdTransition` opens
+# phase 1 in the epoch `mem_em` first reaches 0.9, which refreezes the adapters outside blocks 7 to 20 and, through
+# `PhaseLRSD`, turns the LRSD term on. `ExactMatchReport` comes first among the callbacks, so its `mem_em` is in the
+# epoch's metrics when `FTSCoreCallback` offers them to the transition. Its matched arms are the plain and LRSD runs of
+# the same seeds.
+session_ref: speediedan/knowing-using:kug_lrsd.qwen2_5_1_5b.core
+seed_everything: 848
+run_cfg:
+  max_epochs: 50
+  precision: bf16-mixed
+  callbacks:
+    - class_path: knowing_using.ExactMatchReport
+      init_args:
+        precision: bf16-mixed
+        log_path: kug_gated.qwen2_5_1_5b.core.exact_match.json
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/knowing-using/ft_schedules/kug_gated.qwen2_5_1_5b.yaml
+        tuning_scheduler_kwargs:
+          transition:
+            class_path: knowing_using.MetricThresholdTransition
+            init_args:
+              monitor: mem_em
+              threshold: 0.9
+          phase_hooks:
+            start:
+              - class_path: knowing_using.PhaseLRSD
