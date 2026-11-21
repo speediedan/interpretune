@@ -16,11 +16,13 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from interpretune.utils.neuronpedia_dashboard_hub import download_dashboard_run
+from interpretune.utils.neuronpedia_db_utils import _redact_connection_url
 from interpretune.utils.neuronpedia_source_conflicts import (
     ConflictPolicy,
     describe_source_set,
@@ -28,9 +30,9 @@ from interpretune.utils.neuronpedia_source_conflicts import (
 
 __all__ = [
     "CORPUS_MANIFEST",
-    "DEFAULT_CORPUS_COLLECTIONS",
     "CorpusListing",
     "CorpusPlan",
+    "DashboardDatabaseUnreachableError",
     "dashboards_present",
     "default_corpus_dest",
     "ensure_dashboards",
@@ -48,18 +50,13 @@ CORPUS_MANIFEST = "dashboards.json"
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/neuronpedia_dashboard"
 
-#: The Hub collections a client reads to discover published corpora: the trust list. Each item is a bucket whose own
-#: ``dashboards.json`` says what it holds, so a collection names corpora and never describes them. It defaults to the
-#: project's collection; pass ``collections=`` to read another publisher's.
-DEFAULT_CORPUS_COLLECTIONS: tuple[str, ...] = ("speediedan/neuronpedia-dashboard-corpora-6af900009df4b4831ab24069",)
-
 
 @dataclass(frozen=True)
 class CorpusListing:
     """One discoverable corpus, described by its own manifest, enough to choose it before any GiB moves."""
 
     bucket: str
-    collection: str
+    publisher: str
     model_id: str | None
     source_set_id: str | None
     prompt_corpus: str | None
@@ -105,6 +102,23 @@ def default_corpus_dest() -> Path:
     return Path(hf_home) / "interpretune/neuronpedia/hub_downloads"
 
 
+class DashboardDatabaseUnreachableError(ConnectionError):
+    """The local Neuronpedia database could not be queried, so whether its dashboards are present is unknown."""
+
+
+def _probe_dashboards(db_url: str, *, model_id: str, source_set_id: str, min_sources: int) -> bool:
+    """:func:`dashboards_present`, raising :class:`DashboardDatabaseUnreachableError` when it cannot ask."""
+    try:
+        occupancy = describe_source_set(db_url, model_id=model_id, source_set_id=source_set_id)
+    except Exception as exc:
+        raise DashboardDatabaseUnreachableError(
+            f"Cannot query the local Neuronpedia database at {_redact_connection_url(db_url)} to check for the"
+            f" {model_id}/{source_set_id} dashboards: {exc}. Start the database, or fix the URL, and retry. Downloading"
+            " the corpus would not help: it is imported into this same database."
+        ) from exc
+    return occupancy.source_count >= min_sources and occupancy.neuron_count > 0
+
+
 def dashboards_present(
     db_url: str,
     *,
@@ -120,47 +134,46 @@ def dashboards_present(
     work with missing layers.
 
     Returns False rather than raising when the database cannot be reached, so a caller can decide
-    whether that is fatal; the subsequent import reports the connection failure properly.
+    whether that is fatal. :func:`ensure_dashboards` does not take that reading, since only an absent
+    corpus is fixed by a download.
     """
     try:
-        occupancy = describe_source_set(db_url, model_id=model_id, source_set_id=source_set_id)
-    except Exception as exc:
-        log.warning("could not probe %s/%s (%s); treating as absent", model_id, source_set_id, exc)
+        return _probe_dashboards(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources)
+    except DashboardDatabaseUnreachableError as exc:
+        log.warning("could not probe %s/%s (%s); treating as absent", model_id, source_set_id, exc.__cause__)
         return False
-    return occupancy.source_count >= min_sources and occupancy.neuron_count > 0
 
 
 def find_dashboard_corpora(
     model_id: str | None = None,
     source_set_id: str | None = None,
     *,
-    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    publishers: Iterable[str] | str | None = None,
     token: str | bool | None = None,
-    collection_token: str | bool | None = False,
 ) -> list[CorpusListing]:
-    """The published corpora the ``collections`` list, optionally only those serving a (model, source set).
+    """The corpora the trusted publishers have published, optionally only those serving a (model, source set).
 
-    Reads each collection's bucket items and each bucket's ``dashboards.json`` (about 3 KB, with ``token``); nothing
-    else is downloaded. The match is on what the corpus says about itself, never on the bucket's name.
-
-    Collections are read anonymously unless ``collection_token`` is given (for a private collection): the Hub refuses
-    a fine-grained token without ``collection.read`` even on a public collection, and the default one is public.
+    ``publishers`` is the trust list shared with analysis stores (``interpretune.hub.trusted_publishers``: the
+    keyword, else ``IT_TRUSTED_PUBLISHERS``, else the project's namespace). Each publisher's buckets are listed, and a
+    bucket is a corpus when it carries a ``dashboards.json`` (about 3 KB, read with ``token``); nothing else is
+    downloaded. The match is on what the corpus says about itself, never on the bucket's name.
     """
     from huggingface_hub import HfApi
 
+    from interpretune.hub.discovery import trusted_publishers
+
+    api = HfApi(token=token)
     found: list[CorpusListing] = []
-    for slug in collections:
-        for item in HfApi(token=collection_token).get_collection(slug, token=collection_token).items:
-            if item.item_type != "bucket":
-                log.debug(
-                    "skipping %s item %s of %s: corpora are discovered as buckets", item.item_type, item.item_id, slug
-                )
+    for publisher in trusted_publishers(publishers):
+        for bucket in api.list_buckets(namespace=publisher, token=token):
+            if not list(api.get_bucket_paths_info(bucket.id, [CORPUS_MANIFEST], token=token)):
+                log.debug("skipping bucket %s of %s: it carries no %s", bucket.id, publisher, CORPUS_MANIFEST)
                 continue
-            manifest = read_remote_manifest(item.item_id, token)
+            manifest = read_remote_manifest(bucket.id, token)
             corpus = manifest.get("prompt_corpus") or {}
             listing = CorpusListing(
-                bucket=item.item_id,
-                collection=slug,
+                bucket=bucket.id,
+                publisher=publisher,
                 model_id=(manifest.get("model") or {}).get("name"),
                 source_set_id=(manifest.get("source_set") or {}).get("id"),
                 prompt_corpus=_prompt_corpus_label(corpus),
@@ -182,17 +195,19 @@ def resolve_bucket_for(
     source_set_id: str,
     *,
     prompt_corpus: str | None = None,
-    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    publishers: Iterable[str] | str | None = None,
     token: str | bool | None = None,
-    collection_token: str | bool | None = False,
 ) -> str:
-    """The published bucket serving a (model, source set), chosen from the ``collections``.
+    """The published bucket serving a (model, source set), chosen from the trusted ``publishers``' corpora.
 
     One prompt corpus per source set is not guaranteed, so several matches are refused unless ``prompt_corpus``
     (``<hf_dataset_path>`` or ``<hf_dataset_path>:<config>``) picks one, and no match is refused with what the
-    collections do serve.
+    publishers do serve.
     """
-    discover = {"collections": collections, "token": token, "collection_token": collection_token}
+    from interpretune.hub.discovery import trusted_publishers
+
+    trusted = trusted_publishers(publishers)
+    discover = {"publishers": trusted, "token": token}
     matches = find_dashboard_corpora(model_id, source_set_id, **discover)
     if prompt_corpus is not None:
         matches = [m for m in matches if prompt_corpus in (m.prompt_corpus, (m.prompt_corpus or "").split(":")[0])]
@@ -204,8 +219,9 @@ def resolve_bucket_for(
         )
         wanted = f"{model_id!r}/{source_set_id!r}" + (f" with prompt corpus {prompt_corpus!r}" if prompt_corpus else "")
         raise LookupError(
-            f"no corpus in {list(collections)} serves {wanted}. They serve: {', '.join(served) or 'nothing'}. Pass"
-            " bucket= explicitly, another collections=, or generate the dashboards locally."
+            f"no corpus published by {list(trusted)} serves {wanted}. They serve: {', '.join(served) or 'nothing'}."
+            " Pass bucket= explicitly, trust another publisher (publishers= or IT_TRUSTED_PUBLISHERS), or generate the"
+            " dashboards locally."
         )
     options = ", ".join(f"{m.prompt_corpus} ({m.bucket})" for m in matches)
     raise LookupError(
@@ -395,8 +411,12 @@ def ensure_dashboards(
 
     ``allow_fetch=False`` turns this into an assertion -- useful where an automatic multi-GiB
     download would be a surprise (CI, for instance) -- raising with the command to run instead.
+
+    A database that cannot be queried raises :class:`DashboardDatabaseUnreachableError` rather than
+    reading as absent: a download cannot fix it, and starting one hides the connection failure behind
+    a long transfer into a database that will then refuse the import.
     """
-    if dashboards_present(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources):
+    if _probe_dashboards(db_url, model_id=model_id, source_set_id=source_set_id, min_sources=min_sources):
         log.info("dashboards for %s/%s already present", model_id, source_set_id)
         return True
 

@@ -29,3 +29,7 @@ models:
     allow_patterns: ["*.json", "*.safetensors", "merges.txt", "vocab.json", "chat_template.jinja"]
   - repo_id: neuronpedia/jacobian-lens
     allow_patterns: ["qwen3.5-4b/*"]
+  # The published gemma-2-2b J-lens (about 0.27 GiB), read by the attention-attribution notebook's lens-basis test
+  # (`test_ct_attention_attribution_notebook`).
+  - repo_id: neuronpedia/jacobian-lens
+    allow_patterns: ["gemma-2-2b/jlens/*"]

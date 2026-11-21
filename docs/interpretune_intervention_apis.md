@@ -61,6 +61,15 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+- `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
+  attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
+  a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block
+  $b$ of a model with blocks of $s$ coordinates is coordinates $bs$ to $bs + s - 1$, and each tensor with a latent axis
+  takes a unit delta over those coordinates' slices: the encoder's rows and bias, and the decoder's rows. The deltas
+  take `adapter:<name>`, and the rest of the latent model keeps its own role, so a frozen (`artifact`) featurizer can
+  be tuned at a few blocks only. Each tensor's latent axis is found by its length; a featurizer as wide as its site
+  names the tensors to adapt and their axes in `axes`
+  ([#868](https://github.com/speediedan/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
   token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
   weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
@@ -128,12 +137,15 @@ answers only whether a component provides it. The configurations it honours are 
 whose axes mirror venngram's `Support`: a backend that implements `fwd_w_intervention` for `add` and `project` but
 not `patch` declares the surface and a record saying so, and a gate refuses `patch` before anything runs.
 
-> **The capability namespace is under review.** `Capability` is one flat enum whose members sit at different levels:
-> surfaces (`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`) beside techniques (`ATTRIBUTION_GRAPH`,
-> `HEAD_ATTRIBUTION`). A member per technique does not scale to the range of experiments Interpretune composes, so
-> the namespace is likely to change soon: to the core surfaces alone, with techniques as registered ops that declare
-> what they require, or to a hierarchy that users and Hub collections can extend
-> ([#984](https://github.com/speediedan/interpretune/issues/984)).
+**Techniques are bound to providers, not members of the namespace.** `Capability` holds the core surfaces only
+(`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`). An op names the techniques it executes in
+`required_techniques` (`attribution_graph`, `head_attribution`, or one a third party registers), and a component that
+implements one declares a typed `TechniqueSupport` record under that name in its `technique_support`. The record's
+type names its technique and the protocol a provider must satisfy, and says what the technique needs of the model
+(`AttributionGraphSupport` requires the modeling module's own eager attention). Before anything runs, the op's gate
+resolves each technique to exactly one provider: a composition with every core surface and no implementation, two
+implementations, or a record of the wrong type is refused by name. A new technique is a new record type and its ops,
+never an edit to the enum.
 
 **Two providers of one target are legitimate, and are resolved by name.** In a circuit-tracer composition the model
 backend reaches an SAE's features at `hook_sae_acts_post` and the replacement model reaches its transcoders' features.
@@ -150,8 +162,8 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
 ## Current surfaces
 
 - `ModelBackend.fwd_w_intervention(...)` is the model-level API for interventions on hook tensors,
-  implemented with the same maths by both the TransformerLens and NNsight model backends at either position
-  scope, `last_token` or `all_positions` (including
+  implemented with the same maths by both the TransformerLens and NNsight model backends at each declared position
+  scope, `last_token`, `all_positions` or `positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
   the ops, targets and position scopes; an op declares the tensor ops it needs in `required_ops` (beside any
   composition ops it depends on) and the scopes in `required_position_scopes`, and the gate compares the two before
@@ -189,7 +201,12 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
     feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
     scalar) are not yet supported on this path and are refused by name
-    ([#966](https://github.com/speediedan/interpretune/issues/966)).
+    ([#966](https://github.com/speediedan/interpretune/issues/966)). `export_graph_subset` writes such a document
+    from a circuit-tracer attribution graph, pruned (`build_pruned_graph`) or whole: each selected feature is a node at
+    its source layer, position and feature index with its activation, anchored `from_end` by default (or `absolute`,
+    `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
+    the source prompt, attribution targets and pruning settings are its provenance. `.write(path)` writes it, its
+    table in a sidecar when it is large.
 
   What each recipe op is honoured as, per surface and target:
 
@@ -381,8 +398,7 @@ Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905
 
 `interpretune.analysis.venngram` resolves a latent address against an explicit catalog of loaded latent models
 (`LatentCatalog`). This is the addressing and coordinate layer: it reads and edits coordinates of tensors it is
-given. Executing a frame or chart edit natively through a backend's hooks is not part of it yet
-([#865](https://github.com/speediedan/interpretune/issues/865)).
+given. A frame or chart edit also runs natively inside a backend's forward pass (see "Native latent edits" below).
 
 **One address form for every dictionary.** A `LatentBinding` declares a loaded model at one layer and activation point,
 its decoder rows, and its block size $b$: $b = 1$ for an SAE or transcoder, and block $g$ of a block-sparse featurizer
@@ -415,6 +431,38 @@ the null space of $M$ as it was. A map whose rank is below its dimension is refu
 squares. A binding names its space (`space="jlens"`), the address qualifier `space:jlens` selects by it, and the
 catalog's `site_coordinates`, `replace_site_coordinates` and `apply_site_chart` read and write site activations
 through it.
+
+### Native latent edits
+
+`latent_edit_spec(catalog, target, op, name=..., version=..., **args)` compiles one frame or chart edit of one
+feature block into a hook name and an `InterventionSpec` for `model_fwd_intervention` or a backend's
+`fwd_w_intervention`. The hook is the latent sub-hook of the model the block belongs to,
+`blocks.<layer>.<site>.hook_sae_acts_post`, so the edit runs on both CPU backends with the latent model attached
+(`use_latent_models`), and its token scope (`position_scope`) is independent of the block it selects.
+
+| op | catalog edit | arguments |
+| --- | --- | --- |
+| `frame_replace` | `replace_coordinates` in frame `name` | `coordinates` |
+| `chart_set` | `apply_chart(op="set")` in chart `name` | `value` |
+| `chart_path` | `apply_chart(op="path")` | `waypoints`, `t` |
+| `chart_rotate` | `apply_chart(op="rotate")` | `by` |
+| `chart_scale_norm` | `apply_chart(op="scale_norm")` | `factor` |
+
+At the latent sub-hook the activations are the block's latent coefficients $a_B$, and the values the catalog edits
+are the block's decoded contribution $v = a_B D_B$, with $D_B$ the block's decoder rows. The executor computes the
+catalog's own edit $v'$ and writes back the minimum-norm change of the coefficients,
+$a_B' = a_B + d\left(v' - v\right) D_B^{+}$, where $d$ is the spec's operand, the dose (1 applies the edit, 0 is the
+identity). The frame spans the rows of $D_B$, so the decoded contribution moves by exactly $d\left(v' - v\right)$, and
+the other blocks and the latent model's error term are untouched.
+
+The ops are tensor ops in the bundled `latent` op collection, each with its `OpSpec` and an executor registered by
+name. Before any pass, both backends refuse an edit whose latent sub-hook has no attached model, whose attached model
+is not the object the target resolved to, or whose decoder rows have changed since the catalog was built, and an edit
+on the gradient flow. An unknown or stale frame or chart version is refused when the spec is compiled.
+
+A frame-free edit of a whole block needs no new op: `block_edit_spec(catalog, target, op, value=...)` writes `set` (the
+block's activations from a source run) and `ablate` as a core `replace` on the block's columns, and `scale_norm` as a
+core `scale`, which scales the block's decoded contribution, and so its norm, by the same factor.
 
 ## Gradient interventions
 
@@ -852,3 +900,36 @@ Cross-backend parity for intervention behavior should follow the same resource-a
 - prefer shared extraction/caching helpers from `tests/analysis_resource_utils.py`
 - prefer focused parity comparisons over blanket standalone isolation
 - reserve standalone-heavy GPU coverage for cases where backend/runtime constraints actually require it
+
+
+## Explicit position sets
+
+A hook payload can set `position_scope: "positions"` and `positions: [9, 10]` to edit selected columns of the
+activation tensor. Indices are distinct, non-negative and zero-based in the **padded batch tensor**. Left padding
+is included in that coordinate system: an index never shifts according to an example's attention mask. To refer
+to real tokens in differently padded examples, prepare batches whose selected columns have the intended meaning.
+
+The intervention tensor has one leading operand row for each listed position, in the same order. For example:
+
+```python
+payload = {
+    "blocks.18.hook_resid_post": {
+        "op": "add",
+        "position_scope": "positions",
+        "positions": [9, 10],
+        "intervention_tensor": torch.stack([city_delta, answer_delta]),
+    }
+}
+it.model_fwd_intervention(..., interventions=payload)
+```
+
+The remaining operand axes have their usual meaning. A patch therefore supplies one pair of lens vectors per
+position; a rejection supplies one complete span per position. Even a shared operand is stacked explicitly, so a
+position axis cannot be mistaken for a basis axis. Position counts, operand shapes and bounds are checked before
+any position is changed. The same payload can edit gradients through `model_bwd_intervention` on a backend that
+declares that flow. A backend without `positions` in its support record refuses the payload.
+
+Venngram recipes with `tokens: {positions: [...]}` translate to this scope. A recipe's operand is shared over its
+token set, so its translator repeats the operand rows explicitly; different operands can be expressed as separate
+stages. A raw hook payload can carry different rows in one spec. The op shorthand names the indices through
+`intervention_positions` alongside `intervention_position_scope`.

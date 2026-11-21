@@ -52,7 +52,7 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "as_generator": True}
-    with profiling(module) as prof:
+    with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
             for batch_idx, batch in tqdm(enumerate(dataloader)):
@@ -332,6 +332,7 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
                     "per_latent_preds": value.per_latent_preds,
                     "required_tensor_ops": sorted(value.required_tensor_ops),
                     "required_position_scopes": sorted(str(s) for s in value.required_position_scopes),
+                    "required_techniques": sorted(value.required_techniques),
                 },
                 path=f"{path}<op:{value.name}>",
             ),

@@ -138,6 +138,39 @@ Two blocks with opposite rules:
 - `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
   detection without identity churn.
 
+`artifacts.interchange` records how the Parquet was written: `files`, the published Parquet paths, and
+`row_group_target_bytes`, the row-group size target of the push. A streamed pull reads exactly the listed `files`
+at the envelope's commit rather than assuming a path layout, and refuses an envelope that lists none. Both fields are
+additive, so they needed no schema bump; see [Streaming a store](finding_analysis_stores.md#streaming-a-store).
+
+### The `subject` block: what the store was computed on
+
+A store's columns mean something only against the model, tokenizer, component map and latent
+dictionaries that produced them, and none of those can be recovered from the columns. So since schema
+version 2 every envelope carries a `subject`:
+
+| key | what it records |
+| --- | --- |
+| `model.id`, `model.revision` | the model the module loaded, and the resolved commit of its weights when the loader reports one |
+| `architecture` | the architecture class name (`config.architectures[0]`) |
+| `tokenizer.id` | the tokenizer's `name_or_path` |
+| `component_map` | the map that resolved the store's sites: its `architecture`, `source` and `schema_version` |
+| `dictionaries` | each attached latent dictionary by `kind` (`sae_lens`: `release`, `sae_id`; `circuit_tracer`: `transcoder_set`) |
+
+`AnalysisCfg.apply` stamps the subject onto the store it writes, from the module the op runs on, for
+the reason it stamps op provenance: only write time knows it. Every key is present, and what
+interpretune cannot read is recorded as `null` rather than filled with a plausible value. Only the
+model id is required.
+
+A store assembled outside an op (with `analysis_store_from_batches`, say) carries no subject, and
+publishing it is refused until one is given:
+
+```python
+it.hub.push_analysis_store(store, repo_id, subject=it.hub.subject_from_module(module))
+```
+
+`it.hub.pull_analysis_store` puts the subject back on the store it returns, as `store.subject`.
+
 ### Checks on push
 
 `Dataset.push_to_hub` writes the parquet, and from `datasets` 4.1.0 (interpretune's floor) every
@@ -165,8 +198,10 @@ provenance is: what a name resolves to later is not necessarily what produced th
 
 `protocol_cls` closes a gap where a store pushed with a custom protocol came back with the default —
 the columns were intact, but the attribute surface the protocol exists to provide was silently absent.
-An unresolvable protocol now falls back to the default **with a warning** rather than silently, since
-silently serving the default is exactly the failure recording it is meant to prevent.
+Pulling a store resolves `protocol_cls` only from `interpretune` or from a hub component module already
+loaded through the remote-code gate, since importing a path runs its module. Anything else, or a path
+that does not name a batch protocol, is **refused by name**: serving the default in its place is
+exactly the failure recording the protocol is meant to prevent.
 
 ### Schema versioning policy
 
@@ -203,10 +238,14 @@ three different actions:
 | `schema` missing or not an integer | refuse: this is not an Interpretune artifact envelope |
 
 **Raising the floor retires published artifacts**, so it is a deliberate, documented act rather
-than a side effect of a refactor. The floor is currently `1`, the schema is currently `1`, and
-`tests/core/fixtures/it_artifact_schema1.json` pins a literal v1 envelope that the test suite reads
-on every run — the piece that actually catches an accidental mandatory-field change, since every
-other test builds its envelope with the current writer and so drifts along with it.
+than a side effect of a refactor. The floor is currently `1` and the schema is currently `2`: version
+2 made the `subject` block mandatory, and a version-1 envelope is still read, with no subject. Each
+version in the window has an envelope the writer of that version produced, frozen under
+`tests/core/fixtures/` (`it_artifact_schema1.json`, `it_artifact_schema2.json`) and read on every run.
+That is the piece that catches an accidental mandatory-field change, since every other test builds its
+envelope with the current writer and so drifts along with it. The reader matrix runs against those same
+fixtures: a reader one version behind refuses the version-2 envelope as newer, and a floor raised to `2`
+refuses the version-1 envelope.
 
 **Publishing refuses to emit an envelope this build could not read back.** `build_analysis_store_envelope`
 returns its result through the same validator the read paths use, so a schema bumped past the

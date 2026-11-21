@@ -57,16 +57,9 @@ def _tl_model_backend(_module: Any) -> Any:
 
 
 def _nnsight_model_backend(module: Any) -> Any:
-    from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
-    from interpretune.analysis.backends.hook_mapping import HookNameResolver
+    from interpretune.adapters.nnsight.backends import NNsightModelBackend
 
-    hf_model = NNsightModelBackend._get_hf_model(module.model)
-    hf_config = getattr(hf_model, "config", None)
-    architectures = getattr(hf_config, "architectures", None) if hf_config else None
-    model_arch = architectures[0] if architectures else type(hf_model).__name__
-    backend = NNsightModelBackend(HookNameResolver(model_arch), configs_per_pass=get_default_configs_per_pass())
-    backend.register_model_hooks(module.model)
-    return backend
+    return NNsightModelBackend.for_model(module.model)
 
 
 CT_MODEL_BACKEND_FACTORIES["transformerlens"] = _tl_model_backend

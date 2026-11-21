@@ -191,6 +191,33 @@ def test_notebook_table_escapes_cells_and_renders_only_http_links():
         build_notebook_table_html([[1, 2]], ["only one"], title="t")
 
 
+def test_notebook_table_colours_signed_cells_aligns_numbers_and_shows_a_legend():
+    from it_examples.utils.nb_ui_utils import (
+        NEGATIVE_COLOUR,
+        POSITIVE_COLOUR,
+        SIGN_LEGEND,
+        Signed,
+        build_notebook_table_html,
+    )
+
+    html_out = build_notebook_table_html(
+        [["up", Signed(1.5), 3], ["down", Signed(-0.25, "+.3f"), 2.5], ["flat", Signed(0.0), "n/a"]],
+        ["row", "shift", "count"],
+        title="t",
+        legend=SIGN_LEGEND,
+        emphasize=[1],
+    )
+    assert f'style="color:{POSITIVE_COLOUR};font-weight:600">+1.50</td>' in html_out
+    assert f'style="color:{NEGATIVE_COLOUR};font-weight:600">-0.250</td>' in html_out
+    assert 'style="color:inherit;font-weight:600">+0.00</td>' in html_out
+    assert '<td class="num">3</td>' in html_out and "<td>n/a</td>" in html_out
+    assert html_out.count('<tr class="em">') == 1 and '<tr class="em"><td>down</td>' in html_out
+    assert 'class="legend"' in html_out and "positive" in html_out and "negative" in html_out
+    assert 'class="legend"' not in build_notebook_table_html([["a"]], ["c"], title="t")
+    with pytest.raises(ValueError, match="outside the table"):
+        build_notebook_table_html([["a"]], ["c"], title="t", emphasize=[1])
+
+
 def test_feature_context_links_quotes_tokens_and_marks_missing_explanations():
     ctx = aah.FeatureContext(
         tokens=["<bos>", " is"],
@@ -291,3 +318,48 @@ def test_plot_state_read_one_panel_per_position():
     traces: list[Any] = list(aah.plot_state_read(reads, {0: "first", 1: "second"}, "t", "y").data)
     assert len(traces) == 4 and [t.name for t in traces if t.showlegend] == ["Dallas", "Detroit"]
     assert list(traces[2].y) == [1.0, 2.0]  # panels in position order, prompts within: Dallas at position 1
+
+
+def test_token_positions_mark_each_labelled_position_once_in_the_legend():
+    from it_examples.utils.nb_ui_utils import build_token_positions_html
+
+    tokens = ["<bos>", "\u2581apple", "\u2581:", "\n", "Fruit"]
+    marks = {1: ("probe word", "#111111"), 3: ("context state", "#222222"), 4: ("answer state", "#333333")}
+    html_out = build_token_positions_html(tokens, marks, title="Where <states> are read")
+    assert "Where &lt;states&gt; are read" in html_out and "&lt;bos&gt;" in html_out
+    assert " apple" in html_out and "\u23ce" in html_out  # the space marker and the newline as a reader sees them
+    assert html_out.count('class="lab"') == 3 and 'title="position 4: answer state"' in html_out
+    assert html_out.count('class="sw"') == 3
+    with pytest.raises(ValueError, match=r"marked positions \[5\] are outside the prompt's 5 tokens"):
+        build_token_positions_html(tokens, {5: ("x", "#000")}, title="t")
+
+
+@pytest.mark.parametrize("n_layers", [26, 16, 12])
+def test_intervention_arms_resolve_on_any_depth(n_layers):
+    half = n_layers // 2
+    sites = aah.resolve_intervention_arms(n_layers)
+    assert set(sites) == set(aah.INTERVENTION_ARMS)
+    assert sites["attention, all layers"] == tuple(f"blocks.{layer}.hook_attn_out" for layer in range(n_layers))
+    assert sites["MLP, late half"] == tuple(f"blocks.{layer}.hook_mlp_out" for layer in range(half, n_layers))
+    early, late = set(sites["attention, early half"]), set(sites["attention, late half"])
+    assert not early & late and early | late == set(sites["attention, all layers"])
+    both = set(sites["attention, all layers"]) | set(sites["MLP, all layers"])
+    assert set(sites["both, all layers"]) == both and len(sites["both, all layers"]) == 2 * n_layers
+
+
+def test_intervention_arms_take_another_book():
+    sites = aah.resolve_intervention_arms(
+        4, {"attention, last layer": "@attn & layers:-1"}, aah.intervention_arm_sets(4)
+    )
+    assert sites == {"attention, last layer": ("blocks.3.hook_attn_out",)}
+
+
+def test_module_tokenizer_prefers_the_replacement_models_then_the_configs():
+    replacement, configured = object(), object()
+    with_both = SimpleNamespace(
+        replacement_model=SimpleNamespace(tokenizer=replacement), it_cfg=SimpleNamespace(tokenizer=configured)
+    )
+    assert aah.module_tokenizer(with_both) is replacement
+    assert aah.module_tokenizer(SimpleNamespace(it_cfg=SimpleNamespace(tokenizer=configured))) is configured
+    with pytest.raises(ValueError, match="no tokenizer"):
+        aah.module_tokenizer(SimpleNamespace(it_cfg=SimpleNamespace(tokenizer=None)))

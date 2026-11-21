@@ -1,0 +1,89 @@
+{
+ "artifact_kind": "analysis-store",
+ "artifacts": {
+  "columns": [
+   "active_features",
+   "graph_cfg_json",
+   "input_string",
+   "input_tokens"
+  ],
+  "interchange": {
+   "files": [
+    "data/validation-00000-of-00001.parquet"
+   ],
+   "format": "parquet",
+   "local_format": "arrow"
+  },
+  "num_rows": 2,
+  "split": "validation"
+ },
+ "generated_utc": "2026-11-20T00:00:00+00:00",
+ "identity": {
+  "created_utc": "2026-11-20T00:00:00+00:00",
+  "store_id": "aadcd8d6-0000-4000-8000-000000000002"
+ },
+ "interpretune": {
+  "analysis_backend": null,
+  "col_cfg": {
+   "active_features": {
+    "array_dtype": null,
+    "array_shape": [
+     null,
+     3
+    ],
+    "connected_obj": "analysis_store",
+    "datasets_dtype": "int64",
+    "default": null,
+    "dyn_dim": null,
+    "dyn_dim_ceil": null,
+    "intermediate_only": false,
+    "non_tensor": false,
+    "per_latent": false,
+    "per_latent_model_hook": false,
+    "required": true,
+    "sequence_type": false
+   },
+   "input_tokens": {
+    "array_dtype": null,
+    "array_shape": null,
+    "connected_obj": "analysis_store",
+    "datasets_dtype": "int64",
+    "default": null,
+    "dyn_dim": null,
+    "dyn_dim_ceil": null,
+    "intermediate_only": false,
+    "non_tensor": false,
+    "per_latent": false,
+    "per_latent_model_hook": false,
+    "required": true,
+    "sequence_type": true
+   }
+  }
+ },
+ "provenance": {
+  "content_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "interpretune_version": "0.1.0.dev2"
+ },
+ "schema": 2,
+ "subject": {
+  "architecture": "Gemma2ForCausalLM",
+  "component_map": {
+   "architecture": "Gemma2ForCausalLM",
+   "schema_version": 1,
+   "source": "gemma2.yaml"
+  },
+  "dictionaries": [
+   {
+    "kind": "circuit_tracer",
+    "transcoder_set": "gemma"
+   }
+  ],
+  "model": {
+   "id": "google/gemma-2-2b",
+   "revision": "c5ebcd40d208330abc697524c919956e692655cf"
+  },
+  "tokenizer": {
+   "id": "google/gemma-2-2b"
+  }
+ }
+}

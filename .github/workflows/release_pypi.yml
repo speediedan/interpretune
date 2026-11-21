@@ -17,7 +17,7 @@ on:
         required: false
         type: boolean
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "requirements.txt"
       - "pyproject.toml"

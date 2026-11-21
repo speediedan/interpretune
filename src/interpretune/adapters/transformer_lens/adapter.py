@@ -26,6 +26,7 @@ from interpretune.utils import (
     rank_zero_info,
     rank_zero_debug,
     _resolve_env_auth_token,
+    check_gpu_device_request,
 )
 from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
@@ -85,6 +86,7 @@ def _place_hf_model_before_wrap(hf_model: torch.nn.Module, pruned_cfg: dict) -> 
     ``boot_transformers`` loads onto the target device for the same reason.
     """
     if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
+        check_gpu_device_request(pruned_cfg["device"], field="tl_cfg.device")
         hf_model.to(pruned_cfg["device"])
 
 
@@ -384,6 +386,8 @@ class BaseITLensModule(BaseITModule):
         tl_cfg = self.it_cfg.tl_cfg
         cfg = tl_cfg.cfg
         self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
+        if getattr(tl_cfg, "move_to_device", True):
+            check_gpu_device_request(getattr(cfg, "device", None), field="tl_cfg.cfg.device")
         # TransformerLens 4.0 attaches `boot_native` when `transformer_lens` imports its native source module, so it
         # exists at runtime but not on the class pyright reads.
         bridge = TransformerBridge.boot_native(  # pyright: ignore[reportAttributeAccessIssue]  # attached at runtime by the native source module

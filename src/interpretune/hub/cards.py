@@ -196,16 +196,14 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
             )
             for point, why in sorted(gaps.items()):
                 lines.append(f"  - cannot capture `{point}`: {why}")
-        ag = decl.get("attribution_graph")
-        if ag:
-            lines.append(
-                "- attribution graphs: "
-                + (
-                    "require the modeling module's own eager attention"
-                    if ag.get("requires_own_eager_attention")
+        for technique, by_slot in sorted((decl.get("techniques") or {}).items()):
+            for slot, record in sorted(by_slot.items()):
+                need = (
+                    "requires the modeling module's own eager attention"
+                    if record.get("requires_own_eager_attention")
                     else "no model requirement"
                 )
-            )
+                lines.append(f"- technique `{technique}` ({slot}): {need}")
     lines += [
         "",
         f"Cases: {len(report.get('ran') or [])} ran, {len(report.get('skipped_undeclared') or [])} skipped because the "

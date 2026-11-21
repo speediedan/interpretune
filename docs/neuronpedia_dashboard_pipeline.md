@@ -24,9 +24,11 @@ defaults:
 - `IT_NP_CACHE` is the Neuronpedia cache root (dashboard runs, pretokenized prompt caches, activation caches).
   `IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`, so it only needs to be set when the cache should
   live outside the HuggingFace cache tree. `HF_DATASETS_CACHE` and `HF_HUB_CACHE` derive from `HF_HOME` as usual.
-- Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
+- Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`,
   `NEURONPEDIA_REPO_ROOT` and `NEURONPEDIA_UTILS_ROOT` (the last defaults to
-  `~/repos/neuronpedia/utils/neuronpedia-utils`).
+  `~/repos/neuronpedia/utils/neuronpedia-utils`). sae-lens is imported from the installed release: a SAELens checkout
+  is put on the generation subprocess's `PYTHONPATH` only when `--saelens-repo-root` names one, as the
+  preserved-baseline benchmark legs do.
 
   You usually do not need to set these by hand, `scripts/setup_dashboard_benchmark_env.py` writes all four
   into the `benchmark_env.sh` it generates, pointing at whatever checkouts it actually used — including when it
@@ -1364,37 +1366,33 @@ inventories, patched-run records) once J-lens support lands — scoped and track
 AnalysisStore hub upload/download ([interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
 
 <a id="hub-dashboard-discovery"></a>
-### Finding a published corpus: the dashboard-corpus collection
+### Finding a published corpus: trusted publishers
 
 Reading one feature cheaply from a published corpus is what the row-group layout described under
 [what makes a corpus streamable](#publishing-generated-dashboards-to-the-hub) buys. *Finding* the corpus is the other
 half. Buckets are not indexed by content and bucket names are free text, so guessing one from a naming convention
 would download a corpus that imports **successfully** into the requested source set while containing something else.
 
-So corpora are discovered through Hub collections whose items are buckets, and each bucket's own `dashboards.json`
-says what it holds:
+So corpora are discovered per trusted publisher, and each bucket's own `dashboards.json` says what it holds:
 
-- `find_dashboard_corpora(model_id, source_set_id)` (in `interpretune.utils.neuronpedia_hub_fetch`) lists the bucket
-  items of each collection and reads each `dashboards.json` (about 3 KB). Each result carries what a caller chooses
-  by before any GiB moves: the prompt corpus (`<hf_dataset_path>` or `<hf_dataset_path>:<config>`), layers, prompt
-  and token counts, and whether the Parquet carries a page index.
+- `find_dashboard_corpora(model_id, source_set_id)` (in `interpretune.utils.neuronpedia_hub_fetch`) lists each trusted
+  publisher's buckets and reads the `dashboards.json` of each bucket that carries one (about 3 KB). A bucket without
+  one is not a corpus, whatever it is named. Each result carries what a caller chooses by before any GiB moves: the
+  prompt corpus (`<hf_dataset_path>` or `<hf_dataset_path>:<config>`), layers, prompt and token counts, and whether the
+  Parquet carries a page index.
 - `resolve_bucket_for(model_id, source_set_id)` selects from those results. No match is refused with what the
-  collections do serve. More than one prompt corpus per source set is normal, so several matches are refused unless
+  publishers do serve. More than one prompt corpus per source set is normal, so several matches are refused unless
   `prompt_corpus=` picks one; the first match is never taken. `ensure_dashboards` takes the same `prompt_corpus=`.
-- **The trust list** is the `collections=` a client reads. It defaults to the project's own public collection,
-  [`speediedan/neuronpedia-dashboard-corpora`](https://huggingface.co/collections/speediedan/neuronpedia-dashboard-corpora-6af900009df4b4831ab24069)
-  (`DEFAULT_CORPUS_COLLECTIONS`). Pass another publisher's collection to import from them.
-- **The permission model is still evolving.** Trust is per publisher for now: reading a publisher's collection trusts
-  every corpus in it. That is a starting point, and a finer, sub-publisher trust posture may be adopted. AnalysisStores
-  have no discovery path yet; their discovery, the trust model they share with dashboards, and a demonstrated
-  streaming read are tracked in [#1008](https://github.com/speediedan/interpretune/issues/1008).
-- Collections are read anonymously unless `collection_token=` is given: the Hub refuses a fine-grained token without
-  `collection.read` even on a public collection. Manifests are read with `token=`.
-- **Registering a corpus needs no client release.** `publish_dashboard_run(..., collection=<slug>)` (or
-  `scripts/publish_dashboards_to_hub.py --collection <slug>`) adds the bucket to a collection once every publish check
-  has passed, so a corpus whose read-back failed is never discoverable. It needs `collection.write`, which the
-  dashboards token usually lacks, so `collection_token=` (`--collection-token`) is separate. A dataset-store publish
-  naming a collection is refused before the upload, because discovery reads bucket items only.
+- **The trust list** names publishers (Hub namespaces), and it is the same list AnalysisStore discovery reads: the
+  `publishers=` keyword, else the `IT_TRUSTED_PUBLISHERS` environment variable (comma-separated, read at call time),
+  else the project's own namespace, `speediedan`. Trusting a publisher trusts every corpus and store it publishes. A
+  finer, per-collection posture may follow if a use for it appears. See
+  [Finding and using AnalysisStores](finding_analysis_stores.md).
+- Buckets and manifests are read with `token=`, so a token can reach a publisher's private corpora.
+- **Publishing a corpus makes it discoverable.** A bucket in a trusted publisher's namespace that carries a
+  `dashboards.json` is listed as soon as it lands, so there is no registration step. Publish checks run before and
+  after the upload, and a corpus whose read-back fails raises `PublishedArtifactCheckError`: delete or fix that bucket,
+  since it is already visible.
 
 ## Model metadata guardrail
 

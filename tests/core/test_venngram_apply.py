@@ -322,3 +322,13 @@ def test_a_composed_gradient_target_is_refused_like_a_single_one():
     }
     with pytest.raises(MisconfigurationException, match="addresses the gradient"):
         recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 16})
+
+
+def test_position_scoped_recipe_repeats_its_operand_without_touching_other_positions():
+    doc = {**RECIPE, "stages": [{**RECIPE["stages"][0], "tokens": {"positions": [2, 0]}}]}
+    payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    assert spec.positions == (2, 0)
+    result = apply_intervention(torch.zeros(1, 4, 8192), spec, last_pos=3)
+    assert result[0, 2, 7] == result[0, 0, 7] == 0.5
+    assert torch.count_nonzero(result) == 2

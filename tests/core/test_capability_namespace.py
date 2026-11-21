@@ -147,7 +147,9 @@ class TestTheInterventionRecord:
         with pytest.raises(ValueError, match="the 'activation' target carries a FeatureTargetSupport detail"):
             InterventionSupport(ops={"replace"}, position_scopes={"positions"}, targets={"activation": detail})
 
-    def test_hook_backends_declare_hook_scopes_only(self):
-        """Explicit positions are named by a feature tuple, never by a hook spec, so ``every()`` does not claim
-        them."""
-        assert InterventionSupport.every().position_scopes == {PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}
+    def test_hook_backends_declare_every_supported_hook_scope(self):
+        assert InterventionSupport.every().position_scopes == {
+            PositionScope.LAST_TOKEN,
+            PositionScope.ALL_POSITIONS,
+            PositionScope.POSITIONS,
+        }

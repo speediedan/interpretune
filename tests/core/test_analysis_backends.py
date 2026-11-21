@@ -825,17 +825,15 @@ class TestBackendCapability:
     def test_gradients_value(self):
         assert Capability.GRADIENTS.value == "gradients"
 
-    def test_attribution_value(self):
-        assert Capability.ATTRIBUTION_GRAPH.value == "attribution_graph"
-
     def test_intervention_value(self):
         assert Capability.INTERVENTION.value == "intervention"
 
     def test_capture_value(self):
         assert Capability.CAPTURE.value == "capture"
 
-    def test_head_attribution_value(self):
-        assert Capability.HEAD_ATTRIBUTION.value == "head_attribution"
+    def test_the_members_are_the_core_surfaces_only(self):
+        """Techniques are bound to providers through the op registry, never members (see ``TechniqueSupport``)."""
+        assert {m.value for m in Capability} == {"intervention", "latent_models", "gradients", "capture"}
 
     def test_scopes_and_modes_are_a_support_record_not_members(self):
         """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
@@ -860,11 +858,12 @@ class TestBackendCapability:
     def test_enum_members_count(self):
         """A ratchet, so adding a capability is a conscious act rather than a side effect.
 
-        Six members, one namespace whichever component provides them. Position scope was briefly two flat members
-        beside an efficiency flag; those were configurations of one surface, and they live in the surface's support
-        record instead, as the activation and feature interventions now do as targets of one ``INTERVENTION``.
+        Four members, the core surfaces, one namespace whichever component provides them. Position scope was briefly two
+        flat members beside an efficiency flag; those were configurations of one surface, and they live in the surface's
+        support record instead. The two technique members left the same way: a technique is bound to the component
+        declaring its typed record, so adding one never touches this enum.
         """
-        assert len(Capability) == 6
+        assert len(Capability) == 4
 
     def test_membership_in_frozenset(self):
         caps = frozenset({Capability.LATENT_MODELS, Capability.GRADIENTS})
@@ -1112,6 +1111,7 @@ class TestTLFwdWHooksBatched:
         mock_model.run_with_hooks_with_saes.side_effect = [fake_logits_1, fake_logits_2]
         sae_handle = MagicMock()
         sae_handle.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
+        mock_model.get_sae_hook_name.side_effect = lambda sae, suffix: f"{sae.cfg.metadata.hook_name}.{suffix}"
 
         hook_configs = [
             [("blocks.0.hook_resid_post.hook_sae_acts_post", lambda t, h: t)],
@@ -1836,17 +1836,16 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
 
 class TestCapabilitySpellings:
-    """The normalizer refuses a retired spelling by name with its replacement, and accepts each vocabulary's
-    own."""
+    """The normalizer accepts each vocabulary's own spellings and refuses any other by name, with the vocabulary
+    listed."""
 
-    def test_a_retired_spelling_is_refused_with_its_replacement(self):
+    def test_a_spelling_outside_the_vocabulary_is_refused_with_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        for retired in ("activation_intervention", "feature_intervention"):
-            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*'intervention'"):
-                normalize_backend_capability(retired)
-        with pytest.raises(ValueError, match="'attribution' is a retired capability spelling.*'attribution_graph'"):
-            normalize_backend_capability("attribution")
+        # former spellings get no special handling: they are refused like any other unknown name
+        for spelling in ("activation_intervention", "attribution", "attribution_graph", "head_attribution", "nope"):
+            with pytest.raises(ValueError, match=f"'{spelling}' is not a capability: spellings are .*'intervention'"):
+                normalize_backend_capability(spelling)
 
     def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
         from interpretune.analysis.backends import (
@@ -1861,7 +1860,7 @@ class TestCapabilitySpellings:
     def test_an_unknown_spelling_lists_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'head_attribution'"):
+        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'capture'"):
             normalize_backend_capability("steering")
 
 
@@ -2004,6 +2003,37 @@ class TestGradientReadouts:
         for point in points:
             torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
             torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_no_interventions_capture_the_gradients_in_one_pass(self, backend_name, hf, request, monkeypatch):
+        """Gradient capture alone (gradient-times-activation attribution): an empty payload returns the reference
+        gradients as both pre and post from one traced backward, where an edit takes two (the counter's
+        control)."""
+        import interpretune.adapters.transformer_lens.backends as tl_backends
+
+        readout = self._readouts()["logit_difference"]
+        points = [self.EDIT, self.CAPTURE]
+        clean = hf.gradients(self.IDS, readout, observe=points)
+        backend, model, batch = self._backend(backend_name, request)
+        owner, attr = (
+            (tl_backends, "_tl_backward") if backend_name == "transformer_lens" else (backend, "_traced_backward")
+        )
+        traced = getattr(owner, attr)
+        passes = []
+
+        def counted(*args, **kwargs):
+            passes.append(1)
+            return traced(*args, **kwargs)
+
+        monkeypatch.setattr(owner, attr, counted)
+        pre, post, _ = backend.bwd_w_intervention(model, batch, {}, readout, capture=points)
+        assert len(passes) == 1, f"an empty payload ran {len(passes)} traced backward passes"
+        for point in points:
+            torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(post[point], pre[point])
+        passes.clear()
+        backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        assert len(passes) == 2, f"an edit ran {len(passes)} traced backward passes, so the counter does not count them"
 
     @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
     def test_a_declared_readout_takes_the_gradients_its_hand_written_form_does(self, backend_name, request):
