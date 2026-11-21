@@ -18,6 +18,7 @@ from interpretune.analysis.backends import (
     AnalysisBackendCore,
     AttributionGraphSupport,
     FeatureTargetSupport,
+    HeadAttributionSupport,
     InterventionSupport,
     ModuleCapabilities,
     PositionScope,
@@ -75,15 +76,15 @@ class TestDecomposition:
             AnalysisBackend,
         ):
             assert isinstance(backend, protocol), protocol.__name__
-        assert backend.capabilities == {
-            Capability.ATTRIBUTION_GRAPH,
-            Capability.INTERVENTION,
-            Capability.HEAD_ATTRIBUTION,
+        assert backend.capabilities == {Capability.INTERVENTION}
+        assert {name: type(record) for name, record in backend.technique_support.items()} == {
+            "attribution_graph": AttributionGraphSupport,
+            "head_attribution": HeadAttributionSupport,
         }
 
     def test_head_attribution_is_not_required_of_every_full_backend(self):
         """A backend can carry graphs and feature interventions without these reports, and stays an
-        ``AnalysisBackend``: the capability refuses the ops by name, so nothing else needs to change for it."""
+        ``AnalysisBackend``: the technique gate refuses the ops by name, so nothing else needs to change for it."""
         assert SupportsHeadAttribution not in AnalysisBackend.__mro__
 
 
@@ -96,8 +97,8 @@ _FEATURES = InterventionSupport(
 
 class TestRecordsTravelWithTheirSurface:
     def test_a_declared_analysis_surface_needs_its_record(self):
-        with pytest.raises(ValueError, match="ATTRIBUTION_GRAPH is declared but no attribution_graph support record"):
-            ModuleCapabilities(providers={Capability.ATTRIBUTION_GRAPH: ("analysis_backend",)})
+        with pytest.raises(ValueError, match="LATENT_MODELS is declared but no latent_models support record"):
+            ModuleCapabilities(providers={Capability.LATENT_MODELS: ("model_backend",)})
         with pytest.raises(ValueError, match=r"INTERVENTION is provided by \['analysis_backend'\] and support records"):
             ModuleCapabilities(providers={Capability.INTERVENTION: ("analysis_backend",)})
 
@@ -107,14 +108,12 @@ class TestRecordsTravelWithTheirSurface:
 
     def test_components_carry_their_records_together(self):
         caps = ModuleCapabilities(
-            providers={
-                Capability.GRADIENTS: ("model_backend",),
-                Capability.ATTRIBUTION_GRAPH: ("analysis_backend",),
-            },
-            attribution_graph=AttributionGraphSupport(),
+            providers={Capability.GRADIENTS: ("model_backend",)},
+            techniques={"attribution_graph": {"analysis_backend": AttributionGraphSupport()}},
         )
-        assert caps.supports(Capability.ATTRIBUTION_GRAPH)
+        assert caps.supports(Capability.GRADIENTS)
         assert not caps.supports(Capability.INTERVENTION)
+        assert caps.technique_for("attribution_graph") == ("analysis_backend", AttributionGraphSupport())
 
 
 class TestFeatureTargetSupport:

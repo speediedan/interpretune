@@ -13,7 +13,6 @@ from typing import Any, Callable, Protocol, runtime_checkable
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    AttributionGraphSupport,
     Capability,
     InterventionSupport,
     LatentModelSupport,
@@ -32,6 +31,9 @@ class AnalysisBackendCore(Protocol):
     :class:`~interpretune.analysis.backends.capabilities.Capability` member it implements. A member answers whether
     the backend implements a group; which configurations of the group it honours is the typed support record on that
     protocol, never a member. ``requires`` names what it needs the model backend (or another component) to provide.
+    A technique (``SupportsAttributionGraph``, ``SupportsHeadAttribution``) is not a member: the backend declares it in
+    an optional ``technique_support`` mapping from the technique's name to its typed record
+    (:class:`~interpretune.analysis.backends.capabilities.TechniqueSupport`), and the gate checks the record's protocol.
     An op reaches a gated method only after the gate says the group is declared, and never through a default: a
     method looked up with a fallback is a method whose absence produces a plausible partial result instead of a
     refusal.
@@ -84,19 +86,12 @@ class AnalysisBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsAttributionGraph(Protocol):
-    """Methods gated by ``Capability.ATTRIBUTION_GRAPH``: graph construction, storage and scoring.
+    """Methods of the ``attribution_graph`` technique: graph construction, storage and scoring.
 
-    The record says what the construction needs of the model it runs on. Its first measured requirement is the
-    attention implementation: circuit-tracer resolves gemma's attention-pattern location through nnsight's source
-    tracing of the function bound at the attention call site, so the modeling module's own eager attention must be
-    what is bound there. A configured ``eager`` is not that fact: another library can replace the module-level
-    function for the whole process and leave the config reading ``eager``.
+    A provider declares the technique in ``technique_support`` with an
+    :class:`~interpretune.analysis.backends.capabilities.AttributionGraphSupport` record, which says what construction
+    needs of the model it runs on (the modeling module's own eager attention).
     """
-
-    @property
-    def attribution_graph_support(self) -> AttributionGraphSupport:
-        """What graph construction requires of the model, and the refusal when a model does not meet it."""
-        ...
 
     def build_concept_attribution_targets(
         self,
@@ -166,7 +161,7 @@ class SupportsAttributionGraph(Protocol):
 
 @runtime_checkable
 class SupportsHeadAttribution(Protocol):
-    """Methods gated by ``Capability.HEAD_ATTRIBUTION``: credit at the level of attention heads.
+    """Methods of the ``head_attribution`` technique: credit at the level of attention heads.
 
     An attribution graph holds attention patterns constant by default, so it credits no node for changing where
     attention looks, and its edges say nothing about which head carried them. These two reports answer that at

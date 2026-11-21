@@ -267,7 +267,7 @@ accepting and ignoring it.
 from interpretune.config import SAELensConfig, ITLensBridgeConfig
 
 cfg = SAELensConfig(
-    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left", enable_compatibility_mode=True),
+    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", enable_compatibility_mode=True),
     sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
 )
 ```
