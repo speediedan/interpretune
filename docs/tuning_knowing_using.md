@@ -130,3 +130,76 @@ $\lambda = 1$, so LRSD gained 0.064, 0.100 and 0.080: a mean of 0.081, the paper
 facts almost completely, and LRSD roughly doubles how often the model composes them. The scores differ from the
 paper's by less than a seed's spread. Memorization here is scored once per unique single-hop question (771), where the
 paper scores every evaluation row, which may account for its small differences.
+
+## Extensions: phases as stages, and placement in place of a loss
+
+Two arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed by
+seed with them. Both use finetuning-scheduler's phases as experimental stages.
+
+- **Gated** (`runs/kug_gated.qwen2_5_1_5b.core.yaml`). The paper applies LRSD from the first step, while its own
+  diagnosis is that plain fine-tuning stops moving knowledge once memorization saturates. Phase 0 trains every block's
+  adapters on cross-entropy alone; `MetricThresholdTransition` opens phase 1 in the epoch memorization first reaches 0.9,
+  and phase 1 refreezes the adapters outside blocks 7 to 20 (the band from $0.25L$ to $0.75L$ of the 28 blocks) while
+  `PhaseLRSD` turns the LRSD term on, with $\lambda = 1$.
+- **Mid-only** (`runs/kug_mid_only.qwen2_5_1_5b.core.yaml`). Training only the adapters of blocks 7 to 20, on
+  cross-entropy alone and from the start, tests the misalignment account directly: if composition fails because
+  knowledge is stored where later layers cannot use it, confining the update to the middle of the network might help.
+- **Gated, no refreeze** (`runs/kug_gated_all.qwen2_5_1_5b.core.yaml`). The gated arm changes two things at once: when
+  LRSD starts, and which adapters train after the gate. This arm separates them: the same gate turns LRSD on, and every
+  block's adapters keep training.
+
+Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
+
+| arm | two-hop | memorization | two-hop minus plain | two-hop minus LRSD |
+| --- | ---: | ---: | ---: | ---: |
+| plain | 0.078 | 0.990 | | |
+| LRSD throughout, $\lambda = 1$ | 0.159 | 0.975 | | |
+| gated | 0.110 | 0.992 | +0.032 | -0.049 |
+| mid-only | 0.023 | 0.992 | -0.055 | -0.136 |
+| gated, no refreeze | 0.154 | 0.981 | +0.076 | -0.005 |
+
+The gate opened at epoch 7, 7 and 6 in both gated arms. Per seed, the gated arm's differences were +0.023, +0.041 and
++0.033 against plain and -0.041, -0.059 and -0.046 against LRSD throughout; the mid-only arm's were -0.066, -0.041 and
+-0.058 against plain. The no-refreeze arm's were +0.001, -0.011 and -0.004 against LRSD throughout, and +0.043, +0.048
+and +0.042 against the gated arm.
+
+No arm beats the paper's own recipe, and the separating arm says where the gated arm's deficit comes from. Turning LRSD
+on only once memorization saturates, at epoch 6 or 7 of 50, keeps nearly all of its gain: within a seed's spread of
+LRSD throughout. The gated arm's loss of about 60% of that gain is the refreeze: confining the training after the gate
+to blocks 7 to 20 costs about 0.044 of two-hop exact match. Training only the middle blocks from the start memorizes as
+well as training all of them but composes far less than plain fine-tuning. Both placement results point the same way:
+on this model, the alignment term needs the adapters outside the middle band, and placement does not substitute for
+the loss.
+
+## A second model family: Llama-3.2-1B-Instruct
+
+The paper's Table 9 also covers Llama-3.2-1B, and every arm above was repeated on it with the session configuration
+`configs/kug_lrsd.llama3_2_1b.core.yaml`. It keeps the recipe and changes what the model fixes: the paper's Llama fact
+seed (1340: 794 unique single-hop questions and 427 two-hop questions), and, since the model has 16 decoder blocks
+rather than 28, the layer pair 12 to 8 (block 8's state is trained toward block 12's, at $0.5L$ and $0.75L$ as on
+Qwen) and the band of blocks 4 to 11 ($0.25L$ to $0.75L$) for the gated and mid-only arms. Their schedules,
+`ft_schedules/kug_gated.llama3_2_1b.yaml` and `ft_schedules/kug_mid_only.llama3_2_1b.yaml`, name that band by regex. The
+no-refreeze arm's schedule refreezes nothing, so it runs unchanged. Llama-3.2's chat template stamps the current date
+into its system prompt, and the configuration pins it to the authors' date so that every run sees the same prompt.
+
+Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
+
+| arm | two-hop | two-hop, paper | memorization | memorization, paper | two-hop minus plain | two-hop minus LRSD |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain | 0.086 | 0.089 | 0.988 | 0.977 | | |
+| LRSD throughout, $\lambda = 1$ | 0.108 | 0.106 | 0.985 | 0.987 | +0.022 | |
+| gated | 0.092 | | 0.994 | | +0.005 | -0.017 |
+| mid-only | 0.034 | | 0.993 | | -0.053 | -0.075 |
+| gated, no refreeze | 0.105 | | 0.987 | | +0.018 | -0.004 |
+
+Both reproduced arms match the paper within a seed's spread, including its finding that LRSD gains far less on this
+model than on Qwen2.5-1.5B. Per seed, LRSD gained 0.029, 0.025 and 0.013 over plain fine-tuning. The gate opened at
+epoch 6, 7 and 6 in both gated arms. The gated arm's differences were +0.009, +0.008 and -0.001 against plain and
+-0.020, -0.016 and -0.014 against LRSD throughout; the no-refreeze arm's were -0.008, -0.005 and +0.002 against LRSD
+throughout, and +0.011, +0.011 and +0.016 against the gated arm. The mid-only arm's were -0.048, -0.046 and -0.064
+against plain.
+
+The extensions order the same way on both families. Turning LRSD on at the gate, without a refreeze, keeps most of its
+gain. Confining the training after the gate to the middle band gives most of it back, and training only that band from
+the start composes far less than plain fine-tuning. The bands are the same fraction of depth on both models, though
+named by different block indices.

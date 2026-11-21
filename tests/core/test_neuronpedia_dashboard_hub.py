@@ -671,26 +671,28 @@ class TestManifestConsistency:
         api.return_value.upload_folder.assert_called_once()
 
 
-class TestCollectionRegistration:
-    """``collection=`` is how a corpus becomes discoverable, so it must only ever name a corpus that published
-    whole."""
+class TestManifestRelease:
+    """A bucket is discoverable once its root ``dashboards.json`` is there, so that file goes up last, and only for
+    a corpus whose published copy passed every check."""
 
-    def test_a_published_bucket_is_added_to_the_collection(self, tmp_path: Path, _local_hf_filesystem) -> None:
+    @staticmethod
+    def _run_with_manifest(tmp_path: Path) -> Path:
+        run = _build_run(tmp_path, page_index=True)
+        (run / "dashboards.json").write_text(json.dumps({"model": {"name": "m"}}), encoding="utf-8")
+        return run
+
+    def test_the_manifest_is_held_back_from_the_sync_and_released_after_the_checks(self, tmp_path: Path) -> None:
+        run = self._run_with_manifest(tmp_path)
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(
-                _build_run(tmp_path, page_index=True),
-                "ns/bkt",
-                store="bucket",
-                revision="pfx",
-                token="t",
-                collection="ns/corpora-1",
-                collection_token="ct",
-            )
-        api.return_value.add_collection_item.assert_called_once_with(
-            "ns/corpora-1", "ns/bkt", "bucket", exists_ok=True, token="ct"
+            publish_dashboard_run(run, "ns/bkt", store="bucket", revision="pfx", token="t")
+        calls = [c[0] for c in api.return_value.method_calls]
+        assert calls.index("sync_bucket") < calls.index("batch_bucket_files")
+        assert "dashboards.json" in api.return_value.sync_bucket.call_args.kwargs["exclude"]
+        api.return_value.batch_bucket_files.assert_called_once_with(
+            "ns/bkt", add=[(run / "dashboards.json", "pfx/dashboards.json")], token="t"
         )
 
-    def test_a_failed_read_back_registers_nothing(self, tmp_path: Path, monkeypatch) -> None:
+    def test_a_failed_read_back_releases_nothing(self, tmp_path: Path, monkeypatch) -> None:
         class _Rewritten(_LocalHfFileSystem):
             def open(self, path: str, mode: str = "rb"):
                 import io
@@ -703,20 +705,16 @@ class TestCollectionRegistration:
         monkeypatch.setattr("huggingface_hub.HfFileSystem", _Rewritten)
         with patch("huggingface_hub.HfApi") as api:
             with pytest.raises(PublishedArtifactCheckError):
-                publish_dashboard_run(
-                    _build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision="p", collection="ns/c-1"
-                )
-        api.return_value.add_collection_item.assert_not_called()
+                publish_dashboard_run(self._run_with_manifest(tmp_path), "ns/bkt", store="bucket", revision="p")
+        api.return_value.sync_bucket.assert_called_once()
+        api.return_value.batch_bucket_files.assert_not_called()
 
-    def test_a_dataset_store_publish_naming_a_collection_is_refused_before_upload(self, tmp_path: Path) -> None:
-        """Discovery reads bucket items, so a dataset repo in the collection would never be found."""
+    def test_a_dataset_store_publish_uploads_the_manifest_with_the_rest(self, tmp_path: Path) -> None:
+        """Corpus discovery lists buckets only, so a dataset repo has nothing to hold back."""
         with patch("huggingface_hub.HfApi") as api:
-            with pytest.raises(ValueError, match="reads bucket items only"):
-                publish_dashboard_run(
-                    _build_run(tmp_path, page_index=True), "ns/ds", store="dataset", token="t", collection="ns/c-1"
-                )
-        api.return_value.upload_folder.assert_not_called()
-        api.return_value.add_collection_item.assert_not_called()
+            publish_dashboard_run(self._run_with_manifest(tmp_path), "ns/ds", store="dataset", token="t")
+        api.return_value.upload_folder.assert_called_once()
+        api.return_value.batch_bucket_files.assert_not_called()
 
 
 class TestRangeRead:
