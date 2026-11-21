@@ -195,12 +195,22 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
     the source prompt, attribution targets and pruning settings are its provenance. `.write(path)` writes it, its
     table in a sidecar when it is large.
+  - **Graph subsets, on the model backend:** the same document applies where its space is the latent model attached at
+    the stage's site. `recipe_interventions(..., token_ids=, tokenizer=)` places the nodes by the same anchors and
+    writes them at that site's `hook_sae_acts_post` sub-hook, one `InterventionSpec` per layer and position that acts
+    on that position's features alone (explicit `positions` and `unit_indices`), so every other feature and position
+    is untouched. `replace` sets the node's value; `add` adds it to the activation the sub-hook sees, with no clean
+    capture. SAE, transcoder and block-sparse nodes are placed; a block-sparse node's vector value is the block's
+    contiguous columns. One latent model is attached at a hook, so a stage's nodes share one space, and cross-layer
+    transcoder nodes are refused by name. The positions index the sequence the backend runs, so pass one unpadded
+    prompt. `venngram_subsets` declares what this path applies, and `check_recipe` checks graph ops against it. A
+    restriction has no native form at a latent sub-hook yet and is refused here too.
 
   What each recipe op is honoured as, per surface and target:
 
   | Op | Model backend: whole activation | Model backend: units, or features at the latent sub-hook | Analysis backend: features, at explicit positions |
   |---|---|---|---|
-  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here | the dose $d$ |
+  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here, except graph nodes at their positions | the dose $d$ |
   | `add` | the operand times the dose, or the dose | the dose per member, added to the activation the forward pass meets | $a + d$, for the clean activation $a$ |
   | `scale` | the dose, as a multiplier | the dose per member, ones elsewhere | $a \cdot d$, for the clean activation $a$ |
   | `project`, `reject`, `patch`, `clamp` | the operand (a vector, or a pair for `patch`) | refused | refused |
@@ -219,7 +229,8 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   venngram's conformance checker reads both without Interpretune installed. Interventions on sets of units named by
   address, composed with set algebra, are the next section's subject
   ([unit-set interventions](#unit-set-interventions-by-address)); applying attribution-graph subsets from one context
-  in another, on both surfaces, is tracked in [#966](https://github.com/speediedan/interpretune/issues/966).
+  in another, on both surfaces, is tracked in [#966](https://github.com/speediedan/interpretune/issues/966) (a
+  restriction to the subset is the open part).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight

@@ -21,6 +21,7 @@ from interpretune.analysis.venngram import (
     support_mapping,
     venngram_feature_subsets,
     venngram_feature_support,
+    venngram_subsets,
     venngram_support,
 )
 from interpretune.utils import MisconfigurationException
@@ -545,14 +546,14 @@ NODES = [
 ]
 
 
-def _graph_recipe(tmp_path, ops, nodes=NODES, value_shape=None):
+def _graph_recipe(tmp_path, ops, nodes=NODES, value_shape=None, tc_kind="transcoder"):
     """A book carrying one graph subset and a treatment applying ``ops`` to it, read as that treatment's recipe."""
     import hashlib
 
     import yaml
     from venngram.book import AddressBook
 
-    spaces = {"tc": {"id": "dict/transcoders", "revision": "p", "kind": "transcoder"}}
+    spaces = {"tc": {"id": "dict/transcoders", "revision": "p", "kind": tc_kind}}
     if value_shape is not None:
         spaces["bsf"] = {"id": "dict/bsf", "revision": "p", "kind": "block_sparse", "index": ["block"]}
         spaces["bsf"]["value_shape"] = value_shape
@@ -653,13 +654,6 @@ class TestGraphSubsets:
         with pytest.raises(MisconfigurationException, match=match):
             recipe_feature_interventions(recipe, support=support, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
 
-    def test_the_model_backend_refuses_a_graph_target_by_name(self, tmp_path):
-        recipe = _graph_recipe(tmp_path, [_graph_op()])
-        refusals = check_recipe(recipe, venngram_support(InterventionSupport.every(), latent_models=True))
-        assert any("analysis-backend path" in r for r in refusals), refusals
-        with pytest.raises(MisconfigurationException, match="analysis-backend path"):
-            recipe_interventions(recipe, site_widths={})
-
     @pytest.mark.parametrize(
         "detail, ops", [(TRANSCODER, {"replace"}), (CAPTURING, {"replace", "add"})], ids=["plain", "capturing"]
     )
@@ -692,3 +686,131 @@ class TestGraphSubsets:
                 recipe_feature_interventions(recipe, support=TRANSCODER, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
         else:
             recipe_feature_interventions(recipe, support=TRANSCODER, token_ids=PROMPT, tokenizer=GRAPH_TOKENIZER)
+
+
+GRAPH_HOOKED = f"{GRAPH_SITE}.hook_sae_acts_post"
+
+
+def _block(node_id, block, anchor, activation):
+    node = _node(node_id, block, anchor, activation, space="bsf")
+    node["baseline"] = [0.0] * len(activation)
+    return node
+
+
+def _apply(payload, value):
+    for spec in payload[f"blocks.1.{GRAPH_HOOKED}"]:
+        value = apply_intervention(value, spec, last_pos=value.shape[1] - 1)
+    return value
+
+
+class TestGraphSubsetsOnTheModelBackend:
+    """#966: the same graph subset written at an attached latent model's sub-hook, one spec per layer and
+    position."""
+
+    def _payload(self, recipe, width=16, **kwargs):
+        kwargs = {"token_ids": PROMPT, "tokenizer": GRAPH_TOKENIZER, **kwargs}
+        return recipe_interventions(recipe, site_widths={GRAPH_HOOKED: width}, **kwargs)
+
+    def test_a_replace_writes_each_node_at_its_anchored_position_alone(self, tmp_path):
+        payload = self._payload(_graph_recipe(tmp_path, [_graph_op()]))
+        assert list(payload) == [f"blocks.1.{GRAPH_HOOKED}"]
+        specs = payload[f"blocks.1.{GRAPH_HOOKED}"]
+        assert [(s.op, s.positions, s.unit_indices) for s in specs] == [
+            ("replace", (1,), (8,)),
+            ("replace", (3,), (7,)),
+        ]
+        assert all(s.position_scope is PositionScope.POSITIONS for s in specs)
+        out = _apply(payload, torch.ones(1, 4, 16))
+        assert out[0, 3, 7] == 3.0 and out[0, 1, 8] == 2.0
+        assert out.sum() == 4 * 16 - 2 + 5.0  # every other feature and position untouched
+
+    def test_an_add_adds_the_transformed_delta_with_no_clean_capture(self, tmp_path):
+        op = _graph_op("add", baseline="baseline", transform=[{"scale": {"factor": 2}}])
+        out = _apply(self._payload(_graph_recipe(tmp_path, [op])), torch.ones(1, 4, 16))
+        assert out[0, 3, 7] == 1.0 + 4.0 and out[0, 1, 8] == 1.0 + 3.0
+
+    def test_nodes_sharing_a_position_share_its_spec(self, tmp_path):
+        nodes = [_node("f0", 7, {"kind": "absolute", "position": 2}, 1.5), _node("f1", 8, {"kind": "all"}, -1.0)]
+        specs = self._payload(_graph_recipe(tmp_path, [_graph_op()], nodes=nodes), token_ids=[1, 2, 3])[
+            f"blocks.1.{GRAPH_HOOKED}"
+        ]
+        assert [(s.positions, s.unit_indices) for s in specs] == [((0,), (8,)), ((1,), (8,)), ((2,), (7, 8))]
+        assert specs[2].intervention_tensor.tolist() == [[1.5, -1.0]]
+
+    def test_a_vector_node_is_its_block_of_columns(self, tmp_path):
+        nodes = [
+            _block("b0", 2, {"kind": "absolute", "position": 0}, [0.5, -1.0]),
+            _block("b1", 0, {"kind": "from_end", "offset": 0}, [1.0, 2.0]),
+        ]
+        payload = self._payload(_graph_recipe(tmp_path, [_graph_op()], nodes=nodes, value_shape=[2]), width=8)
+        specs = payload[f"blocks.1.{GRAPH_HOOKED}"]
+        assert [(s.positions, s.unit_indices) for s in specs] == [((0,), (4, 5)), ((3,), (0, 1))]
+        out = _apply(payload, torch.zeros(1, 4, 8))
+        assert out[0, 0].tolist() == [0, 0, 0, 0, 0.5, -1.0, 0, 0] and out[0, 3, :2].tolist() == [1.0, 2.0]
+
+    @pytest.mark.parametrize(
+        "ops, nodes, kwargs, match",
+        [
+            pytest.param([RESTRICTION], NODES, {}, "no native form at a latent sub-hook", id="restriction"),
+            pytest.param(
+                [_graph_op(transform=[{"statistic": {"name": "median"}}])],
+                NODES,
+                {},
+                r"\['statistic'\] are not applied",
+                id="statistic",
+            ),
+            pytest.param(
+                [_graph_op()],
+                NODES + [_block("b0", 1, {"kind": "absolute", "position": 0}, [0.5, -1.0])],
+                {},
+                "one latent model is attached at a hook",
+                id="two-spaces-at-one-hook",
+            ),
+            pytest.param([_graph_op()], NODES, {"token_ids": None}, "pass `token_ids`", id="no-prompt"),
+            pytest.param([_graph_op()], NODES, {"width": 8}, "feature 8|unit 8 .* outside the site width", id="width"),
+            pytest.param([_graph_op()], NODES, {"flow": "grad"}, "acts on the activation value", id="grad-flow"),
+        ],
+    )
+    def test_what_one_latent_model_cannot_take_is_refused_by_name(self, tmp_path, ops, nodes, kwargs, match):
+        recipe = _graph_recipe(tmp_path, ops, nodes=nodes, value_shape=[2])
+        with pytest.raises(MisconfigurationException, match=match):
+            self._payload(recipe, **kwargs)
+
+    def test_the_latent_width_is_required(self, tmp_path):
+        with pytest.raises(MisconfigurationException, match="no width was supplied"):
+            recipe_interventions(_graph_recipe(tmp_path, [_graph_op()]), site_widths={}, token_ids=PROMPT)
+
+    def test_a_cross_layer_transcoder_is_not_placed(self, tmp_path):
+        recipe = _graph_recipe(tmp_path, [_graph_op()], tc_kind="clt")
+        with pytest.raises(MisconfigurationException, match="`clt` featurizer, which a latent sub-hook"):
+            self._payload(recipe)
+
+    def test_the_declaration_needs_an_attached_latent_model(self):
+        from venngram.graphs import ANCHORS
+
+        subsets = venngram_subsets(InterventionSupport.every(), latent_models=True)
+        assert subsets.ops == {"replace", "add"} and subsets.anchors == frozenset(ANCHORS) and not subsets.complement
+        assert subsets.featurizers == {"sae", "transcoder", "block_sparse"} and subsets.values == {"scalar", "vector"}
+        assert venngram_subsets(InterventionSupport.every()).ops == frozenset()
+
+    @pytest.mark.parametrize(
+        "ops, nodes, latent_models, refused",
+        [
+            ([_graph_op()], NODES, True, False),
+            ([_graph_op("add", baseline="baseline")], NODES, True, False),
+            ([RESTRICTION], NODES, True, True),
+            ([_graph_op()], NODES, False, True),
+            ([_graph_op()], NODES + [_block("b0", 1, {"kind": "absolute", "position": 0}, [0.5, -1.0])], True, True),
+        ],
+        ids=["replace", "add", "restriction", "no-latent-model", "two-spaces"],
+    )
+    def test_the_check_and_the_apply_path_agree(self, tmp_path, ops, nodes, latent_models, refused):
+        """A recipe the model-backend check passes is one the apply path writes, and one it refuses is refused."""
+        recipe = _graph_recipe(tmp_path, ops, nodes=nodes, value_shape=[2])
+        checked = check_recipe(recipe, venngram_support(InterventionSupport.every(), latent_models=latent_models))
+        assert bool(checked) is refused, checked
+        if refused and latent_models:
+            with pytest.raises(MisconfigurationException):
+                self._payload(recipe)
+        elif not refused:
+            self._payload(recipe)
