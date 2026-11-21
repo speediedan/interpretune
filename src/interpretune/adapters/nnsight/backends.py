@@ -1276,7 +1276,8 @@ class NNsightModelBackend:
         A baseline trace captures the gradients (and gives the hook shapes a raw payload is canonicalized against),
         then a second applies the edits: each site's ``.grad`` is read, folded through its specs and assigned back, so
         the edited gradient is the one that flows on. Gradients are requested in reverse forward order, the order the
-        backward pass produces them in. The activations a readout reads are read inside the same trace.
+        backward pass produces them in. The activations a readout reads are read inside the same trace. With no
+        interventions only the baseline trace runs, and the edited gradients are the baseline ones.
         """
         readout = as_readout(readout)
         self._ensure_tuple_calibration(model)
@@ -1307,10 +1308,13 @@ class NNsightModelBackend:
         else:
             shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
+        pre_grads = {name: pre_grads[name] for name in captured_names}
+        if not intervention_dict:  # nothing to edit: a second trace would only repeat the first (gradient capture)
+            return pre_grads, dict(pre_grads), value
         post_grads, _ = self._traced_backward(
             model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
         )
-        return {name: pre_grads[name] for name in captured_names}, post_grads, value
+        return pre_grads, post_grads, value
 
     def _traced_backward(
         self,
