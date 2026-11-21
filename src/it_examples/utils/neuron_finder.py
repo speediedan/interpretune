@@ -95,7 +95,7 @@ def settings_book(
     return {
         "schema_version": 1,
         "name": name,
-        "description": "Imported neuron-finder settings: " + ", ".join(str(s) for s in parsed),
+        "description": "Steering settings (layer:neuron:dose): " + ", ".join(str(s) for s in parsed),
         "portability": "checkpoint",
         "applies_to": applies_to,
         "sets": {set_name: {"point": SITE, "units": units}},
@@ -254,6 +254,23 @@ def found(signed_effects: Mapping[Any, float], control_effects: Iterable[float],
     return {key: float(value) > threshold for key, value in signed_effects.items()}
 
 
+def cached_revision(model_id: str) -> str:
+    """The commit of the snapshot ``model_id`` loads from the local Hugging Face cache: the checkpoint its neuron
+    indices belong to, which a checkpoint book pins.
+
+    Raises:
+        ValueError: If the model is not in the cache (load it first).
+    """
+    from pathlib import Path
+
+    from huggingface_hub import try_to_load_from_cache
+
+    path = try_to_load_from_cache(model_id, "config.json")
+    if not isinstance(path, str):
+        raise ValueError(f"{model_id} is not in the local Hugging Face cache; load it before pinning its revision")
+    return Path(path).parent.name
+
+
 def answer_margin(logits: torch.Tensor, answer_ids: tuple[int, int]) -> torch.Tensor:
     """The behaviour measured: the first answer's logit minus the second's at the answer position (the last, with
     left padding), one value per item."""
@@ -368,16 +385,20 @@ def steered_margins(
     payload: Mapping[str, Any],
     answer_ids: tuple[int, int],
     input_key: str = "input_ids",
+    device: str | torch.device | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """The clean and the steered :func:`answer_margin` of every item, through a model backend's
     ``fwd_w_intervention``.
 
     ``input_key`` names the token ids for the backend's model: ``input_ids`` for an HF model (and nnsight's), ``input``
-    for a TransformerLens bridge. The attention mask is passed with them, so left padding is masked on both.
+    for a TransformerLens bridge. The attention mask is passed with them, so left padding is masked on both. ``device``
+    moves both there first, for a backend that passes its inputs through unmoved (TransformerLens).
     """
     clean, edited = [], []
     for batch in batches:
         inputs = {input_key: batch["input_ids"], "attention_mask": batch["attention_mask"]}
+        if device is not None:
+            inputs = {key: value.to(device) for key, value in inputs.items()}
         before, after = backend.fwd_w_intervention(model, inputs, dict(payload))
         clean.append(answer_margin(before, answer_ids).cpu())
         edited.append(answer_margin(after, answer_ids).cpu())
