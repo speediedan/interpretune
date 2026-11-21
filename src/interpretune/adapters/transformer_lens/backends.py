@@ -12,6 +12,8 @@ from interpretune.analysis.backends import (
     FLOWS,
     Capability,
     CaptureSupport,
+    GradientActivationResult,
+    GradientResult,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -223,9 +225,11 @@ def _tl_backward(
     specs: Mapping[str, Sequence[Any]],
     capture: Sequence[str],
     reads: Mapping[str, str],
-) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    activations_at: Sequence[str] = (),
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]:
     """One forward and backward pass applying ``specs`` to the gradient at each named site, returning the gradients
-    at ``capture`` (each after any edit at its own site) and the readout's value.
+    at ``capture`` (each after any edit at its own site), the readout's value, and the activation at each site in
+    ``activations_at`` (the forward pass is never edited, so it is the one every pass sees).
 
     The gradient at a site is read and edited by a hook on the activation tensor itself, registered from a forward
     hook, rather than by a TransformerLens backward hook: PyTorch wraps a module's output for its backward hooks only
@@ -237,6 +241,7 @@ def _tl_backward(
     """
     wanted = set(capture)
     captured: dict[str, torch.Tensor] = {}
+    activations: dict[str, torch.Tensor] = {}
     kept: dict[str, torch.Tensor] = {}
     state: dict[str, int] = {}
 
@@ -254,6 +259,8 @@ def _tl_backward(
             return edited if site_specs else None
 
         def hook(activation: torch.Tensor, hook: Any) -> torch.Tensor:
+            if name in activations_at:
+                activations[name] = activation.detach().clone()
             activation = track_gradient(activation)
             activation.register_hook(on_grad)
             return activation
@@ -266,7 +273,7 @@ def _tl_backward(
 
         return keep
 
-    names = list(dict.fromkeys([*specs.keys(), *capture]))
+    names = list(dict.fromkeys([*specs.keys(), *capture, *activations_at]))
     fwd_hooks = _normalize_hooks(
         model,
         [*((name, make_hook(name)) for name in names), *((name, make_keep(name)) for name in reads)],
@@ -286,7 +293,11 @@ def _tl_backward(
             f"no gradient reached {missing}: the metric does not depend on the activation there, so there is no "
             "gradient to report or edit"
         )
-    return {name: captured[name] for name in capture}, scalar.detach()
+    return (
+        {name: captured[name] for name in capture},
+        scalar.detach(),
+        {name: activations[name] for name in activations_at},
+    )
 
 
 def _hf_architecture(model: Any) -> str:
@@ -594,15 +605,17 @@ class TLModelBackend:
         readout: Readout | Callable[[torch.Tensor], torch.Tensor],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        capture_activations: bool = False,
+    ) -> GradientResult | GradientActivationResult:
         """Apply interventions to the gradients at hook points through hooks on the activations' tensors.
 
         A baseline backward pass captures the gradients (and gives the hook shapes a raw payload is canonicalized
         against), then a second applies the edits. The specs at a site are folded in one gradient hook, and a capture
         there records the folded result. Forward hooks at TransformerLens hook points register the gradient hooks and
         keep the activations a readout reads (see ``_tl_backward`` for why the gradient is not edited in a
-        TransformerLens backward hook). With no interventions only the baseline pass runs, and the edited gradients
-        are the baseline ones.
+        TransformerLens backward hook). With ``capture_activations`` the baseline pass also keeps the activation at each
+        captured site. With no interventions only the baseline pass runs, and the edited gradients are the baseline
+        ones.
         """
         readout = as_readout(readout)
         available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
@@ -620,8 +633,15 @@ class TLModelBackend:
         spelled = {matches[0]: name for name, matches in matched.items() if "*" not in name and len(matches) == 1}
         reads = resolve_readout_sites(readout, available)
 
-        pre_grads, value = _tl_backward(
-            model, batch, readout, latent_model_handles, {}, [*sites, *captured_names], reads
+        pre_grads, value, activations = _tl_backward(
+            model,
+            batch,
+            readout,
+            latent_model_handles,
+            {},
+            [*sites, *captured_names],
+            reads,
+            activations_at=captured_names if capture_activations else (),
         )
         if isinstance(interventions, InterventionDict):
             intervention_dict = interventions
@@ -630,8 +650,12 @@ class TLModelBackend:
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
         pre = {spelled.get(name, name): pre_grads[name] for name in captured_names}
         if not intervention_dict:  # nothing to edit: a second pass would only repeat the first (gradient capture)
-            return pre, dict(pre), value
-        post_grads, _ = _tl_backward(
-            model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
-        )
-        return pre, {spelled.get(name, name): post_grads[name] for name in captured_names}, value
+            post = dict(pre)
+        else:
+            post_grads, _, _ = _tl_backward(
+                model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
+            )
+            post = {spelled.get(name, name): post_grads[name] for name in captured_names}
+        if not capture_activations:
+            return pre, post, value
+        return pre, post, value, {spelled.get(name, name): activations[name] for name in captured_names}
