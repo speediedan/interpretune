@@ -382,6 +382,32 @@ class TestBothBackends:
         torch.testing.assert_close(post, reference, atol=1e-4, rtol=1e-4)
         torch.testing.assert_close(post[:, :-1], pre[:, :-1], atol=1e-5, rtol=0)
 
+    def test_an_edit_survives_the_error_term(self, request, session_fixture, batch_key, monkeypatch):
+        """With the error term on, the native edit still moves the logits, exactly as writing the block's oracle
+        activations with a core ``replace`` does: the error term is the input minus the clean reconstruction, as
+        SAELens defines it.
+
+        An error term taken from the edited reconstruction absorbs any sub-hook edit, so both runs would return the
+        clean logits.
+        """
+        module, backend, handle, hook, batch, clean, catalog, target = self._setup(request, session_fixture, batch_key)
+        monkeypatch.setattr(handle, "use_error_term", True)
+        _, spec = latent_edit_spec(catalog, target, "chart_rotate", name="ring", version="1", by={1: 2.0})
+        columns = list(spec.unit_indices)
+        rows = handle.W_dec[columns].detach().to(torch.float64)
+        values = clean[columns].to(torch.float64) @ rows
+        edited = catalog.apply_chart(target, values, chart="ring", version="1", op="rotate", by={1: 2.0})
+        change = torch.linalg.lstsq(rows.T, (edited - values)[:, None]).solution[:, 0]
+        oracle = InterventionSpec(
+            (clean[columns].to(torch.float64) + change).to(clean.dtype), op="replace", unit_indices=spec.unit_indices
+        )
+
+        pre, post = backend.fwd_w_intervention(module.model, batch, {hook: spec}, latent_model_handles=[handle])
+        _, reference = backend.fwd_w_intervention(module.model, batch, {hook: oracle}, latent_model_handles=[handle])
+        assert not torch.allclose(post[:, -1], pre[:, -1], atol=1e-3)
+        torch.testing.assert_close(post, reference, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(post[:, :-1], pre[:, :-1], atol=1e-5, rtol=0)
+
     def test_an_edit_for_another_loaded_model_is_refused_before_any_pass(self, request, session_fixture, batch_key):
         module, backend, handle, hook, batch, _, catalog, target = self._setup(request, session_fixture, batch_key)
         _, spec = latent_edit_spec(catalog, target, "chart_rotate", name="ring", version="1", by={1: 2.0})

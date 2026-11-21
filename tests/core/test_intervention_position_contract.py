@@ -185,3 +185,73 @@ def test_shorthand_carries_position_indices_to_canonicalization():
     payload = resolve_interventions(analysis_batch={}, resolve_field=fields.get, load_json_field=lambda _: None)
     (spec,) = build_intervention_dict(payload, {hook: [hook]}, {hook: (D,)})[hook]
     assert spec.positions == (4, 1)
+
+
+class TestAnOperandPerBatchRow:
+    """``operand_per_row`` reads a positions operand as ``(batch, n_positions, ...)``: row $i$'s operands edit
+    prompt $i$ only, for an edit whose value depends on the prompt."""
+
+    @pytest.mark.parametrize("mode", VALUE_OPS)
+    def test_each_row_gets_exactly_what_running_it_alone_gives(self, mode):
+        before = _activation()
+        one = _spec(mode, "last_token")
+        rows = torch.stack([one.intervention_tensor, -0.5 * one.intervention_tensor])
+        per_position = torch.stack([rows, torch.roll(rows, 1, dims=-1)], dim=1)  # (batch, n_positions, ...)
+        spec = one._replace(
+            position_scope="positions", positions=(3, 1), intervention_tensor=per_position, operand_per_row=True
+        )
+        after = apply_intervention(before.clone(), spec, last_pos=LAST)
+        for row in range(BATCH):
+            alone = one._replace(position_scope="positions", positions=(3, 1), intervention_tensor=per_position[row])
+            expected = apply_intervention(before[row : row + 1].clone(), alone, last_pos=LAST)
+            torch.testing.assert_close(after[row : row + 1], expected, rtol=0, atol=0)
+        assert _changed_positions(before, after) == {1, 3}
+
+    def test_rows_differ_where_their_operands_differ(self):
+        before = torch.zeros(2, 4, 3)
+        operands = torch.tensor([[[1.0, 0.0, 0.0]], [[0.0, 2.0, 0.0]]])
+        spec = InterventionSpec(operands, position_scope="positions", positions=(2,), operand_per_row=True)
+        result = apply_intervention(before.clone(), spec, last_pos=3)
+        torch.testing.assert_close(result[:, 2], torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]))
+        assert torch.equal(result[:, [0, 1, 3]], before[:, [0, 1, 3]])
+
+    def test_a_span_operand_keeps_its_own_leading_axis(self):
+        # (batch, n_positions, k, d): each row removes its own two-dimensional span. Inferring the batch axis from
+        # the shape could not tell this from a shared (n_positions, k, d) operand, which is why the flag is explicit.
+        torch.manual_seed(2)
+        before = torch.randn(2, 4, D)
+        spans = torch.randn(2, 1, 2, D)
+        spec = InterventionSpec(spans, op="reject", position_scope="positions", positions=(1,), operand_per_row=True)
+        result = apply_intervention(before.clone(), spec, last_pos=3)
+        for row in range(2):
+            basis = torch.linalg.qr(spans[row, 0].T)[0]
+            torch.testing.assert_close(result[row, 1] @ basis, torch.zeros(2), atol=1e-5, rtol=0)
+
+    @pytest.mark.parametrize("operands", [torch.ones(3, 2, D), torch.ones(BATCH, 3, D), torch.ones(BATCH, 2, D + 1)])
+    def test_a_mismatched_batch_position_or_width_axis_is_refused_before_mutation(self, operands):
+        before = _activation()
+        value = before.clone()
+        spec = InterventionSpec(operands, position_scope="positions", positions=(0, 2), operand_per_row=True)
+        with pytest.raises(ValueError, match="batch rows|per position|shape"):
+            apply_intervention(value, spec, last_pos=LAST)
+        assert torch.equal(value, before)
+
+    def test_the_flag_on_another_scope_is_refused(self):
+        spec = InterventionSpec(torch.ones(BATCH, D), position_scope="all_positions", operand_per_row=True)
+        with pytest.raises(ValueError, match="operand_per_row is only valid"):
+            apply_intervention(_activation(), spec, last_pos=LAST)
+
+    def test_a_mapping_payload_carries_the_flag_through_canonicalization(self):
+        from interpretune.analysis.backends.interventions import build_intervention_dict
+
+        hook = "blocks.0.hook_out"
+        raw = {
+            hook: {
+                "intervention_tensor": torch.ones(BATCH, 2, D),
+                "positions": [3, 1],
+                "position_scope": "positions",
+                "operand_per_row": True,
+            }
+        }
+        (spec,) = build_intervention_dict(raw, {hook: [hook]}, {hook: (D,)})[hook]
+        assert spec.operand_per_row and spec.positions == (3, 1)

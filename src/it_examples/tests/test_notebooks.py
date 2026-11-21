@@ -1002,7 +1002,7 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
 @RunIf(bf16_cuda=True, min_gpu_mem_gb=19.5, optional=True)
 def test_sasa_blocks_notebook(tmp_path: Path):
     """Execute the SASA blocks notebook on a few prompts and check its payload control ran, the paper's month group
-    was selected, and the frames and charts section reached its edits."""
+    was selected, and the frames and charts section reached its functional and native edits."""
     import json
 
     output_dir = tmp_path / "notebook_outputs"
@@ -1020,6 +1020,8 @@ def test_sasa_blocks_notebook(tmp_path: Path):
     assert "features:sasa &amp; units:[3810]" in tables or "features:sasa & units:[3810]" in tables, "month group"
     assert "principal cosines, block vs named subspace" in text, "the frames and charts section did not run"
     assert "Moving a member one step around its ring" in tables, "the chart edits did not run"
+    assert "Control: the native edit is the functional one" in tables, "the native edit control did not run"
+    assert "Moving a member natively" in tables, "the native edits did not run"
     _cleanup_notebook_artifacts()
 
 
