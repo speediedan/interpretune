@@ -170,3 +170,36 @@ to blocks 7 to 20 costs about 0.044 of two-hop exact match. Training only the mi
 well as training all of them but composes far less than plain fine-tuning. Both placement results point the same way:
 on this model, the alignment term needs the adapters outside the middle band, and placement does not substitute for
 the loss.
+
+## A second model family: Llama-3.2-1B-Instruct
+
+The paper's Table 9 also covers Llama-3.2-1B, and every arm above was repeated on it with the session configuration
+`configs/kug_lrsd.llama3_2_1b.core.yaml`. It keeps the recipe and changes what the model fixes: the paper's Llama fact
+seed (1340: 794 unique single-hop questions and 427 two-hop questions), and, since the model has 16 decoder blocks
+rather than 28, the layer pair 12 to 8 (block 8's state is trained toward block 12's, at $0.5L$ and $0.75L$ as on
+Qwen) and the band of blocks 4 to 11 ($0.25L$ to $0.75L$) for the gated and mid-only arms. Their schedules,
+`ft_schedules/kug_gated.llama3_2_1b.yaml` and `ft_schedules/kug_mid_only.llama3_2_1b.yaml`, name that band by regex. The
+no-refreeze arm's schedule refreezes nothing, so it runs unchanged. Llama-3.2's chat template stamps the current date
+into its system prompt, and the configuration pins it to the authors' date so that every run sees the same prompt.
+
+Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
+
+| arm | two-hop | two-hop, paper | memorization | memorization, paper | two-hop minus plain | two-hop minus LRSD |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain | 0.086 | 0.089 | 0.988 | 0.977 | | |
+| LRSD throughout, $\lambda = 1$ | 0.108 | 0.106 | 0.985 | 0.987 | +0.022 | |
+| gated | 0.092 | | 0.994 | | +0.005 | -0.017 |
+| mid-only | 0.034 | | 0.993 | | -0.053 | -0.075 |
+| gated, no refreeze | 0.105 | | 0.987 | | +0.018 | -0.004 |
+
+Both reproduced arms match the paper within a seed's spread, including its finding that LRSD gains far less on this
+model than on Qwen2.5-1.5B. Per seed, LRSD gained 0.029, 0.025 and 0.013 over plain fine-tuning. The gate opened at
+epoch 6, 7 and 6 in both gated arms. The gated arm's differences were +0.009, +0.008 and -0.001 against plain and
+-0.020, -0.016 and -0.014 against LRSD throughout; the no-refreeze arm's were -0.008, -0.005 and +0.002 against LRSD
+throughout, and +0.011, +0.011 and +0.016 against the gated arm. The mid-only arm's were -0.048, -0.046 and -0.064
+against plain.
+
+The extensions order the same way on both families. Turning LRSD on at the gate, without a refreeze, keeps most of its
+gain. Confining the training after the gate to the middle band gives most of it back, and training only that band from
+the start composes far less than plain fine-tuning. The bands are the same fraction of depth on both models, though
+named by different block indices.
