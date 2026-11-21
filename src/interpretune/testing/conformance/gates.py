@@ -29,6 +29,8 @@ class Gate:
     """
 
     capability: Capability | None = None
+    technique: str | None = None
+    """A technique the case exercises: exactly one component must declare a record for it."""
     target: str = "activation"
     """The intervention target the case acts on, when ``capability`` is ``INTERVENTION``: the target must be
     provided, and the scope and mode axes are read from its provider's record."""
@@ -57,6 +59,8 @@ class Gate:
         parts = []
         if self.capability is not None:
             parts.append(self.capability.name)
+        if self.technique is not None:
+            parts.append(f"technique={self.technique}")
         if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.op or self.ops or self.flow:
             parts.append(f"target={self.target}" + (f"@{self.provider}" if self.provider else ""))
         if self.flow is not None:
@@ -84,6 +88,8 @@ class Gate:
         if self.single_prompt is not None and single_prompt != self.single_prompt:
             return False
         if self.capability is not None and not caps.supports(self.capability):
+            return False
+        if self.technique is not None and len(caps.techniques.get(self.technique, {})) != 1:
             return False
         # Compare by VALUE: the capabilities module can be loaded twice under a test runner, leaving
         # value-equal, identity-distinct members on either side.
@@ -243,8 +249,13 @@ def describe_capabilities(caps: Any, *, composition: tuple[str, ...] = (), model
         out["intervention"] = {
             name: {**plain(record), "ops": sorted(record.declared_ops)} for name, record in caps.intervention.items()
         }
-    for name in ("latent_models", "capture", "attribution_graph"):
+    for name in ("latent_models", "capture"):
         record = getattr(caps, name, None)
         if record is not None:
             out[name] = plain(record)
+    if caps.techniques:
+        out["techniques"] = {
+            technique: {slot: {"record": type(record).__name__, **plain(record)} for slot, record in by_slot.items()}
+            for technique, by_slot in sorted(caps.techniques.items())
+        }
     return out

@@ -43,7 +43,6 @@ registered_cfg:
           model_name: gemma-2-2b-it
           device: cuda
           dtype: bfloat16
-          default_padding_side: left
           enable_compatibility_mode: true
           enable_compatibility_mode_kwargs:
             fold_ln: true
@@ -62,7 +61,6 @@ registered_cfg:
           lm_generation_cfg:
             class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
             init_args:
-              padding_side: left
               stop_at_eos: true
               use_past_kv_cache: false
               max_new_tokens: 5
