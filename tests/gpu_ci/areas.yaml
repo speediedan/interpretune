@@ -106,6 +106,8 @@ ignore:
   - "**/*.pyi"
   - src/interpretune/hub/publish.py
   - src/interpretune/hub/cards.py
+  # store discovery reads Hub listings and envelopes only; nothing it does reaches a device
+  - src/interpretune/hub/discovery.py
   - src/interpretune/utils/neuronpedia_*
   - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
   - src/interpretune/utils/notebook_config.py
