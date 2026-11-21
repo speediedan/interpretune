@@ -490,6 +490,21 @@ class TestClassTransformerLens:
         with pytest.raises(TypeError, match="use_bridge"):
             ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
 
+    def test_tl_retired_default_padding_side_is_refused_by_name(self):
+        """``default_padding_side`` is gone from every TL config, and passing it fails by name.
+
+        The adapter never applied it: the bridge wraps the datamodule's tokenizer, built from ``tokenizer_kwargs``
+        before the bridge exists, so a config relying on the field alone got the tokenizer's own padding side.
+        """
+        from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
+
+        for cfg_cls in (ITLensFromPretrainedConfig, ITLensCustomConfig, ITLensBridgeConfig):
+            assert "default_padding_side" not in cfg_cls.__dataclass_fields__, (
+                f"{cfg_cls.__name__} still declares the retired default_padding_side field"
+            )
+        with pytest.raises(TypeError, match="default_padding_side"):
+            ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+
     def test_tl_custom_config_is_no_longer_special_cased(self):
         """A custom (config-only) tl_cfg builds like any other, with no warn-and-force branch.
 
