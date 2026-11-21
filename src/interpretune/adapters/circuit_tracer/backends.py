@@ -20,7 +20,9 @@ from interpretune.analysis.backends import (
     InterventionSupport,
     AttributionGraphSupport,
     FeatureTargetSupport,
+    HeadAttributionSupport,
     PositionScope,
+    TechniqueSupport,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
@@ -38,10 +40,13 @@ class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
 
     @property
-    def attribution_graph_support(self) -> AttributionGraphSupport:
-        """Graph construction resolves gemma's attention location through source tracing of the bound eager
-        function."""
-        return AttributionGraphSupport(requires_own_eager_attention=True)
+    def technique_support(self) -> dict[str, TechniqueSupport]:
+        """Attribution graphs, whose construction resolves gemma's attention location through source tracing of the
+        bound eager function, and head attribution."""
+        return {
+            "attribution_graph": AttributionGraphSupport(requires_own_eager_attention=True),
+            "head_attribution": HeadAttributionSupport(),
+        }
 
     @property
     def intervention_support(self) -> InterventionSupport:
@@ -79,14 +84,8 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        """Attribution graphs, head attribution and interventions on transcoder features."""
-        return frozenset(
-            {
-                Capability.ATTRIBUTION_GRAPH,
-                Capability.INTERVENTION,
-                Capability.HEAD_ATTRIBUTION,
-            }
-        )
+        """Interventions on transcoder features; its techniques are declared in :attr:`technique_support`."""
+        return frozenset({Capability.INTERVENTION})
 
     @property
     def requires(self) -> frozenset[Capability]:

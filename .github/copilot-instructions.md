@@ -34,7 +34,7 @@
 - `TransformerBridgeConfig`: The TL config, extending base with an architecture field
 
 **Interpretune Configs:**
-- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `default_padding_side`)
+- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`)
 - `ITLensFromPretrainedConfig`: For from_pretrained initialization (fold_ln, model_name, etc.)
 - `ITLensCustomConfig`: For config-based initialization (a `TransformerBridgeConfig`, or a dict convertible to one)
 - `ITLensConfig`: Top-level IT config encapsulating all settings
