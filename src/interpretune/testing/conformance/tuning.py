@@ -61,17 +61,16 @@ def wrapped_model_names(view: Any) -> dict[str, str]:
     of compositions of one model compare (#875).
 
     A TransformerLens view names each tensor the bridge wraps by its original name (the bridge rewires the wrapped
-    model in place), and a view whose map is mounted at a submodule (``model`` on a core/HF composition, ``hf_model``
-    on an nnsight one) drops that mount from the names under it. Every other tensor (a latent model or intervention
-    registered beside the model) keeps its own name, which is the same on every composition.
+    model in place), and a split the bridge makes of a fused tensor (GPT-2's ``q``/``k``/``v`` of ``c_attn``) by the
+    fused tensor's name, since the split is what a step on that composition trains. A view whose map is mounted at a
+    submodule (``model`` on a core/HF composition, ``hf_model`` on an nnsight one) drops that mount from the names
+    under it. Every other tensor (a latent model or intervention registered beside the model) keeps its own name,
+    which is the same on every composition.
     """
     root = view.root
-    bridge = getattr(view, "bridge", None)
-    if bridge is not None:
-        from interpretune.adapters.transformer_lens.tunable_view import _wrapped_tensor_names
-
-        originals = _wrapped_tensor_names(bridge)
-        return {n: originals.get(id(p)) or n for n, p in root.named_parameters()}
+    if getattr(view, "bridge", None) is not None:
+        originals = view.wrapped_names()
+        return {n: originals.get(n) or n for n, _ in root.named_parameters()}
     structure = view.structure() if callable(getattr(view, "structure", None)) else None
     mount = getattr(structure, "mount", None)
     under = f"{mount}." if mount else None
