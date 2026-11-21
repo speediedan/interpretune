@@ -131,6 +131,7 @@ usage/session_module_datamodule_usage
 usage/module_contract_and_limitations
 usage/analysis_runner_usage
 usage/analysis_store_serialization
+usage/finding_analysis_stores
 usage/cache_behavior
 usage/hub_trust_posture
 usage/when_things_go_wrong
