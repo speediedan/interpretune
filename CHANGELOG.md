@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- `interpretune.harness.notebook_ui` gains three more helpers the example tutorials share: `display_notebook_table` and `build_notebook_table_html` (an escaped report table with `NotebookLink` cells, sign-coloured `Signed` cells, a legend and emphasized rows), `display_plotly_figure` (a plotly figure embedded as HTML so the docs build keeps it) and `display_topk_token_predictions`. `it_examples.utils.nb_ui_utils` re-exports them until the notebooks move ([#1016](https://github.com/speediedan/interpretune/issues/1016))
+
 - A `positions`-scoped intervention can take an operand per batch row: with `InterventionSpec(operand_per_row=True)` (or `"operand_per_row": True` in a mapping payload) the operand is `(batch, n_positions, ...)` and row $i$'s operands edit prompt $i$ only, so an edit whose value depends on the prompt runs batched. The flag is explicit because a span op's operand already has a leading axis that no shape test can tell from a batch axis; a batch axis that does not match the batch, and the flag on another scope, are refused by name ([#1100](https://github.com/speediedan/interpretune/issues/1100))
 
 - The block-sparse featurizer notebook runs its frame and chart edits natively: the SASA release is an attachable latent model (`SASARelease` exposes `encode`, `decode`, its hook and decoder rows, with codes at the activation scale), a control checks a native `chart_rotate` and `frame_replace` at its latent sub-hook against the same catalog edit applied functionally, and a table moves each member one step around a ring fitted to the block's own contribution with edits that run inside the forward pass ([#1082](https://github.com/speediedan/interpretune/issues/1082))
@@ -391,6 +393,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - sae-lens installs from a released floor (`sae-lens >=6.55.0,<7` in the `examples` extra) instead of a git pin to the head of decoderesearch/SAELens#739: 6.55.0 is the first release that imports under transformer-lens 4.0. The Neuronpedia dashboard pipeline's generation subprocess therefore imports the installed release: a SAELens checkout goes on its `PYTHONPATH` only when `--saelens-repo-root` names one, as the preserved-baseline benchmark legs do. It used to prepend `SAELENS_REPO_ROOT` (default `~/repos/SAELens`) whenever that directory existed, so a stale checkout silently shadowed the release while benchmark lineage recorded the release version. The benchmark setup installs the preserved baseline's missing dependencies with uv rather than pip, and under `--skip-env-build` names any it finds missing. ([#652](https://github.com/speediedan/interpretune/issues/652))
 
 ### Fixed
+
+- `display_topk_token_predictions` printed a key token's negative probability change without its minus sign, so only the bar's colour showed the direction ([#1016](https://github.com/speediedan/interpretune/issues/1016))
 
 - On the nnsight backend, an edit or gradient at a latent model's sub-hook (`hook_sae_acts_pre`, `hook_sae_acts_post`) no longer cancels when the latent model uses its error term: the error term is the input minus the clean reconstruction, unedited and without gradient, as SAELens defines it and as the TransformerLens backend already computed it ([#1131](https://github.com/speediedan/interpretune/issues/1131))
 
