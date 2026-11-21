@@ -421,7 +421,6 @@ class TestReportArtifact:
                     targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
                 ),
             },
-            attribution_graph=None,
         )
 
     def test_describe_capabilities_is_plain_data_with_absent_surfaces_absent(self):
@@ -436,7 +435,7 @@ class TestReportArtifact:
         assert model["ops"] == ["add"] and model["position_scopes"] == ["last_token"]
         assert model["targets"] == {"activation": None}
         assert data["intervention"]["analysis_backend"]["targets"]["features"]["value_sources"] == ["constant"]
-        assert "latent_models" not in data and "capture" not in data and "attribution_graph" not in data
+        assert "latent_models" not in data and "capture" not in data and "techniques" not in data
         assert data["composition"] == ["core", "x"] and data["model_id"] == "gpt2"
 
     def test_the_artifact_carries_targets_outcomes_and_provenance(self, tmp_path):

@@ -16,6 +16,11 @@ Most of what you pull from the Hub is data, and data never triggers this gate: m
 parsed, not run. You can pull a repo, read its manifest, and see
 exactly which file it would execute without executing anything.
 
+One envelope field names code: an AnalysisStore's `protocol_cls`, the import path of the batch
+protocol it was written with. Pulling a store resolves it only from `interpretune` itself or from a
+hub component module this process has already loaded through the gate below, so it never imports
+anything new. Any other path is refused by name, rather than replaced with the default protocol.
+
 Three paths execute publisher-authored Python in your process, and all three are gated:
 
 | Path | What runs | Gate |

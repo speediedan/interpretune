@@ -11,7 +11,7 @@ from collections.abc import Mapping
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from interpretune.analysis.backends.protocols import AnalysisBackend, ModelBackend
@@ -27,16 +27,16 @@ class Capability(Enum):
 
     A member answers "is this surface provided"; it never answers "which configurations of the surface". Those are a
     different kind of fact with a different shape: the typed support record the providing component attaches
-    (:class:`InterventionSupport`, :class:`LatentModelSupport`, :class:`CaptureSupport`,
-    :class:`AttributionGraphSupport`). Keeping the two apart is what lets a component truthfully claim a surface while
-    declaring exactly which configurations of it it honours, and lets a gate refuse the rest by name. What a component
-    needs ANOTHER component to provide is its ``requires`` set, checked when the module's capabilities are aggregated
-    (:func:`get_module_capabilities`).
+    (:class:`InterventionSupport`, :class:`LatentModelSupport`, :class:`CaptureSupport`). Keeping the two apart is
+    what lets a component truthfully claim a surface while declaring exactly which configurations of it it honours,
+    and lets a gate refuse the rest by name. What a component needs ANOTHER component to provide is its ``requires``
+    set, checked when the module's capabilities are aggregated (:func:`get_module_capabilities`).
 
-    .. note:: The members sit at different levels, surfaces (``INTERVENTION``, ``CAPTURE``, ``GRADIENTS``,
-       ``LATENT_MODELS``) beside techniques (``ATTRIBUTION_GRAPH``, ``HEAD_ATTRIBUTION``), and the namespace is under
-       review: it may narrow to the core surfaces, with techniques as registered ops, or become a hierarchy that users
-       and Hub collections extend (interpretune#984).
+    The members are execution and read surfaces only. A technique (attribution graphs, head attribution, or one a
+    third party registers) is not a member: an op names the techniques it executes (its ``required_techniques``), and a
+    component that implements it declares a typed :class:`TechniqueSupport` record under that name in its
+    ``technique_support``. A surface flag cannot say a technique runs, since components providing every core surface
+    can still lack the implementation, and an enum member per technique would make each new one an edit here.
     """
 
     INTERVENTION = "intervention"
@@ -60,12 +60,6 @@ class Capability(Enum):
     """Caching activations at vocabulary points: the read surface (a latent site's ``observe`` is a capture). Its
     record, :class:`CaptureSupport`, depends on the model at hand, so the provider attaches it as
     ``capture_support(model)``."""
-
-    ATTRIBUTION_GRAPH = "attribution_graph"
-    """``SupportsAttributionGraph``: attribution graph construction, storage and scoring."""
-
-    HEAD_ATTRIBUTION = "head_attribution"
-    """``SupportsHeadAttribution``: credit at the level of attention heads."""
 
 
 #: The component slots of a composition, in the order capabilities are aggregated. A provider is named by its slot.
@@ -456,7 +450,49 @@ def _circuit_tracer_own_attention_implementations() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
-class AttributionGraphSupport:
+class TechniqueSupport:
+    """The typed record a component declares for a technique it implements, under the technique's name.
+
+    An op names the technique it executes (``technique: attribution_graph``), and the module's components are asked
+    who declares a record under that name (:meth:`ModuleCapabilities.technique_for`). The record's type is the
+    contract: a subclass names the one technique it serves (:attr:`technique`), a provider must satisfy
+    :meth:`provider_protocol`, so a component cannot claim a technique whose methods it lacks, and :meth:`refusal` says
+    what the technique needs of the model it runs on. A technique of a third party subclasses this and needs no edit
+    to the capability vocabulary.
+    """
+
+    technique: ClassVar[str | None] = None
+    """The technique name this record type serves; a component declares the record under exactly this name."""
+
+    def provider_protocol(self) -> type | None:
+        """The runtime-checkable protocol a provider of this technique satisfies, or ``None`` for no method
+        check."""
+        return None
+
+    def refusal(self, model: Any) -> str | None:
+        """Why the technique cannot run on ``model`` here, or ``None`` when nothing it needs is missing."""
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return "no model requirement"
+
+
+@dataclass(frozen=True)
+class HeadAttributionSupport(TechniqueSupport):
+    """Head-level credit (head loadings and head conductance), provided through ``SupportsHeadAttribution``."""
+
+    technique: ClassVar[str | None] = "head_attribution"
+
+    def provider_protocol(self) -> type | None:
+        """``SupportsHeadAttribution``: the head loading and head conductance reports."""
+        from interpretune.analysis.backends.protocols import SupportsHeadAttribution
+
+        return SupportsHeadAttribution
+
+
+@dataclass(frozen=True)
+class AttributionGraphSupport(TechniqueSupport):
     """What attribution-graph construction requires of the model it runs on, checked before construction.
 
     ``requires_own_eager_attention`` is the measured requirement: circuit-tracer resolves gemma's attention-pattern
@@ -467,7 +503,15 @@ class AttributionGraphSupport:
     check happens here, by provenance, where the name of the foreign function is still available.
     """
 
+    technique: ClassVar[str | None] = "attribution_graph"
+
     requires_own_eager_attention: bool = True
+
+    def provider_protocol(self) -> type | None:
+        """``SupportsAttributionGraph``: graph construction, storage and scoring."""
+        from interpretune.analysis.backends.protocols import SupportsAttributionGraph
+
+        return SupportsAttributionGraph
 
     def refusal(self, model: Any) -> str | None:
         """Why a graph cannot be built on ``model`` here, or ``None`` when its attention is what construction
@@ -513,10 +557,11 @@ class ModuleCapabilities:
     is legitimate (a TransformerLens backend reaches an SAE's features at its sub-hook, and circuit-tracer's replacement
     model reaches its transcoders' features): :meth:`intervention_for` resolves a target to its provider and refuses an
     unqualified request with two. Every other surface has one provider, and its record is present iff it is declared:
-    ``latent_models`` with ``LATENT_MODELS``, ``attribution_graph`` with ``ATTRIBUTION_GRAPH``. The constructor enforces
-    that, so a consumer rendering this (the adapter card, ``adapter_info``, a conformance report) can rely on the record
-    being there when the surface is. ``capture`` is the one record that may be absent while declared: it is derived from
-    the model at hand, and a module without a model yet has none.
+    ``latent_models`` with ``LATENT_MODELS``. The constructor enforces that, so a consumer rendering this (the adapter
+    card, ``adapter_info``, a conformance report) can rely on the record being there when the surface is. ``capture`` is
+    the one record that may be absent while declared: it is derived from the model at hand, and a module without a model
+    yet has none. ``techniques`` binds each technique name to the components declaring a record for it
+    (:meth:`technique_for`).
     """
 
     providers: Mapping[Capability, tuple[str, ...]]
@@ -527,13 +572,27 @@ class ModuleCapabilities:
     """What the capture provider declares it can capture on this module's model; ``None`` when no provider is
     attached, the module has no model yet, or the provider predates the declaration (a conformance case fails the
     last by name)."""
-    attribution_graph: AttributionGraphSupport | None = None
+    techniques: Mapping[str, Mapping[str, TechniqueSupport]] = field(default_factory=dict)
+    """Each technique name's providers, by slot, with the record each declares (types checked at aggregation)."""
     requires: Mapping[str, frozenset[Capability]] = field(default_factory=dict)
     """What each component needs another component to provide, as declared (already checked to be met)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "providers", {cap: tuple(names) for cap, names in self.providers.items()})
         object.__setattr__(self, "intervention", dict(self.intervention))
+        object.__setattr__(self, "techniques", {name: dict(by_slot) for name, by_slot in self.techniques.items()})
+        for technique, by_slot in self.techniques.items():
+            for slot, record in by_slot.items():
+                if not isinstance(record, TechniqueSupport):
+                    raise ValueError(
+                        f"the {slot} declares technique {technique!r} with a {type(record).__name__}, not a"
+                        " TechniqueSupport record; a component implementing a technique must say what it needs"
+                    )
+                if record.technique != technique:
+                    raise ValueError(
+                        f"the {slot} declares technique {technique!r} with a {type(record).__name__}, which serves"
+                        f" {record.technique!r}"
+                    )
         for capability, names in self.providers.items():
             if len(names) > 1 and capability is not Capability.INTERVENTION:
                 raise ValueError(
@@ -548,7 +607,6 @@ class ModuleCapabilities:
             )
         for capability, record, name in (
             (Capability.LATENT_MODELS, self.latent_models, "latent_models"),
-            (Capability.ATTRIBUTION_GRAPH, self.attribution_graph, "attribution_graph"),
             (Capability.CAPTURE, self.capture, "capture"),
         ):
             declared = capability in self.providers
@@ -611,15 +669,30 @@ class ModuleCapabilities:
         """The detail record of ``target`` at its provider (see :meth:`intervention_for`)."""
         return self.intervention_for(target, provider=provider).target_detail(target)
 
+    def technique_for(self, technique: str, *, provider: str | None = None) -> tuple[str, TechniqueSupport]:
+        """The slot implementing ``technique`` and its record, refused by name when none or several do.
 
-#: Spellings that once named a capability and no longer do, each with the spelling that replaced it. Refused by
-#: name rather than translated: a caller carrying the old spelling has a manifest or a config to update, and a
-#: silent translation would leave it carrying a name nothing else in the vocabulary recognizes.
-_RETIRED_CAPABILITY_SPELLINGS: dict[str, str] = {
-    "activation_intervention": Capability.INTERVENTION.value,
-    "feature_intervention": Capability.INTERVENTION.value,
-    "attribution": Capability.ATTRIBUTION_GRAPH.value,
-}
+        Two providers of one technique are refused rather than ordered, for the reason :meth:`intervention_for` gives:
+        either returns plausible results. ``provider`` names the slot when the caller has chosen one.
+        """
+        by_slot = self.techniques.get(technique, {})
+        if provider is not None:
+            if provider not in by_slot:
+                raise ValueError(
+                    f"technique {technique!r} is not implemented by {provider!r}; implemented by {sorted(by_slot)}"
+                )
+            return provider, by_slot[provider]
+        if not by_slot:
+            raise ValueError(
+                f"no component of this module implements technique {technique!r} (techniques implemented:"
+                f" {sorted(self.techniques) or 'none'}; surfaces provided: {sorted(self.values) or 'none'})"
+            )
+        if len(by_slot) > 1:
+            raise ValueError(
+                f"technique {technique!r} is implemented by {sorted(by_slot)}; name the provider the request uses"
+                " rather than relying on a precedence between them"
+            )
+        return next(iter(by_slot.items()))
 
 
 def normalize_backend_capability(capability: Any) -> Capability:
@@ -627,8 +700,7 @@ def normalize_backend_capability(capability: Any) -> Capability:
 
     Accepts a member, a member's value, or a dotted spelling whose last segment is a member name
     (``"Capability.GRADIENTS"``). Compared by value, so a member of a second load of this module normalizes to this
-    one's. A retired spelling is refused by name with its replacement; an unknown one is refused with the vocabulary
-    listed.
+    one's. Any other spelling is refused with the vocabulary listed.
     """
     if isinstance(capability, Capability):
         return capability
@@ -636,12 +708,6 @@ def normalize_backend_capability(capability: Any) -> Capability:
     raw_value = getattr(capability, "value", capability)
     spelling = str(raw_value)
     candidate = spelling.split(".")[-1].lower() if "." in spelling else spelling
-    if candidate in _RETIRED_CAPABILITY_SPELLINGS:
-        raise ValueError(
-            f"{spelling!r} is a retired capability spelling; the surface it named is now"
-            f" {_RETIRED_CAPABILITY_SPELLINGS[candidate]!r}. Update the declaration rather than relying on a"
-            " translation."
-        )
     try:
         return Capability(candidate)
     except ValueError:
@@ -790,9 +856,54 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         },
         latent_models=_record(Capability.LATENT_MODELS, "latent_model_support"),
         capture=_capture_record(components[capture_names[0]], module) if capture_names else None,
-        attribution_graph=_record(Capability.ATTRIBUTION_GRAPH, "attribution_graph_support"),
+        techniques=_technique_records(components),
         requires={name: needed for name, needed in requires.items() if needed},
     )
+
+
+def technique_provider(module: Any, technique: str, *, provider: str | None = None) -> tuple[Any, TechniqueSupport]:
+    """The component implementing ``technique`` on ``module`` and its record, refused by name when none or several
+    do (:meth:`ModuleCapabilities.technique_for`).
+
+    An op executing a technique calls the component this returns.
+    """
+    slot, record = get_module_capabilities(module).technique_for(technique, provider=provider)
+    return _components(module)[slot], record
+
+
+def _technique_records(components: Mapping[str, Any]) -> dict[str, dict[str, TechniqueSupport]]:
+    """Each technique name's providers by slot, from the components' ``technique_support`` declarations.
+
+    A record that is not a :class:`TechniqueSupport`, or a provider that lacks the protocol its record names, is refused
+    here, by component and technique, because either would let an op pass its gate and fail mid-run.
+    """
+    techniques: dict[str, dict[str, TechniqueSupport]] = {}
+    for slot, component in components.items():
+        declared = getattr(component, "technique_support", None) or {}
+        if not isinstance(declared, Mapping):
+            raise ValueError(
+                f"the {slot} ({type(component).__name__}) declares technique_support as a {type(declared).__name__};"
+                " it maps each technique name to its TechniqueSupport record"
+            )
+        for technique, record in declared.items():
+            if not isinstance(record, TechniqueSupport):
+                raise ValueError(
+                    f"the {slot} ({type(component).__name__}) declares technique {technique!r} with"
+                    f" {type(record).__name__}, not a TechniqueSupport record"
+                )
+            if record.technique != technique:
+                raise ValueError(
+                    f"the {slot} ({type(component).__name__}) declares technique {technique!r} with a"
+                    f" {type(record).__name__}, which serves {record.technique!r}"
+                )
+            protocol = record.provider_protocol()
+            if protocol is not None and not isinstance(component, protocol):
+                raise ValueError(
+                    f"the {slot} ({type(component).__name__}) declares technique {technique!r} and does not implement"
+                    f" {protocol.__name__}, which its {type(record).__name__} record requires"
+                )
+            techniques.setdefault(str(technique), {})[slot] = record
+    return techniques
 
 
 def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:

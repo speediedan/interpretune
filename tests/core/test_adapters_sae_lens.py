@@ -689,7 +689,7 @@ class TestBridgeSAEBackend:
         sae_cfg = SAELensFromPretrainedConfig(
             release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
         )
-        bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+        bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small")
         it_cfg = SAELensConfig(backend="transformerlens", tl_cfg=bridge_cfg, sae_cfgs=sae_cfg)
         assert it_cfg.backend == "transformerlens"
         assert isinstance(it_cfg.tl_cfg, ITLensBridgeConfig)
