@@ -200,7 +200,7 @@ This is the pattern the planned circuit-tracer cross-backend composition demo wi
 
 ## Current Limitations
 
-- **Lightning integration** — `AnalysisRunner` extends `SessionRunner` (core framework). Running analysis workflows through a Lightning `Trainer` is not yet supported.
+- **Lightning integration is partial:** `AnalysisRunner` extends `SessionRunner` (core framework). A Lightning-composed module with an `analysis_cfg` runs its analysis step under a `Trainer`: `Trainer.predict` routes each batch through the configured step (manual, or generated from the op) and returns its per-batch outputs, and `Trainer.test` runs the same setup while its batches still go through the module's own `test_step`. A `Trainer` does not build an `AnalysisStore` from those outputs; that is the `AnalysisRunner`'s job.
 - **Single-process only** — Analysis loops do not support distributed execution.
 - **Core-only hooks** — Analysis hooks (`on_analysis_start`, etc.) are only fired by the core runner, not by Lightning callbacks.
 
