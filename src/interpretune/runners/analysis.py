@@ -332,6 +332,7 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
                     "per_latent_preds": value.per_latent_preds,
                     "required_tensor_ops": sorted(value.required_tensor_ops),
                     "required_position_scopes": sorted(str(s) for s in value.required_position_scopes),
+                    "required_techniques": sorted(value.required_techniques),
                 },
                 path=f"{path}<op:{value.name}>",
             ),

@@ -215,6 +215,23 @@ A repository subclasses it and sets `target`, as it does for `ModelBackendConfor
 that applies to it; a refused composition runs the refusal case; a run in which no case applies fails. Each case builds
 a fresh session, because cases change parameters and `requires_grad`.
 
+An address means the same tensors on every composition of one model, and a test can check that across backends.
+`assert_same_selection` (in `interpretune.testing.conformance.tuning`) resolves each address on every view it is given
+and compares the selections by the wrapped model's own tensor names: a TransformerLens view's tensors by the names the
+bridge recorded for them, and a view mounted at a submodule (`model` on a core/HF composition, `hf_model` on an nnsight
+one) without that mount. It fails naming the address and each backend whose selection differs, or on which the address
+does not resolve:
+
+```python
+from interpretune.testing.conformance.tuning import assert_same_selection
+
+views = {"core/HF": core_view, "nnsight": nnsight_view, "TransformerLens": bridge_view}  # one model, three backends
+assert_same_selection(views, ["layers:-3: & component:attn.*", "role:latent & layers:3:"])
+```
+
+Interpretune's own tests run it on GPT-2's core/HF, nnsight and TransformerLens compositions, for addresses by layer
+and component and for latent models spliced by site address (`tests/core/test_cross_backend_addresses.py`).
+
 ## What each composition declares
 
 | Composition | View | Roles |

@@ -11,7 +11,7 @@ collection:
 compute_attribution_graph:
   description: Generate an attribution graph with circuit-tracer
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.compute_attribution_graph_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_graph]
   input_schema:
     concept_direction:
@@ -101,7 +101,7 @@ compute_attribution_graph:
 head_loadings:
   description: Split the edges into one attribution target across the attention heads of each layer
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_loadings_impl
-  required_capabilities: [head_attribution]
+  required_techniques: [head_attribution]
   # `head_target` is a call-time kwarg because a target can be a token string, a tensor or a `CustomTarget`.
   normal_params:
     head_layers: null
@@ -129,7 +129,7 @@ head_loadings:
 head_conductance:
   description: Credit each attention head for the measured change of a target between two prompts of the same length
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_conductance_impl
-  required_capabilities: [head_attribution]
+  required_techniques: [head_attribution]
   # `counterfactual_prompt` and `target_weights` are required call-time kwargs, with no default to declare.
   normal_params:
     n_steps: 32
@@ -218,7 +218,7 @@ extract_top_features:
 graph_prune:
   description: Prune a circuit-tracer attribution graph
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.graph_prune_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_graph_prune]
   input_schema:
     input_string:
@@ -341,7 +341,7 @@ graph_prune:
 graph_node_influence:
   description: Compute node influence scores for an attribution graph
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.graph_node_influence_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_node_influence]
   input_schema:
     adjacency_matrix:

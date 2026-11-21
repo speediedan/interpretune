@@ -127,6 +127,7 @@ class OpCollectionConformance:
         for name in collection_ops:
             op = cast(AnalysisOp, DISPATCHER.get_op(name))
             missing: list[str] = [c.value for c in op.required_capabilities if not caps.supports(c)]
+            missing += [t for t in sorted(op.required_techniques) if len(caps.techniques.get(t, {})) != 1]
             if op.requires_intervention_axes:
                 if record is None:
                     missing.append(Capability.INTERVENTION.value)

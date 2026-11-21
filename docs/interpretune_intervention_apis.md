@@ -61,6 +61,15 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+- `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
+  attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
+  a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block
+  $b$ of a model with blocks of $s$ coordinates is coordinates $bs$ to $bs + s - 1$, and each tensor with a latent axis
+  takes a unit delta over those coordinates' slices: the encoder's rows and bias, and the decoder's rows. The deltas
+  take `adapter:<name>`, and the rest of the latent model keeps its own role, so a frozen (`artifact`) featurizer can
+  be tuned at a few blocks only. Each tensor's latent axis is found by its length; a featurizer as wide as its site
+  names the tensors to adapt and their axes in `axes`
+  ([#868](https://github.com/speediedan/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
   token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
   weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
@@ -128,12 +137,15 @@ answers only whether a component provides it. The configurations it honours are 
 whose axes mirror venngram's `Support`: a backend that implements `fwd_w_intervention` for `add` and `project` but
 not `patch` declares the surface and a record saying so, and a gate refuses `patch` before anything runs.
 
-> **The capability namespace is under review.** `Capability` is one flat enum whose members sit at different levels:
-> surfaces (`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`) beside techniques (`ATTRIBUTION_GRAPH`,
-> `HEAD_ATTRIBUTION`). A member per technique does not scale to the range of experiments Interpretune composes, so
-> the namespace is likely to change soon: to the core surfaces alone, with techniques as registered ops that declare
-> what they require, or to a hierarchy that users and Hub collections can extend
-> ([#984](https://github.com/speediedan/interpretune/issues/984)).
+**Techniques are bound to providers, not members of the namespace.** `Capability` holds the core surfaces only
+(`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`). An op names the techniques it executes in
+`required_techniques` (`attribution_graph`, `head_attribution`, or one a third party registers), and a component that
+implements one declares a typed `TechniqueSupport` record under that name in its `technique_support`. The record's
+type names its technique and the protocol a provider must satisfy, and says what the technique needs of the model
+(`AttributionGraphSupport` requires the modeling module's own eager attention). Before anything runs, the op's gate
+resolves each technique to exactly one provider: a composition with every core surface and no implementation, two
+implementations, or a record of the wrong type is refused by name. A new technique is a new record type and its ops,
+never an edit to the enum.
 
 **Two providers of one target are legitimate, and are resolved by name.** In a circuit-tracer composition the model
 backend reaches an SAE's features at `hook_sae_acts_post` and the replacement model reaches its transcoders' features.

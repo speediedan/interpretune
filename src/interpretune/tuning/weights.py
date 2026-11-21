@@ -638,6 +638,111 @@ def attach_unit_adapter(
     return [_register(root, tensor, _UnitDelta(name, dim, chosen, shape), True) for tensor, dim, shape in plans]
 
 
+def attach_feature_adapter(
+    root: nn.Module,
+    catalog: Any,
+    target: Any,
+    *,
+    name: str,
+    n_layers: int,
+    axes: Mapping[str, int] | None = None,
+    sets: Mapping[str, Any] | None = None,
+) -> list[WeightEditHandle]:
+    r"""Tune only the selected feature blocks of an attached latent model, through a unit adapter on each of its
+    tensors (#868).
+
+    ``target`` is a feature address (``features:bsf & layers:4 & units:[2, 5]``), resolved through ``catalog`` (an
+    :class:`~interpretune.analysis.venngram.latents.LatentCatalog`, #865) to whole feature blocks, so a block-sparse
+    featurizer's feature and an SAE's latent use one grammar. Block :math:`b` of a model whose blocks hold :math:`s`
+    latent coordinates is coordinates :math:`bs` to :math:`bs + s - 1`. Each tensor of the latent model with a latent
+    axis (the encoder's rows and bias, the decoder's rows) takes a trainable delta over those coordinates' slices,
+    as :func:`attach_unit_adapter` gives a base-model tensor, :math:`W = W_0 + \Delta`, zero at first. A tensor with no
+    latent axis (the decoder's bias) is left as it is. The deltas take the role ``adapter:<name>``, so a schedule thaws
+    them by role while the rest of the latent model keeps its own role: a frozen (``artifact``) featurizer can be
+    tuned at a few blocks only.
+
+    Args:
+        root: The module the latent model is registered under
+            (:func:`~interpretune.tuning.latents.attach_latent_model`), so the adapter is in its state, view and
+            optimizer.
+        catalog: The latent catalog the address resolves through; each selected model's binding gives the loaded
+            model and its block size.
+        target: A feature address, or a reference to one of ``sets``. A named subspace is refused: it is a span, not a
+            set of coordinates.
+        name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
+        n_layers: The model's depth, which per-layer unit sets and negative layers resolve against.
+        axes: The tensors to adapt, each with its latent axis, by its name under the latent model
+            (``{"W_enc": 1, "W_dec": 0, "b_enc": 0}``); the rest are left as they are. Without it, each tensor with
+            one axis as long as the latent width is adapted along it, and a tensor with several such axes (a
+            featurizer as wide as its site) is refused, naming it.
+        sets: Named sets a reference in the target resolves against.
+
+    Returns:
+        A :class:`WeightEditHandle` per adapted tensor; ``remove()`` restores each tensor exactly.
+
+    Raises:
+        ValueError: If the address selects a subspace, a selected model is not registered under ``root``, a tensor's
+            latent axis is ambiguous or out of range, or no tensor of a model has a latent axis. Nothing is attached
+            when any tensor is refused.
+    """
+    _require_venngram()
+    _check_role(name, "adapter")
+    selection = catalog.resolve(target, n_layers=n_layers, sets=sets)
+    blocks: dict[int, tuple[Any, list[int]]] = {}
+    for selected in selection.targets:
+        if selected.kind != "feature":
+            raise ValueError(
+                f"The feature adapter {name!r}: `{target}` selects the subspace {selected.name!r}, a span with no "
+                "coordinates to adapt; select feature blocks"
+            )
+        binding = catalog.binding(selected)
+        blocks.setdefault(id(binding), (binding, []))[1].append(selected.unit)
+    paths = {id(module): path for path, module in root.named_modules()}
+    plans = []
+    for binding, units in blocks.values():
+        if (path := paths.get(id(binding.model))) is None or not path:
+            raise ValueError(
+                f"The feature adapter {name!r}: latent model {binding.name!r} is not registered under "
+                f"{type(root).__name__}; attach it (`attach_latent_model`) before adapting its blocks"
+            )
+        size, width = binding.block_size, binding.decoder_rows.shape[0]
+        coords = sorted(c for u in units for c in range(u * size, (u + 1) * size))
+        found = []
+        held = _held_names(binding.model)
+        if axes is not None and (unknown := sorted(set(axes) - set(held))):
+            raise ValueError(f"The feature adapter {name!r}: latent model {binding.name!r} has no tensor {unknown}")
+        for leaf in held if axes is None else [n for n in held if n in axes]:
+            w = _tensor(binding.model, leaf)
+            if axes is not None:
+                dim = axes[leaf]
+                if not 0 <= dim < w.ndim or w.shape[dim] != width:
+                    raise ValueError(
+                        f"The feature adapter {name!r}: `{path}.{leaf}` has no latent axis {dim} of width {width} "
+                        f"(its shape is {list(w.shape)})"
+                    )
+            else:
+                matches = [d for d, n in enumerate(w.shape) if n == width]
+                if not matches:
+                    continue  # no latent axis: the decoder's bias, at the site's width
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"The feature adapter {name!r}: `{path}.{leaf}` has several axes of the latent width {width} "
+                        f"(its shape is {list(w.shape)}); give its latent axis in `axes`"
+                    )
+                (dim,) = matches
+            shape = list(w.shape)
+            shape[dim] = len(coords)
+            found.append((f"{path}.{leaf}", dim, coords, shape))
+        if not found:
+            raise ValueError(
+                f"The feature adapter {name!r}: no tensor of latent model {binding.name!r} has an axis of its latent "
+                f"width {width}"
+            )
+        plans.extend(found)
+    _warn_if_viewed(root, "adapter")
+    return [_register(root, tensor, _UnitDelta(name, dim, coords, shape), True) for tensor, dim, coords, shape in plans]
+
+
 def _tensors_of(root: nn.Module, recipe: Any, op: Any, view: Any) -> list[str]:
     sets = recipe.book.sets()
     if op.target_kind(recipe.book) == "param":
@@ -1061,6 +1166,7 @@ __all__ = [
     "WeightEditHandle",
     "apply_recipe_weights",
     "apply_weight_patch",
+    "attach_feature_adapter",
     "attach_unit_adapter",
     "bias_patch",
     "check_weight_equivalence",
