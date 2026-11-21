@@ -252,3 +252,133 @@ def found(signed_effects: Mapping[Any, float], control_effects: Iterable[float],
         raise ValueError("No control effects given")
     threshold = float(torch.quantile(controls, q))
     return {key: float(value) > threshold for key, value in signed_effects.items()}
+
+
+def answer_margin(logits: torch.Tensor, answer_ids: tuple[int, int]) -> torch.Tensor:
+    """The behaviour measured: the first answer's logit minus the second's at the answer position (the last, with
+    left padding), one value per item."""
+    last = logits[:, -1, :].float()
+    return last[:, answer_ids[0]] - last[:, answer_ids[1]]
+
+
+def down_projections(module: Any, n_layers: int) -> dict[int, torch.nn.Module]:
+    """Each layer's MLP down projection, found by address through the module's view, so no module path is spelled.
+
+    Its input is the site :data:`SITE` (``point:mlp.out.hook_in``): the MLP's hidden neurons.
+    """
+    from interpretune.tuning.weights import resolve_weight_targets
+
+    out: dict[int, torch.nn.Module] = {}
+    for layer in range(n_layers):
+        (name,) = resolve_weight_targets(module, f"component:mlp.out & layers:{layer} & leaf:weight")
+        out[layer] = module.get_submodule(name.rsplit(".", 1)[0])
+    return out
+
+
+class Screen(NamedTuple):
+    """Neuron-finder's two screens over a set of items, at the answer position.
+
+    ``activations`` is ``(items, layers, units)``; ``write`` is the gradient of the behaviour with respect to each
+    neuron, averaged over the items, ``(layers, units)``; ``labels`` holds each item's label.
+    """
+
+    activations: torch.Tensor
+    write: torch.Tensor
+    labels: torch.Tensor
+
+    def read(self, positive_label: int = 0) -> torch.Tensor:
+        """The read screen: each neuron's mean activation on items labelled ``positive_label`` minus the others',
+        over its standard deviation, ``(layers, units)``."""
+        pos = self.labels == positive_label
+        acts = self.activations.float()
+        return (acts[pos].mean(0) - acts[~pos].mean(0)) / activation_std(acts)
+
+
+def screen(
+    model: torch.nn.Module,
+    projections: Mapping[int, torch.nn.Module],
+    batches: Iterable[Mapping[str, torch.Tensor]],
+    answer_ids: tuple[int, int],
+) -> Screen:
+    """Run both screens: record each neuron at the answer position, and the gradient of :func:`answer_margin`
+    with respect to it, through forward pre-hooks on the down projections (the model's parameters need no gradient).
+    """
+    captured: dict[int, torch.Tensor] = {}
+
+    def hook(layer: int):
+        def pre(_module, args):
+            x = args[0]
+            if torch.is_grad_enabled():
+                x.retain_grad()
+            captured[layer] = x
+            return None
+
+        return pre
+
+    handles = [proj.register_forward_pre_hook(hook(layer)) for layer, proj in projections.items()]
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    for p in trainable:  # the gradients wanted are the neurons', not the parameters'
+        p.requires_grad_(False)
+    layers = sorted(projections)
+    acts, labels = [], []
+    write: torch.Tensor | None = None
+    count = 0
+    try:
+        for batch in batches:
+            device = next(model.parameters()).device
+            ids, mask = batch["input_ids"].to(device), batch["attention_mask"].to(device)
+            with torch.enable_grad():
+                embeds = model.get_input_embeddings()(ids).detach().requires_grad_(True)
+                logits = model(inputs_embeds=embeds, attention_mask=mask).logits
+                answer_margin(logits, answer_ids).sum().backward()
+            grads = torch.stack([captured[layer].grad[:, -1].float() for layer in layers], dim=1)
+            write = grads.sum(0) if write is None else write + grads.sum(0)
+            acts.append(torch.stack([captured[layer][:, -1].detach().float() for layer in layers], dim=1).cpu())
+            labels.append(batch["labels"].view(-1).cpu())
+            count += ids.shape[0]
+            captured.clear()
+    finally:
+        for handle in handles:
+            handle.remove()
+        for p in trainable:
+            p.requires_grad_(True)
+    if write is None:
+        raise ValueError("No batches given")
+    return Screen(torch.cat(acts), (write / count).cpu(), torch.cat(labels))
+
+
+def book_payload(book: Mapping[str, Any], width: int, unit_sizes: Mapping[tuple[int, int], float]) -> dict:
+    """The backend intervention payload of a :func:`settings_book`'s treatment, its doses multiplied by
+    ``unit_sizes`` (the book's ``statistic``, per ``(layer, unit)``)."""
+    from interpretune.analysis.venngram import load_recipe, recipe_interventions
+
+    (op,) = book["treatments"]["steer"]["stages"][0]["ops"]
+    (transform,) = op["value"]["transform"]
+    recipe = load_recipe(book).recipe
+    return recipe_interventions(
+        recipe, site_widths={SITE: width}, statistics={transform["statistic"]["name"]: dict(unit_sizes)}
+    )
+
+
+@torch.no_grad()
+def steered_margins(
+    backend: Any,
+    model: Any,
+    batches: Iterable[Mapping[str, torch.Tensor]],
+    payload: Mapping[str, Any],
+    answer_ids: tuple[int, int],
+    input_key: str = "input_ids",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The clean and the steered :func:`answer_margin` of every item, through a model backend's
+    ``fwd_w_intervention``.
+
+    ``input_key`` names the token ids for the backend's model: ``input_ids`` for an HF model (and nnsight's), ``input``
+    for a TransformerLens bridge. The attention mask is passed with them, so left padding is masked on both.
+    """
+    clean, edited = [], []
+    for batch in batches:
+        inputs = {input_key: batch["input_ids"], "attention_mask": batch["attention_mask"]}
+        before, after = backend.fwd_w_intervention(model, inputs, dict(payload))
+        clean.append(answer_margin(before, answer_ids).cpu())
+        edited.append(answer_margin(after, answer_ids).cpu())
+    return torch.cat(clean), torch.cat(edited)

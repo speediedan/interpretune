@@ -6,6 +6,8 @@ import torch
 from it_examples.utils.neuron_finder import (
     Setting,
     activation_std,
+    answer_margin,
+    book_payload,
     book_settings,
     candidate_settings,
     dose_unit,
@@ -14,7 +16,9 @@ from it_examples.utils.neuron_finder import (
     parse_settings,
     residual_medians,
     select_candidates,
+    screen,
     settings_book,
+    steered_margins,
 )
 
 SETTINGS = ["9:2684:1.5", "7:2147:0.8", "9:484:-2.5"]
@@ -132,3 +136,88 @@ def test_found_compares_with_the_controls_quantile():
     assert verdict == {"a": True, "b": False, "c": False}
     with pytest.raises(ValueError, match="No control"):
         found({"a": 1.0}, [])
+
+
+def test_answer_margin_reads_the_last_position():
+    logits = torch.zeros(2, 3, 5)
+    logits[:, -1, 1], logits[:, -1, 4] = torch.tensor([3.0, -1.0]), torch.tensor([1.0, 2.0])
+    logits[:, 0, 1] = 100.0  # an earlier position is not read
+    torch.testing.assert_close(answer_margin(logits, (1, 4)), torch.tensor([2.0, -3.0]))
+
+
+def _tiny_qwen3():
+    tr = pytest.importorskip("transformers")
+    torch.manual_seed(0)
+    cfg = tr.Qwen3Config(
+        num_hidden_layers=2,
+        hidden_size=16,
+        intermediate_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=8,
+        vocab_size=64,
+    )
+    return tr.Qwen3ForCausalLM(cfg).eval()
+
+
+def test_the_write_screen_is_the_margins_gradient_at_the_answer_position():
+    model = _tiny_qwen3()
+    projections = {i: layer.mlp.down_proj for i, layer in enumerate(model.model.layers)}
+    batch = {
+        "input_ids": torch.randint(0, 64, (3, 5)),
+        "attention_mask": torch.ones(3, 5, dtype=torch.long),
+        "labels": torch.tensor([0, 1, 0]),
+    }
+    result = screen(model, projections, [batch], (7, 9))
+    assert result.activations.shape == (3, 2, 32) and result.write.shape == (2, 32)
+    assert all(p.requires_grad for p in model.parameters()), "the parameters' flags are restored"
+    assert result.read().shape == (2, 32)
+
+    # the oracle shares no code with the screen: a finite difference of the mean margin in one neuron
+    layer, unit, eps = 1, 5, 1e-3
+
+    def margin_with(delta):
+        def pre(_module, args):
+            x = args[0].clone()
+            x[:, -1, unit] += delta
+            return (x,)
+
+        handle = projections[layer].register_forward_pre_hook(pre)
+        try:
+            with torch.no_grad():
+                logits = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).logits
+        finally:
+            handle.remove()
+        return answer_margin(logits, (7, 9)).mean()
+
+    numeric = (margin_with(eps) - margin_with(-eps)) / (2 * eps)
+    torch.testing.assert_close(result.write[layer, unit], numeric, atol=1e-3, rtol=1e-2)
+
+
+def test_book_payload_scales_the_doses_by_the_books_statistic_at_the_last_token():
+    pytest.importorskip("venngram")
+    from interpretune.analysis.backends.capabilities import PositionScope
+
+    book = settings_book(["3:2:2.0"], model_id="gpt2", revision=REV, statistic="activation_std", tokens="last")
+    payload = book_payload(book, 8, {(3, 2): 0.5})
+    ((spec,),) = payload.values()
+    assert list(payload) == ["blocks.3.mlp.out.hook_in"]
+    assert spec.position_scope == PositionScope.LAST_TOKEN
+    expected = torch.zeros(8)
+    expected[2] = 1.0
+    torch.testing.assert_close(spec.intervention_tensor.float(), expected)
+
+
+def test_steered_margins_read_both_passes_of_the_backend():
+    class Backend:
+        def fwd_w_intervention(self, model, inputs, payload):
+            assert set(inputs) == {"input", "attention_mask"} and payload == {"p": 1}
+            clean = torch.zeros(2, 4, 3)
+            edited = clean.clone()
+            edited[:, -1, 0] = 2.0
+            return clean, edited
+
+    batch = {"input_ids": torch.ones(2, 4), "attention_mask": torch.ones(2, 4), "labels": torch.zeros(2)}
+    clean, edited = steered_margins(Backend(), None, [batch, batch], {"p": 1}, (0, 1), input_key="input")
+    torch.testing.assert_close(clean, torch.zeros(4))
+    torch.testing.assert_close(edited, torch.full((4,), 2.0))
