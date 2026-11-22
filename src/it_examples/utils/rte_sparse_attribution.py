@@ -34,6 +34,9 @@ def _validation_items(module: Any) -> dict[str, Any]:
 
     items = {}
     for item in module.datamodule.dataset["validation"]:
+        missing = {"idx", "input_ids", "attention_mask"} - item.keys()
+        if missing:
+            raise ValueError(f"validation rows must retain required columns: missing {sorted(missing)}")
         identity = item["idx"]
         if type(identity) not in (int, str) or not str(identity) or str(identity) in items:
             raise ValueError(f"validation idx must be a distinct integer or string, got {identity!r}")

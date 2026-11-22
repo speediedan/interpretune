@@ -144,6 +144,34 @@ def _collector(factory=None):
     return RteSparseAttributionCollector(factory or RebuiltModel())
 
 
+def test_shipping_column_pruning_preserves_validation_identity(sparse_module):
+    from pathlib import Path
+
+    from datasets import Dataset
+    import yaml
+
+    from interpretune.base.datamodules import ITDataModule
+    from it_examples.utils.rte_sparse_attribution import _validation_items
+
+    path = Path(__file__).resolve().parents[2] / "src/it_examples/examples/rte/configs/rte_sparse.gemma3.core.yaml"
+    config = yaml.safe_load(path.read_text())["registered_cfg"]["datamodule_cfg"]
+    data = SimpleNamespace(itdm_cfg=SimpleNamespace(remove_unused_columns=True, **config))
+    dataset = Dataset.from_list(sparse_module.datamodule.dataset["validation"])
+    prepared = ITDataModule._remove_unused_columns(data, dataset, target_model=sparse_module.model)
+    assert "idx" in prepared.column_names
+    sparse_module.datamodule.dataset["validation"] = prepared
+    assert list(_validation_items(sparse_module)) == ["17", "29", "41"]
+
+
+@pytest.mark.parametrize("column", ["idx", "input_ids", "attention_mask"])
+def test_missing_validation_columns_are_refused(sparse_module, column):
+    from it_examples.utils.rte_sparse_attribution import _validation_items
+
+    del sparse_module.datamodule.dataset["validation"][0][column]
+    with pytest.raises(ValueError, match=f"missing.*{column}"):
+        _validation_items(sparse_module)
+
+
 def test_full_validation_collection_checks_actual_weights_logits_and_source_partitions(sparse_module, tmp_path):
     module = sparse_module
     module.train()
