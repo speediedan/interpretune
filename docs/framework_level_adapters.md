@@ -164,14 +164,16 @@ framework adapter:
 
 All four entry points ultimately call the configured `AnalysisCfg.op(...)`.
 A Lightning `Trainer` runs a composition's analysis step through `predict` and `test`, but it does not build an
-`AnalysisStore` from the outputs (see the limitations below).
+`AnalysisStore` from the outputs yet. Basic `AnalysisStore` construction under a `Trainer` is planned for the
+alpha and tracked in [#211](https://github.com/speediedan/interpretune/issues/211) (see the limitations
+below).
 
 See [Analysis Runner Usage](analysis_runner_usage.md) for detailed API documentation
 and notebook usage patterns.
 
 ## Current Limitations
 
-- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, but nothing builds an `AnalysisStore` from them, and the analysis hooks fire only in the core runner (see [Analysis Runner Usage](analysis_runner_usage.md)).
+- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, but nothing builds an `AnalysisStore` from them yet, and the analysis hooks fire only in the core runner (see [Analysis Runner Usage](analysis_runner_usage.md)). Basic `AnalysisStore` construction under a `Trainer` remains to be implemented, tracked in [#211](https://github.com/speediedan/interpretune/issues/211).
 - **Analysis loops run in one process.** The core training and test loops take a distributed placement (`ddp`, `fsdp2` or `tp`; see [Data-parallel training on the core loop](core_loop_data_parallel.md)), but the analysis loop does not.
 - **Core callbacks are minimal**: The core loop exposes step, validation-end and epoch boundaries and checkpoint state, but ships no ready-made early-stopping or checkpointing callbacks; Lightning provides those.
 
