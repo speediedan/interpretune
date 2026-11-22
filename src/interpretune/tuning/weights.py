@@ -54,6 +54,8 @@ or dense patch has no activation form at one site.
 
 from __future__ import annotations
 
+import math
+
 import re
 import warnings
 from collections.abc import Callable, Mapping, Sequence
@@ -170,6 +172,57 @@ class _UnitDelta(WeightEdit):
 
     def forward(self, w: torch.Tensor) -> torch.Tensor:
         return w.index_add(self.dim, self.units, self.delta.to(w.dtype))
+
+
+class _UnitLowRank(WeightEdit):
+    r"""A low-rank unit adapter: :math:`W_0 + \Delta`, where the selected units' slices take
+    :math:`\Delta_S = \tfrac{\alpha}{r} B A`, with :math:`B \in \mathbb{R}^{|S| \times r}` (zero at first) and
+    :math:`A \in \mathbb{R}^{r \times k}` over the :math:`k` entries of each slice, and the tensor is unchanged
+    elsewhere."""
+
+    units: torch.Tensor
+
+    def __init__(self, name: str, dim: int, units: Sequence[int], shape: Sequence[int], rank: int, alpha: float):
+        super().__init__(name, "adapter")
+        self.dim = dim
+        self.shape = tuple(shape)
+        self.scale = alpha / rank
+        self.register_buffer("units", torch.tensor(list(units), dtype=torch.long))
+        k = math.prod(n for i, n in enumerate(self.shape) if i != dim)
+        a = torch.empty(rank, k)
+        nn.init.kaiming_uniform_(a, a=math.sqrt(5))  # LoRA's initialization: with B at zero the model is unchanged
+        self.lora_A = self.operand(a)
+        self.lora_B = self.operand(torch.zeros(len(self.units), rank))
+
+    def forward(self, w: torch.Tensor) -> torch.Tensor:
+        others = [n for i, n in enumerate(self.shape) if i != self.dim]
+        delta = (self.lora_B @ self.lora_A * self.scale).reshape(len(self.units), *others).movedim(0, self.dim)
+        return w.index_add(self.dim, self.units, delta.to(w.dtype))
+
+
+def _low_rank(name: str, rank: int | None, alpha: float | None) -> tuple[int, float] | None:
+    """The validated ``(rank, alpha)`` of a unit adapter, or None for a full slice delta."""
+    if rank is None:
+        if alpha is not None:
+            raise ValueError(f"The unit adapter {name!r}: `alpha` scales a low-rank delta; give `rank` with it")
+        return None
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
+        raise ValueError(f"The unit adapter {name!r}: `rank` must be a positive integer, not {rank!r}")
+    alpha = float(rank if alpha is None else alpha)
+    if not math.isfinite(alpha) or alpha <= 0:
+        raise ValueError(f"The unit adapter {name!r}: `alpha` must be a positive number, not {alpha!r}")
+    return rank, alpha
+
+
+def _check_crossover(name: str, tensor: str, shape: Sequence[int], dim: int, rank: int) -> None:
+    """Refuse a rank at which the factored delta has as many entries as the full one, or more."""
+    units, k = shape[dim], math.prod(n for i, n in enumerate(shape) if i != dim)
+    if rank * (units + k) >= units * k:
+        raise ValueError(
+            f"The unit adapter {name!r}: rank {rank} on `{tensor}` saves nothing over its full delta ({units} slices "
+            f"of {k}: {units * k} entries, against {rank * (units + k)} factored); a rank below "
+            f"{units * k / (units + k):.3g} does, or omit `rank` for the full delta"
+        )
 
 
 class _Vector(WeightEdit):
@@ -576,6 +629,8 @@ def attach_unit_adapter(
     name: str,
     view: Any | None = None,
     sets: Mapping[str, Any] | None = None,
+    rank: int | None = None,
+    alpha: float | None = None,
 ) -> list[WeightEditHandle]:
     r"""Tune only the selected units of the tensors ``target`` addresses, through a unit adapter on each (#868).
 
@@ -585,6 +640,12 @@ def attach_unit_adapter(
     checkpoint and an export see an ordinary tensor, where a gradient mask over the base weight would leave
     weight decay and optimizer state moving the other units. Attach it before the module's tunable view is built, as
     an intervention is, so the view declares the role.
+
+    With ``rank``, each matrix's delta is factored as LoRA factors it, but over the selected slices only:
+    :math:`\Delta_S = \tfrac{\alpha}{r} B A`, with :math:`B` (one row per selected unit, zero at first) and
+    :math:`A` (one column per entry of a slice) the trainable operands, both taking the adapter's role. Full slices hold
+    :math:`|S| k` entries and the factors :math:`r (|S| + k)`, so a rank at or above :math:`|S| k / (|S| + k)` saves
+    nothing and is refused, naming that bound. A 1-D tensor (a bias) has nothing to factor and keeps its full delta.
 
     Args:
         root: The module the target resolves under (an interpretune module is its view's root).
@@ -598,16 +659,22 @@ def attach_unit_adapter(
         name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
         view: The view addresses and unit axes resolve through; ``root``'s attached view, else its default view.
         sets: Named sets a reference in the target resolves against.
+        rank: The rank :math:`r` of a low-rank delta over the selected slices; None (the default) for the full delta.
+        alpha: The low-rank delta's scale numerator, :math:`\alpha / r`; :math:`r` by default (a scale of 1). Only with
+            ``rank``.
 
     Returns:
         A :class:`WeightEditHandle` per tensor; ``remove()`` restores each tensor exactly.
 
     Raises:
-        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, or a unit is
-            outside a tensor's units. Nothing is attached when any tensor is refused.
+        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, a unit is
+            outside a tensor's units, ``rank`` or ``alpha`` is not a positive number (or ``alpha`` comes without
+            ``rank``), or a rank saves nothing over a tensor's full delta. Nothing is attached when any tensor is
+            refused.
     """
     _require_venngram()
     _check_role(name, "adapter")
+    low_rank = _low_rank(name, rank, alpha)
     if isinstance(target, Mapping) and "units" in target or isinstance(target, str) and "units:" in target:
         raise ValueError("A unit adapter's units are its `units` argument, not part of the target address")
     chosen = sorted({int(u) for u in units})
@@ -633,9 +700,21 @@ def attach_unit_adapter(
             raise ValueError(f"The unit adapter {name!r}: `{tensor}` has {w.shape[dim]} units along its unit axis")
         shape = list(w.shape)
         shape[dim] = len(chosen)
-        plans.append((tensor, dim, shape))
+        if low_rank is not None and w.ndim > 1:
+            _check_crossover(name, tensor, shape, dim, low_rank[0])
+        plans.append((tensor, dim, shape, low_rank if w.ndim > 1 else None))
     _warn_if_viewed(root, "adapter")
-    return [_register(root, tensor, _UnitDelta(name, dim, chosen, shape), True) for tensor, dim, shape in plans]
+    return [
+        _register(
+            root,
+            tensor,
+            _UnitDelta(name, dim, chosen, shape)
+            if factors is None
+            else _UnitLowRank(name, dim, chosen, shape, *factors),
+            True,
+        )
+        for tensor, dim, shape, factors in plans
+    ]
 
 
 def attach_feature_adapter(
