@@ -1025,6 +1025,47 @@ def test_sasa_blocks_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# fp32 Qwen3-0.6B, a TransformerLens copy of it for the parity check, then two tuning sessions one at a time
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=16.0)
+def test_neuron_finder_notebook(tmp_path: Path):
+    """The neuron-finder example (#869) on Qwen3-0.6B, shortened, against the local-publish snapshot.
+
+    The notebook asserts its own controls (the two backends agree on the book, both tuning stages run, the book reads
+    back as its settings); this checks it ran clean and reached the tuning comparison.
+    """
+    import json
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "neuron_finder" / "neuron_finder.ipynb",
+        parameters={
+            "N_SCREEN": 32,
+            "N_EVAL": 32,
+            "TOP": 2,
+            "DOSES": [8.0],
+            "N_CONTROLS": 4,
+            "BOOK_DOSE": 8.0,
+            "LIMIT_TRAIN_BATCHES": 2,
+            "LIMIT_VAL_BATCHES": 1,
+            "REVISION": rev,
+        },
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "on two backends" in tables, "the book was not steered on both backends"
+    assert "tuned: the found neurons" in tables, "the tuning comparison did not run"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -1053,6 +1094,7 @@ def test_notebook_discovery():
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "neuron_communities/neuron_communities_replication.ipynb",
+        "neuron_finder/neuron_finder.ipynb",
         "quickstart/cpu_quickstart.ipynb",
         "runners/runner_flexibility_demo.ipynb",
         "sasa_blocks/sasa_blocks_frames_charts.ipynb",

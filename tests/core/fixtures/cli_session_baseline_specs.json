@@ -50,7 +50,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -308,7 +309,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -600,7 +602,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -897,7 +900,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -1191,7 +1195,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -1441,7 +1446,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -1988,7 +1994,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2258,7 +2265,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2527,7 +2535,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2768,7 +2777,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -3010,7 +3020,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -3295,7 +3306,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {

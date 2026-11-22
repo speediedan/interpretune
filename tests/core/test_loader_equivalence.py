@@ -44,7 +44,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 21, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 22, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
