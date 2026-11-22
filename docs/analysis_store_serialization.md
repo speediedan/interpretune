@@ -90,15 +90,18 @@ A **bfloat16 tensor** is written to a `float32` column, which holds every bfloat
 latent model loaded in bfloat16 gets `float32` columns for the same reason.
 
 **Writing a tensor of another dtype** into a column is accepted when casting it to the column's dtype and back
-reproduces every value, and refused otherwise with `StoreDtypeError`, which names the column, both dtypes and the
-first value the cast would change. The check runs in `AnalysisOp.process_batch`, which both writers go through (the
+reproduces every value. A float rounded to a narrower declared float is also accepted, with a warning naming the
+column once per dtype pair: a schema's float dtype is the precision its op stores, and a model run in float64
+produces float64 values for the bundled ops' float32 columns. Anything else is refused with `StoreDtypeError`, which
+names the column, both dtypes and the first value the cast would change. The check runs in `AnalysisOp.process_batch`, which both writers go through (the
 runner's generator and `analysis_store_from_batches`). Measured examples, where "before" is what a store held without
 the check:
 
 | Written into the column | Before | Now |
 | --- | --- | --- |
 | bfloat16, float16, int8, int16, uint8 or bool into `float32` | values exact | accepted |
-| float64 into `float32`, float32 into `float16` | values rounded, silently | refused, unless every value survives |
+| float64 into `float32`, float32 into `float16` | values rounded, silently | rounded, with a warning naming the column |
+| a float past the declared float's range (1e5 into `float16`) | stored as `inf`, silently | refused |
 | float into `int64` or `int32` | fractions truncated, silently (a generic Arrow error for a 2-D column from the runner) | refused, unless every value is integral |
 | int32 or int64 into `float32` | values past $2^{24}$ rounded, silently, in a scalar column; a generic Arrow error in other shapes | refused, unless every value survives |
 | int64 into `int32` | a generic Arrow overflow error | refused, naming the column |

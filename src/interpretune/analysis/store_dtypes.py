@@ -6,10 +6,11 @@ column's shape and on the writer, a float64 tensor in a float32 column is rounde
 column is truncated, any non-zero value in a bool column becomes ``True``, and a large integer in a float32 column is
 rounded or refused. None of those raise in every case, so a store could hold values its producer never computed.
 
-The rule here is value-based: a tensor may be written to a column of another dtype only when casting it to the
-column's dtype and back reproduces every value. A bfloat16 tensor in a float32 column passes (every bfloat16 value is
-a float32 value); a float64 tensor in a float32 column passes only when its values happen to be float32 values. What
-fails is refused by :func:`check_storable` with :class:`StoreDtypeError`, naming the column and both dtypes.
+The rule here is value-based: a tensor may be written to a column of another dtype when casting it to the column's
+dtype and back reproduces every value (a bfloat16 tensor in a float32 column always does), or when the cast only
+rounds floats to the declared float precision, which is warned about once per column. Anything else (truncating a
+fraction, booleanizing, losing integer precision, a finite value overflowing to infinity) is refused by
+:func:`check_storable` with :class:`StoreDtypeError`, naming the column, both dtypes and the first changed value.
 
 The measured round-trip table is in ``docs/analysis_store_serialization.md``.
 """
@@ -92,8 +93,38 @@ def _first_changed(tensor: torch.Tensor, target: torch.dtype) -> str:
     return f"{flat[idx].item()!r} -> {flat[idx].to(target).item()!r}"
 
 
+_ROUNDING_WARNED: set[tuple[str, str, str]] = set()
+
+
+def _is_float_rounding(tensor: torch.Tensor, target: torch.dtype) -> bool:
+    """Whether the cast only rounds floats to the declared precision: no finite value becomes infinite.
+
+    A schema that declares ``float32`` declares the precision its op stores, and a model run in float64 produces
+    float64 values for it; rounding those is the declared conversion, so it is warned about, not refused. Overflow is
+    not rounding: a finite value that becomes ``inf`` is refused like any other changed value.
+    """
+    if not (tensor.is_floating_point() and target.is_floating_point):
+        return False
+    return not bool((tensor.isfinite() & ~tensor.to(target).isfinite()).any())
+
+
+def _warn_rounding_once(col_name: str, given: str, stored_dtype: str) -> None:
+    from interpretune.utils import rank_zero_warn
+
+    key = (col_name, given, stored_dtype)
+    if key not in _ROUNDING_WARNED:
+        _ROUNDING_WARNED.add(key)
+        rank_zero_warn(
+            f"Column {col_name!r} is declared {stored_dtype} and was given {given} values; they are stored rounded to"
+            f" {stored_dtype}. Declare the column {given} to keep the full precision."
+        )
+
+
 def check_storable(col_name: str, value: Any, stored_dtype: str) -> None:
     """Refuse a value that column ``col_name`` (declared ``stored_dtype``) cannot hold without changing it.
+
+    The one change accepted is a float rounded to a narrower declared float with no overflow, which is warned about
+    once per column and dtype pair (see :func:`_is_float_rounding`).
 
     Tensors are checked wherever they sit in ``value``: directly, inside the mappings a per-hook or per-latent column
     writes, and inside lists. Columns whose dtype is not numeric (strings, objects) are not checked, and neither are
@@ -112,10 +143,13 @@ def check_storable(col_name: str, value: Any, stored_dtype: str) -> None:
             )
         if value.numel() and not _values_survive(value, target):
             given = _torch_name(value.dtype)
+            if _is_float_rounding(value, target):
+                _warn_rounding_once(col_name, given, stored_dtype)
+                return
             raise StoreDtypeError(
                 f"Column {col_name!r} is declared {stored_dtype} and was given a {given} tensor whose values"
                 f" {stored_dtype} cannot hold (first changed value: {_first_changed(value, target)}). Cast the tensor"
-                f" in the op if that rounding is intended, or declare the column {_dtype_name(value.dtype)}."
+                f" in the op if that change is intended, or declare the column {_dtype_name(value.dtype)}."
             )
         return
     if isinstance(value, dict):

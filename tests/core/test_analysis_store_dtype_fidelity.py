@@ -171,8 +171,6 @@ def test_a_narrowing_whose_values_survive_is_accepted(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "source, declared, shown",
     [
-        (torch.float64, "float32", "float64 tensor whose values float32 cannot hold"),
-        (torch.float32, "float16", "float32 tensor whose values float16 cannot hold"),
         (torch.float32, "int64", "float32 tensor whose values int64 cannot hold"),
         (torch.int32, "float32", "int32 tensor whose values float32 cannot hold"),
         (torch.int64, "int32", "int64 tensor whose values int32 cannot hold"),
@@ -181,13 +179,38 @@ def test_a_narrowing_whose_values_survive_is_accepted(tmp_path, monkeypatch):
     ],
 )
 def test_a_value_the_column_cannot_hold_is_refused_by_name(source, declared, shown, kind):
-    """Rounding, truncation, overflow and booleanizing are refused at write time, naming the column and dtypes.
+    """Truncation, integer precision loss, overflow and booleanizing are refused at write time, naming the column.
 
     Before this check the same writes stored changed values on some shapes and raised a generic Arrow error on others.
     """
     written = [_values(source, _row_shape(kind, 1), 1)]
     with pytest.raises(StoreDtypeError, match=rf"Column 'x' is declared {declared} and was given a {shown}"):
         _write(_op(declared, kind), written)
+
+
+@pytest.mark.parametrize("source, declared", [(torch.float64, "float32"), (torch.float32, "float16")])
+def test_a_float_rounded_to_the_declared_precision_is_stored_with_one_warning(source, declared, tmp_path, monkeypatch):
+    """A schema's float dtype is the precision its op stores: a float64 model's values are rounded to it, with a
+    warning.
+
+    Bundled ops declare float32 columns, and a model run in float64 produces float64 values for them, so refusing the
+    rounding would refuse every float64 run of those ops. The warning names the column once per dtype pair.
+    """
+    from interpretune.analysis import store_dtypes
+
+    monkeypatch.setattr(store_dtypes, "_ROUNDING_WARNED", set())
+    written = [_values(source, _row_shape("sequence", r), r) for r in range(2)]
+    with pytest.warns(UserWarning, match=rf"Column 'x' is declared {declared} .* stored rounded") as record:
+        store = _write(_op(declared, "sequence"), written)
+    assert sum("stored rounded" in str(w.message) for w in record) == 1
+    target = STORE_TORCH_DTYPES[declared]
+    _assert_faithful([w.to(target) for w in written], _read_all(store, tmp_path, monkeypatch), target)
+
+
+def test_a_float_that_overflows_the_declared_precision_is_refused():
+    """Rounding keeps a value finite; a finite value that would become infinite is a changed value, refused."""
+    with pytest.raises(StoreDtypeError, match="float32 tensor whose values float16 cannot hold .*-> inf"):
+        _write(_op("float16", "sequence"), [torch.tensor([1.5, 1e5])])
 
 
 def test_bfloat16_beyond_float16_range_is_refused():
@@ -206,13 +229,13 @@ def test_a_complex_tensor_is_refused_by_name():
 
 def test_refusal_checks_tensors_inside_a_per_latent_column():
     """A per-latent column holds a tensor per latent; each is checked against the declared dtype."""
-    op = _op("float32", "sequence", per_latent=True)
+    op = _op("int64", "sequence", per_latent=True)
     from interpretune.analysis import AnalysisBatch
     from interpretune.analysis.ops.base import AnalysisOp
 
     batch = AnalysisBatch()
-    batch.x = {"hook": {0: torch.tensor([0.5]), 3: torch.tensor([0.1], dtype=torch.float64)}}
-    with pytest.raises(StoreDtypeError, match="Column 'x' is declared float32 and was given a float64 tensor"):
+    batch.x = {"hook": {0: torch.tensor([2]), 3: torch.tensor([0.5])}}
+    with pytest.raises(StoreDtypeError, match="Column 'x' is declared int64 and was given a float32 tensor"):
         AnalysisOp.process_batch(analysis_batch=batch, batch={}, output_schema=op.output_schema)
 
 
