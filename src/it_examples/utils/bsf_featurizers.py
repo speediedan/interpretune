@@ -49,6 +49,9 @@ class BlockSparseFeaturizer(nn.Module):
     """
 
     use_error_term = True
+    # registered buffers, declared so a type checker reads them as tensors rather than `Tensor | Module`
+    mean: torch.Tensor
+    scale: torch.Tensor
 
     def __init__(self, state: dict[str, Any], io_dtype: torch.dtype = torch.float32) -> None:
         super().__init__()
@@ -140,6 +143,11 @@ class KeptError(nn.Module):
     reconstruction, and ``replace_with_error`` keeps the activation's value whatever the adapters learn (its error term
     is detached from the same reconstruction), so neither tunes a few blocks of a featurizer that stays as it is.
     """
+
+    # the loaded weights, registered as buffers below
+    W_enc_0: torch.Tensor
+    b_enc_0: torch.Tensor
+    W_dec_0: torch.Tensor
 
     def __init__(self, featurizer: BlockSparseFeaturizer) -> None:
         super().__init__()

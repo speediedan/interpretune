@@ -73,35 +73,42 @@ def _spliced_kept_error():
     from interpretune.analysis.venngram import LatentCatalog
     from interpretune.tuning.latents import LatentSite, attach_latent_model
 
+    class Root(nn.Module):
+        def __init__(self, d: int) -> None:
+            super().__init__()
+            self.model = nn.ModuleList([nn.Linear(d, d) for _ in range(4)])
+
     tiny = _Tiny()
-    root = nn.Module()
-    root.model = nn.ModuleList([nn.Linear(tiny.d, tiny.d) for _ in range(4)])
+    root = Root(tiny.d)
     kept = KeptError(BlockSparseFeaturizer(tiny.state()))
     attach_latent_model(root, "bsf", kept, LatentSite("model.3", op="replace"), frozen=True)
-    return root, kept, LatentCatalog([kept.binding("bsf")])
+    layer: nn.Module = root.model[3]
+    return root, layer, kept, LatentCatalog([kept.binding("bsf")])
 
 
 def test_kept_error_passes_the_activation_through_until_its_adapter_trains():
     from interpretune.tuning.weights import attach_feature_adapter
 
-    root, kept, catalog = _spliced_kept_error()
+    root, layer, kept, catalog = _spliced_kept_error()
     f, x = kept.featurizer, torch.randn(3, _Tiny.d)
-    h = root.model[3].forward(x)  # the module's own output, without the splice's hooks
-    torch.testing.assert_close(root.model[3](x), h)  # spliced, zero adapters: the activation is unchanged
+    h = layer.forward(x)  # the module's own output, without the splice's hooks
+    torch.testing.assert_close(layer(x), h)  # spliced, zero adapters: the activation is unchanged
     block = int((f.block_codes(h).norm(dim=-1) > 0).sum(0).argmax())  # a block open on these inputs
     target = f"features:bsf & layers:3 & units:[{block}]"
     handles = attach_feature_adapter(root, catalog, target, name="blk", n_layers=4)
     assert {h.target for h in handles} == {f"latent_models.bsf.featurizer.{t}" for t in ("W_enc", "b_enc", "W_dec")}
-    torch.testing.assert_close(root.model[3](x), h)  # the adapters start at zero
+    torch.testing.assert_close(layer(x), h)  # the adapters start at zero
     with torch.no_grad():
         for handle in handles:
-            handle.edit.delta.add_(0.5)
+            delta = handle.edit.delta
+            assert isinstance(delta, torch.Tensor)
+            delta.add_(0.5)
     # the activation moves by the change in the reconstruction: the adapted featurizer's less the loaded one's
     loaded = (KeptError(BlockSparseFeaturizer(_Tiny().state())).featurizer.encode(h) @ kept.W_dec_0) * f.scale
     expected = h + (f.encode(h) @ f.W_dec) * f.scale - loaded
-    moved = root.model[3](x)
+    moved = layer(x)
     assert (moved - h).abs().max() > 0
     torch.testing.assert_close(moved, expected)
     for handle in handles:
         handle.remove()
-    torch.testing.assert_close(root.model[3](x), h)
+    torch.testing.assert_close(layer(x), h)
