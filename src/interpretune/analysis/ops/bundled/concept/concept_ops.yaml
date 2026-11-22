@@ -20,6 +20,7 @@ extract_concept_latent_state:
     answer_indices:
       datasets_dtype: int64
     context_token_indices:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -40,6 +41,7 @@ extract_concept_latent_state:
       non_tensor: true
       sequence_type: false
     context_token_indices:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -76,6 +78,7 @@ extract_concept_latent_examples:
       datasets_dtype: int64
       required: false
     context_token_indices:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -226,6 +229,7 @@ concept_direction:
       required: true
       non_tensor: true
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -265,11 +269,13 @@ concept_direction:
       required: false
       non_tensor: true
     concept_group_a_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       non_tensor: true
       sequence_type: true
     concept_group_b_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -295,6 +301,7 @@ concept_direction:
       non_tensor: true
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -361,6 +368,7 @@ model_fwd_intervention:
       non_tensor: true
       sequence_type: false
     intervention_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -457,6 +465,7 @@ model_bwd_intervention:
       non_tensor: true
       sequence_type: false
     intervention_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -569,6 +578,7 @@ intervention_first_order_check:
       non_tensor: true
       sequence_type: false
     intervention_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       non_tensor: true

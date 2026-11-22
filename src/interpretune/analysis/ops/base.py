@@ -353,6 +353,48 @@ class AnalysisBatch(AttrDict):
 
 DIM_VAR = Literal["batch_size", "max_answer_tokens", "num_classes", "vocab_size", "max_seq_len"]
 
+#: What a column's values can name: a layer of the model, a hook name (the keys of a per-hook mapping), a position or
+#: token id under the model's tokenizer, or a feature of an attached latent dictionary.
+SITE_KINDS = ("layer", "hook_key", "tokens", "latent_feature")
+
+
+@dataclass(frozen=True)
+class SiteBinding:
+    """One thing a column's values are bound to, which another model must share for the values to mean the same.
+
+    Args:
+        binds: One of :data:`SITE_KINDS`.
+        slot: For a column whose rows are tuples (the ``[layer, position, feature]`` triples), the index of the bound
+            element; ``None`` when every value is bound.
+        point: For a layer binding, the activation point the layer is read at, when one is fixed.
+    """
+
+    binds: str
+    slot: int | None = None
+    point: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.binds not in SITE_KINDS:
+            raise ValueError(f"site binding {self.binds!r} is not one of {SITE_KINDS}")
+        if self.slot is not None and (not isinstance(self.slot, int) or self.slot < 0):
+            raise ValueError(f"site slot must be a non-negative int, got {self.slot!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        """The serialized form, omitting unset fields."""
+        return {k: v for k, v in (("binds", self.binds), ("slot", self.slot), ("point", self.point)) if v is not None}
+
+    @classmethod
+    def coerce(cls, value: Any) -> "SiteBinding":
+        """A binding from its serialized mapping (or itself)."""
+        if isinstance(value, SiteBinding):
+            return value
+        if not isinstance(value, dict):
+            raise ValueError(f"a site binding is a mapping with `binds`, got {value!r}")
+        unknown = set(value) - {"binds", "slot", "point"}
+        if unknown:
+            raise ValueError(f"site binding {value!r} has unknown keys {sorted(unknown)}")
+        return cls(**value)
+
 
 @dataclass(frozen=True)
 class ColCfg:
@@ -398,12 +440,27 @@ class ColCfg:
     sequence_type: bool = True  # Default to sequence type for most fields
     array_dtype: str | None = None  # Override for array fields, defaults to datasets_dtype
     default: Any = None  # Optional execution-time default used by AnalysisBatch scoped attribute resolution
+    # What the column's values name (layers, hook keys, tokens, latent features), so a store can say what another model
+    # must share before its values carry over (`AnalysisStore.resolve_on`). A per-hook column (`per_latent` or
+    # `per_latent_model_hook`) is keyed by hook name by definition, so it binds `hook_key` without declaring it.
+    site: tuple[SiteBinding, ...] | None = None
+
+    def __post_init__(self) -> None:
+        site = self.site
+        if site is not None:
+            items = site if isinstance(site, (list, tuple)) else (site,)
+            site = tuple(SiteBinding.coerce(item) for item in items)
+        if (self.per_latent or self.per_latent_model_hook) and not any(b.binds == "hook_key" for b in site or ()):
+            site = (*(site or ()), SiteBinding("hook_key"))
+        object.__setattr__(self, "site", site)
 
     def to_dict(self) -> dict:
         """Convert to JSON serializable dict."""
         result = {}
         for f in fields(ColCfg):
             val = getattr(self, f.name)
+            if f.name == "site" and val is not None:
+                val = [binding.to_dict() for binding in val]
             result[f.name] = val
         return result
 
@@ -442,6 +499,7 @@ class ColCfg:
                 self.sequence_type,
                 self.array_dtype,
                 hashable_default,
+                self.site,
             )
         )
 

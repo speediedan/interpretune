@@ -181,6 +181,38 @@ artifact is already live, so delete it or republish. Pass `skip_checks={"range-r
 the skip is recorded in the envelope's `provenance` as `publish_checks_skipped`. The same check
 interface guards dashboard corpora (see the dashboard pipeline docs).
 
+### Site bindings: reading a store on another model
+
+Some columns name things of the model they were computed on: a layer, a hook name, a token id or position, a feature
+of an attached latent dictionary. Each op declares which in its schema, as `ColCfg.site`, a list of bindings:
+
+```yaml
+active_features:
+  datasets_dtype: int64
+  array_shape: [null, 3]
+  site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
+```
+
+`binds` is one of `layer`, `hook_key`, `tokens` and `latent_feature`; `slot` picks the element of a tuple-valued row
+that is bound, and `point` records where a layer is read when that is fixed. A per-hook column (`per_latent` or
+`per_latent_model_hook`) binds `hook_key` without declaring it, since its keys are hook names by definition. The
+declarations travel with the column configs, so every store an op writes carries them, in memory and in the envelope.
+The store's `subject` records the model's depth (`n_layers`) beside its tokenizer and dictionaries.
+
+`AnalysisStore.resolve_on(target)`, with a module or a `StoreSubject`, checks every declared binding before a row is
+read and refuses, naming each failing column and why:
+
+| Binding | Carries over when |
+| --- | --- |
+| `tokens` | the target has the same tokenizer (a store or target whose tokenizer is unknown never matches) |
+| `latent_feature` | the target has the same latent dictionaries |
+| `layer` | the target has the same depth: cross-depth use is always refused, never rescaled |
+| `hook_key` | the same depth, and the target's component map resolves the point every key names |
+
+A store that declares no bindings (one published before they existed) is refused with a request to re-push it, rather
+than read by guessing from column names. What passes names the same thing on the target, so the returned store shares
+the original's data, with `resolved_on` set to the target's subject.
+
 ### What the `interpretune` block re-attaches
 
 Alongside those two, the `interpretune` block carries what a reader needs to rebuild the store's

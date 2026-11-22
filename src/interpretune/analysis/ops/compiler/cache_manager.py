@@ -40,7 +40,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    partitioned from the composition ops at load); a cache carrying the old field would build ops without it.
 # 10: adds `required_techniques` (the techniques an op executes, bound to a component's typed record); a cache without
 #    the field would build the six technique ops with no gate at all.
-CACHE_FORMAT_VERSION = "10"
+# 11: adds `site` to ColCfg (what a column's values name: layers, hook keys, tokens, latent features); a cache without
+#    it would build ops whose stores declare no bindings, which `AnalysisStore.resolve_on` refuses.
+CACHE_FORMAT_VERSION = "11"
 
 
 @dataclass(frozen=True)

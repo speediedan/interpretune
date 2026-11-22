@@ -32,6 +32,7 @@ class StoreSubject:
             ``schema_version``.
         dictionaries: The latent dictionaries attached to the model, each a mapping with a ``kind``
             (``"sae_lens"`` or ``"circuit_tracer"``) and the identifiers that kind publishes under.
+        n_layers: The model's depth (its decoder layer count), which a layer-bound column needs to carry over.
     """
 
     model_id: str
@@ -40,6 +41,7 @@ class StoreSubject:
     tokenizer_id: str | None = None
     component_map: dict[str, Any] | None = None
     dictionaries: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    n_layers: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id:
@@ -53,6 +55,7 @@ class StoreSubject:
             "tokenizer": {"id": self.tokenizer_id},
             "component_map": dict(self.component_map) if self.component_map else None,
             "dictionaries": [dict(d) for d in self.dictionaries],
+            "n_layers": self.n_layers,
         }
 
     @classmethod
@@ -69,6 +72,7 @@ class StoreSubject:
             tokenizer_id=tokenizer.get("id") if isinstance(tokenizer, dict) else None,
             component_map=record.get("component_map"),
             dictionaries=tuple(record.get("dictionaries") or ()),
+            n_layers=n_layers if isinstance(n_layers := record.get("n_layers"), int) else None,
         )
 
 
@@ -84,6 +88,16 @@ def _hf_config(module) -> Any:
         config = getattr(candidate, "config", None)
         if config is not None and hasattr(config, "to_dict"):
             return config
+    return None
+
+
+def _depth(config) -> int | None:
+    """The model's decoder layer count from its config (a text sub-config first, for a multimodal model)."""
+    for candidate in (getattr(config, "text_config", None), config):
+        for attr in ("num_hidden_layers", "n_layer", "num_layers"):
+            value = getattr(candidate, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value
     return None
 
 
@@ -149,4 +163,5 @@ def subject_from_module(module) -> StoreSubject:
         tokenizer_id=_str(getattr(tokenizer, "name_or_path", None)),
         component_map=_component_map_record(architecture),
         dictionaries=_dictionaries(it_cfg),
+        n_layers=_depth(config),
     )

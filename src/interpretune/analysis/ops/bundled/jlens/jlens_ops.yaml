@@ -25,6 +25,7 @@ jlens_read:
       non_tensor: true
       intermediate_only: true
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -40,6 +41,7 @@ jlens_read:
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -90,6 +92,7 @@ jlens_read:
       sequence_type: false
   output_schema:
     jlens_top_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       array_shape: [null, null]
       sequence_type: false
@@ -102,10 +105,12 @@ jlens_read:
       non_tensor: true
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
@@ -140,6 +145,7 @@ jlens_concept_probe:
       non_tensor: true
       intermediate_only: true
     jlens_concept_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: true
       array_shape: [null]
@@ -150,6 +156,7 @@ jlens_concept_probe:
       non_tensor: true
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -165,6 +172,7 @@ jlens_concept_probe:
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -202,14 +210,17 @@ jlens_concept_probe:
       array_shape: [null, null]
       sequence_type: false
     jlens_concept_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
@@ -251,6 +262,7 @@ jlens_sparse_inventory:
       non_tensor: true
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       non_tensor: true
@@ -266,6 +278,7 @@ jlens_sparse_inventory:
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null]
@@ -299,6 +312,7 @@ jlens_sparse_inventory:
       sequence_type: false
   output_schema:
     jlens_inventory_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: object
       non_tensor: true
       sequence_type: false
@@ -311,10 +325,12 @@ jlens_sparse_inventory:
       array_shape: [null]
       sequence_type: false
     jlens_layer:
+      site: [{binds: layer}]
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
     jlens_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false

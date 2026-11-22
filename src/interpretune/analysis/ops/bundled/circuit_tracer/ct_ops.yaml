@@ -31,6 +31,7 @@ compute_attribution_graph:
       non_tensor: true
       sequence_type: false
     jlens_top_token_ids:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       array_shape: [null, null]
@@ -45,6 +46,7 @@ compute_attribution_graph:
       array_shape: [null, null]
       sequence_type: false
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -69,6 +71,7 @@ compute_attribution_graph:
       required: false
       sequence_type: true
     input_tokens:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       sequence_type: true
@@ -110,6 +113,7 @@ head_loadings:
   input_schema: {}
   output_schema:
     head_loading_layers:
+      site: [{binds: layer}]
       datasets_dtype: int64
       sequence_type: true
     head_loading_shares:
@@ -184,6 +188,7 @@ extract_top_features:
     top_n: null
   input_schema:
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -204,6 +209,7 @@ extract_top_features:
       sequence_type: true
   output_schema:
     top_feature_ids:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -230,6 +236,7 @@ graph_prune:
       array_shape: [null, null]
       sequence_type: false
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -254,6 +261,7 @@ graph_prune:
       required: false
       sequence_type: true
     input_tokens:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       sequence_type: true
@@ -286,6 +294,7 @@ graph_prune:
       array_shape: [null, null]
       sequence_type: false
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -310,6 +319,7 @@ graph_prune:
       required: false
       sequence_type: true
     input_tokens:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       sequence_type: true
@@ -349,6 +359,7 @@ graph_node_influence:
       array_shape: [null, null]
       sequence_type: false
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -374,6 +385,7 @@ graph_node_influence:
       non_tensor: true
       sequence_type: false
     input_tokens:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       sequence_type: true
@@ -409,6 +421,7 @@ graph_node_influence:
       required: false
       sequence_type: true
     node_feature_ids:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
@@ -420,6 +433,7 @@ feature_intervention_forward:
   aliases: [ct_feature_intervention]
   input_schema:
     top_feature_ids:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       required: false
       array_shape: [null, 3]
@@ -433,6 +447,7 @@ feature_intervention_forward:
       required: false
       sequence_type: true
     active_features:
+      site: [{binds: layer, slot: 0, point: transcoder.out}, {binds: tokens, slot: 1}, {binds: latent_feature, slot: 2}]
       datasets_dtype: int64
       required: false
       array_shape: [null, 3]
@@ -467,14 +482,17 @@ feature_intervention_forward:
       required: false
       non_tensor: true
     intervention_layers:
+      site: [{binds: layer}]
       datasets_dtype: int64
       required: false
       sequence_type: true
     intervention_positions:
+      site: [{binds: tokens}]
       datasets_dtype: int64
       required: false
       sequence_type: true
     intervention_feature_ids:
+      site: [{binds: latent_feature}]
       datasets_dtype: int64
       required: false
       sequence_type: true

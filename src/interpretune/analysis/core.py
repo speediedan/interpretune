@@ -520,6 +520,8 @@ class AnalysisStore:
         # What the columns were computed on (an `interpretune.hub.subject.StoreSubject`), stamped at the same
         # moment and for the same reason; None when the store did not come from a module.
         self.subject: StoreSubject | None = None
+        # The model a `resolve_on` view was checked against; None on a store read as written.
+        self.resolved_on: StoreSubject | None = None
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 
@@ -569,6 +571,21 @@ class AnalysisStore:
         stream = self.stream if columns is None else self.stream.select_columns(columns)
         for table in stream:
             yield self._stream_formatter.format_row(table)
+
+    def resolve_on(self, target: Any) -> "AnalysisStore":
+        """This store as read on another model, after checking every declared site binding against it.
+
+        ``target`` is a module or the ``StoreSubject`` describing one. Tokens carry over only under the same tokenizer,
+        latent features only under the same dictionaries, layers and hook keys only at the same depth (cross-depth use
+        is refused), and hook keys only where the target's component map resolves their point. A store that declares
+        no bindings is refused. See :mod:`interpretune.analysis.site_resolution`.
+
+        Raises:
+            StoreResolutionError: naming every column that does not carry over, and why.
+        """
+        from interpretune.analysis.site_resolution import resolve_store_on
+
+        return resolve_store_on(self, target)
 
     def __iter__(self):
         """Iterate decoded rows, from the stream when the store is streamed."""
