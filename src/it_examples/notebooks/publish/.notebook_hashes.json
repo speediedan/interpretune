@@ -50,6 +50,6 @@
   "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-312.pyc": "23cc4b9179e33e8154381cbeded275ce9195c8a0924deee610462662cdf2047c",
   "notebooks/dev/saelens_adapter_example/sl_utils/sl_mem_utils.py": "e5d212369c23b6ebfef3d25a0642b8f1a87e430964c1ae8d55607f88b6228654",
   "notebooks/dev/sasa_blocks/sasa_blocks_frames_charts.ipynb": "9fb9d4ba8b3fad288b25c37e5383e945db0a53102c09b35e282ca4590f778985",
-  "notebooks/dev/shared_analysis/shared_analysis_roundtrip.ipynb": "58c9b0f191591d85dc38002cc349a6016c99a9af31111929c0c92a828d271b34",
+  "notebooks/dev/shared_analysis/shared_analysis_roundtrip.ipynb": "5065039e64bb5f1740c548b1af3ee95f53b35e6a63fa30e84d083ba1fa1e80f1",
   "notebooks/dev/tuning/role_kinds_tuning.ipynb": "816c86544ea757455d0fbdd4511ffa00c12323c1cef076d8fa1700cc2f808e40"
 }
