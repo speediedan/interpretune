@@ -49,6 +49,7 @@ def sparse_module(request):
                 self.model.load_state_dict({name: selected[name] for name in self.model.state_dict()})
                 out_site = "model.layers.{layer}.mlp"
             self.it_cfg = SimpleNamespace(
+                profiler_cfg=SimpleNamespace(which=None),
                 entailment_mapping_indices=torch.tensor([3, 8]),
                 sparse_chain={
                     "reg_layers": [0, 1],
@@ -68,11 +69,24 @@ def sparse_module(request):
                 },
             )
 
+            self.optimizers = [torch.optim.SGD(self.model.parameters(), lr=0.05)]
+            self.lr_scheduler_configs = []
+            self.current_epoch, self.global_step = 0, 0
+            self.dtype, self.device = torch.float32, torch.device("cpu")
+            self._logged_metrics = {}
+
         def register_tunable_modules(self):
             pass
 
         def forward(self, **batch):
             return self.model(**batch)
+
+        def log(self, name, value, *args, **kwargs):
+            value = value.detach().item() if isinstance(value, torch.Tensor) else value
+            self._logged_metrics.setdefault(name, []).append(value)
+
+        def batch_to_device(self, batch):
+            return batch
 
     class Sparse(rte_entrypoint_module().RTEBoolqSparseMixin, Base):
         pass
@@ -312,3 +326,72 @@ def test_invalid_validation_inputs_are_refused(sparse_module, tmp_path, defect):
         items[0]["attention_mask"] = [0] * 5
     with pytest.raises(ValueError, match="validation"):
         _collector()(sparse_module, _proof(tmp_path, sparse_module))
+
+
+@pytest.mark.parametrize("sparse_module", ["gemma2", "gemma3"], indirect=True)
+@pytest.mark.parametrize("veto", [False, True], ids=["accepted", "veto"])
+def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sparse_module, tmp_path, veto):
+    from functools import partial
+    import json
+    from pathlib import Path
+
+    from finetuning_scheduler.core.checkpoint import BestCheckpoint, load_payload
+    from venngram.tuning import CanonicalView
+    from interpretune.runners.core import core_train_loop
+    from interpretune.tuning.core_loop import FTSCoreCallback
+    from it_examples.utils.sparse_attribution_checkpoint import SparseAttributionReportCallback, tensor_state_sha256
+    from it_examples.utils.rte_sparse_attribution import _validation_items
+
+    module = sparse_module
+    for layer in module.sparse_cfg["enforce_layers"]:
+        getattr(module, f"sparse_enforce_keep_con_{layer}").fill_(False)
+        getattr(module, f"sparse_enforce_mean_con_{layer}").fill_(0.75)
+    module.sparse_enforce = True
+    roles = {name: "artifact" for name, _ in module.named_parameters() if name.startswith("sparse_tcs.")}
+    roles.update({name: "fitted" for name, _ in module.named_buffers() if name.startswith("sparse_enforce_")})
+    view = CanonicalView(module, roles=roles)
+    initial_norm = module.model.model.norm.weight.detach().clone()
+    policy = BestCheckpoint(tmp_path / "training", "val_task", save_initial=True)
+    gates = []
+
+    def gate(event):
+        gates.append((event.final, event.depth))
+        return not (veto and event.final)
+
+    fts = FTSCoreCallback(
+        {
+            0: {"params": ["model.model.norm.weight"], "max_transition_epoch": 1},
+            1: {"params": ["model.model.layers.1.post_feedforward_layernorm.weight"]},
+        },
+        tuning_scheduler_kwargs={
+            "optimizer": partial(torch.optim.SGD, lr=0.05),
+            "checkpoint": policy,
+            "gates": [gate],
+            "view": view,
+        },
+    )
+    callback = SparseAttributionReportCallback(_collector(_production_factory(module)), str(tmp_path / "reports"))
+    batches = [
+        {"input_ids": ids[None], "attention_mask": torch.ones_like(ids)[None], "labels": torch.tensor([0])}
+        for ids in _validation_items(module).values()
+    ]
+    data = SimpleNamespace(train_dataloader=lambda: batches, val_dataloader=lambda: batches)
+    with only_token_zero_special(SimpleNamespace(tokenizer=module.datamodule.tokenizer)):
+        core_train_loop(module, data, 1, 1, 2, callbacks=[fts, callback], validate_with_grad=True)
+    path = Path(module.sparse_attribution_report_path)
+    report = json.loads(path.read_text())
+    checkpoint = path.with_name("checkpoint.pt")
+    selected = fts.tuning_scheduler.view.checkpoint_state_dict()
+    proof = verify_attribution_checkpoint(checkpoint, selected)
+    payload = load_payload(checkpoint)
+    assert tensor_state_sha256(payload["model"]) == proof.state_sha256 == report["checkpoint_state_sha256"]
+    assert report["checkpoint_sha256"] == proof.sha256
+    assert report["checkpoint_selection"] == "live_after_terminal_gates"
+    assert report["validation_row_ids"] == ["17", "29", "41"]  # The loop's validation limit is one batch.
+    assert report["items"] == 3 and report["validation_coverage_verified"] and report["complete_head_layers"]
+    assert report["measurement_checks"]["sparse_enforcement_enabled"] is True
+    assert report["measurement_checks"]["max_answer_logit_abs_error"] < 1e-5
+    assert gates[-1][0] and report["gate_records"][-1]["accept"] is not veto
+    assert not torch.equal(initial_norm, module.model.model.norm.weight)
+    assert any(name.startswith("sparse_enforce_") for name in payload["model"])
+    assert not any(name.startswith("sparse_tcs.") for name in payload["model"])
