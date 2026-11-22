@@ -133,8 +133,9 @@ paper scores every evaluation row, which may account for its small differences.
 
 ## Extensions: phases as stages, and placement in place of a loss
 
-Two arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed by
-seed with them. Both use finetuning-scheduler's phases as experimental stages.
+Three arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed
+by seed with them. The two gated arms use finetuning-scheduler's phases as experimental stages; the mid-only arm is a
+single phase that places the update instead.
 
 - **Gated** (`runs/kug_gated.qwen2_5_1_5b.core.yaml`). The paper applies LRSD from the first step, while its own
   diagnosis is that plain fine-tuning stops moving knowledge once memorization saturates. Phase 0 trains every block's
