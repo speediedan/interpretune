@@ -464,3 +464,114 @@ class TestPlotDecoderProjectionMap:
         assert len(shown) == 1
         (fig,) = shown_figures
         assert fig.axes[0].get_title().endswith("(static companion)")
+
+
+class TestNotebookTable:
+    def test_escapes_cells_and_renders_only_http_links(self) -> None:
+        html_out = notebook_ui.build_notebook_table_html(
+            [["<script>x</script>", notebook_ui.NotebookLink("L20 #15589", "https://example.org/a?b=1&c=2")]],
+            ["text", "link"],
+            title="T <b>",
+            caption="denominator & units",
+        )
+        assert "<script>" not in html_out and "&lt;script&gt;x&lt;/script&gt;" in html_out
+        assert '<a href="https://example.org/a?b=1&amp;c=2">L20 #15589</a>' in html_out
+        assert "T &lt;b&gt;" in html_out and "denominator &amp; units" in html_out
+        with pytest.raises(ValueError, match="HTTP"):
+            notebook_ui.build_notebook_table_html(
+                [[notebook_ui.NotebookLink("x", "javascript:alert(1)")]], ["link"], title="t"
+            )
+        with pytest.raises(ValueError, match="column count"):
+            notebook_ui.build_notebook_table_html([[1, 2]], ["only one"], title="t")
+        with pytest.raises(ValueError, match="at least one column"):
+            notebook_ui.build_notebook_table_html([], [], title="t")
+
+    def test_colours_signed_cells_aligns_numbers_and_shows_a_legend(self) -> None:
+        Signed = notebook_ui.Signed
+        html_out = notebook_ui.build_notebook_table_html(
+            [["up", Signed(1.5), 3], ["down", Signed(-0.25, "+.3f"), 2.5], ["flat", Signed(0.0), "n/a"]],
+            ["row", "shift", "count"],
+            title="t",
+            legend=notebook_ui.SIGN_LEGEND,
+            emphasize=[1],
+        )
+        assert f'style="color:{notebook_ui.POSITIVE_COLOUR};font-weight:600">+1.50</td>' in html_out
+        assert f'style="color:{notebook_ui.NEGATIVE_COLOUR};font-weight:600">-0.250</td>' in html_out
+        assert 'style="color:inherit;font-weight:600">+0.00</td>' in html_out
+        assert '<td class="num">3</td>' in html_out and "<td>n/a</td>" in html_out
+        assert html_out.count('<tr class="em">') == 1 and '<tr class="em"><td>down</td>' in html_out
+        assert 'class="legend"' in html_out and "positive" in html_out and "negative" in html_out
+        assert 'class="legend"' not in notebook_ui.build_notebook_table_html([["a"]], ["c"], title="t")
+        with pytest.raises(ValueError, match="outside the table"):
+            notebook_ui.build_notebook_table_html([["a"]], ["c"], title="t", emphasize=[1])
+
+    def test_a_boolean_is_text_not_a_number(self) -> None:
+        html_out = notebook_ui.build_notebook_table_html([[True, 2]], ["ok", "n"], title="t")
+        assert "<td>True</td>" in html_out and '<td class="num">2</td>' in html_out
+
+    def test_display_renders_the_built_table(self, shown) -> None:
+        rows, columns = [["a", notebook_ui.Signed(-1.0)]], ["name", "shift"]
+        notebook_ui.display_notebook_table(rows, columns, title="T", caption="c", emphasize=[0])
+        assert shown == [notebook_ui.build_notebook_table_html(rows, columns, title="T", caption="c", emphasize=[0])]
+
+
+def test_display_plotly_figure_embeds_html_the_docs_build_keeps(shown) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+    notebook_ui.display_plotly_figure(go.Figure(go.Scatter(x=[8, 16], y=[0.02, 0.01])), "it-test")
+    (markup,) = shown
+    assert "cdn.plot.ly" in markup and 'id="it-test-' in markup
+
+
+class _PieceTokenizer:
+    """Token pieces by id, through ``convert_ids_to_tokens`` as a Hugging Face tokenizer gives them."""
+
+    pieces = ["<bos>", "Paris", "Rome", "<i>", "Madrid", "Oslo"]
+
+    def convert_ids_to_tokens(self, token_id: int) -> str:
+        return self.pieces[token_id]
+
+
+class TestDisplayTopkTokenPredictions:
+    @staticmethod
+    def _logits() -> tuple[torch.Tensor, torch.Tensor]:
+        original = torch.full((1, 2, 6), -10.0)
+        new = torch.full((1, 2, 6), -10.0)
+        original[0, 0, 5] = 20.0  # an earlier position that must not be read
+        original[0, 1, 1], original[0, 1, 2], original[0, 1, 3] = 3.0, 2.0, 1.0
+        new[0, 1, 2], new[0, 1, 3], new[0, 1, 4] = 3.0, 2.5, 1.0
+        return original, new
+
+    @staticmethod
+    def _rows(markup: str) -> list[list[str]]:
+        return [_TD.findall(r) for r in _ROW.findall(markup)]
+
+    def test_both_top_k_tables_read_the_last_position_in_order(self, shown) -> None:
+        original, new = self._logits()
+        notebook_ui.display_topk_token_predictions("The <capital>", original, new, _PieceTokenizer(), k=2)
+        (markup,) = shown
+        rows = self._rows(markup)
+        assert [r[0] for r in rows] == ["Paris", "Rome", "Rome", "&lt;i&gt;"]
+        p_paris = torch.softmax(original[0, -1], -1)[1].item()
+        assert rows[0][1] == format_prob(p_paris, precision=3)
+        assert "The &lt;capital&gt;" in markup and "Oslo" not in markup
+        assert "Key Tokens" not in markup
+
+    def test_key_tokens_sort_by_change_with_signed_bars(self, shown) -> None:
+        original, new = self._logits()
+        notebook_ui.display_topk_token_predictions(
+            "s", original, new, _PieceTokenizer(), k=1, key_tokens=[("Paris", 1), ("Madrid", 4), ("Rome", 2)]
+        )
+        (markup,) = shown
+        key_rows = self._rows(markup)[2:]
+        assert [r[0] for r in key_rows] == ["Rome", "Madrid", "Paris"]
+        p0, p1 = torch.softmax(original[0, -1], -1), torch.softmax(new[0, -1], -1)
+        assert key_rows[2][1] == format_prob(p0[1].item()) and key_rows[2][2] == format_prob(p1[1].item())
+        assert "-" + format_score(abs((p1[1] - p0[1]).item())) in key_rows[2][3]
+        assert "#C0392B" in key_rows[2][3] and "#27AE60" in key_rows[0][3]
+
+    def test_a_batch_of_prompts_is_refused(self, shown) -> None:
+        with pytest.raises(ValueError, match="one prompt"):
+            notebook_ui.display_topk_token_predictions(
+                "s", torch.zeros(2, 1, 6), torch.zeros(2, 1, 6), _PieceTokenizer(), k=1
+            )
+        assert shown == []
