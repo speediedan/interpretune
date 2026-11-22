@@ -67,6 +67,49 @@ Its role is deliberately narrow:
 
 This means the formatter is not a serialization escape hatch. It does not deserialize opaque Python objects from opaque blobs. It only tensorizes data that Arrow already knows how to decode, and any richer object hydration has to start from those primitive decoded fields.
 
+### Dtype fidelity
+
+A column's dtype is the one its schema declares (`array_dtype`, else `datasets_dtype`). What a reader gets back is
+that dtype, with the values and shape that were written, from all three readers: the store in memory (Arrow),
+`pull_analysis_store` (Parquet, eager) and `pull_analysis_store(streaming=True)` (Parquet, streamed). The table is
+measured over scalar, sequence, 2-D (`Array2D`) and ragged 3-D (nested sequence) columns, and
+`tests/core/test_analysis_store_dtype_fidelity.py` fails if any row changes.
+
+| Declared dtype | Parquet holds | A reader gets |
+| --- | --- | --- |
+| `bool` | `boolean` | `torch.bool` |
+| `int8`, `int16`, `int32`, `int64` | the same integer width | `torch.int8`, `torch.int16`, `torch.int32`, `torch.int64` |
+| `uint8` | `uint8` | `torch.uint8` |
+| `float16` | `halffloat` | `torch.float16` |
+| `float32` | `float` | `torch.float32` |
+| `float64` | `double` | `torch.float64` |
+| `bfloat16` | refused when the schema is built, naming the column: Arrow has no bfloat16 type | |
+
+A **bfloat16 tensor** is written to a `float32` column, which holds every bfloat16 value exactly; it reads back as
+`float32`. A latent-model column (`per_latent_model_hook`) takes its dtype from the latent model's config, and a
+latent model loaded in bfloat16 gets `float32` columns for the same reason.
+
+**Writing a tensor of another dtype** into a column is accepted when casting it to the column's dtype and back
+reproduces every value, and refused otherwise with `StoreDtypeError`, which names the column, both dtypes and the
+first value the cast would change. The check runs in `AnalysisOp.process_batch`, which both writers go through (the
+runner's generator and `analysis_store_from_batches`). Measured examples, where "before" is what a store held without
+the check:
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| bfloat16, float16, int8, int16, uint8 or bool into `float32` | values exact | accepted |
+| float64 into `float32`, float32 into `float16` | values rounded, silently | refused, unless every value survives |
+| float into `int64` or `int32` | fractions truncated, silently (a generic Arrow error for a 2-D column from the runner) | refused, unless every value is integral |
+| int32 or int64 into `float32` | values past $2^{24}$ rounded, silently, in a scalar column; a generic Arrow error in other shapes | refused, unless every value survives |
+| int64 into `int32` | a generic Arrow overflow error | refused, naming the column |
+| anything but 0 and 1 into `bool` | every non-zero value stored as `True`, silently | refused |
+
+Two reads narrowed silently before this table was measured, and no longer do: a `float64` column read back as
+`float32` (rounding every value, from every reader), and `float16`, `int8`, `int16`, `int32` and `uint8` columns read
+back as `float32` or `int64`. A store written by `analysis_store_from_batches` also carried no column configs, so a
+`dyn_dim` column read back with its dimensions still swapped and its pushed envelope recorded no `col_cfg`; it now
+carries them, as the runner's stores do.
+
 ### AnalysisStore access
 
 [AnalysisStore](../src/interpretune/analysis/core.py#L348) wraps a dataset and always reads it back through the `interpretune` formatter.
