@@ -75,8 +75,8 @@ explained 94% of that read's response (measurements on #660).
 An attribution graph holds attention patterns constant by default, so it credits no node for changing where attention
 looks, and an edge does not say which head carried it. Three things address that, and only the nnsight model-level
 adapter, `(core, nnsight, circuit_tracer)`, currently supports them. Support for the
-[TransformerLens adapter](https://github.com/speediedan/interpretune/issues/932) and for
-[interp-engine](https://github.com/speediedan/interpretune/issues/933) are future follow-ups, to be taken up once the
+[TransformerLens adapter](https://github.com/interpretune/interpretune/issues/932) and for
+[interp-engine](https://github.com/interpretune/interpretune/issues/933) are future follow-ups, to be taken up once the
 nnsight version has matured.
 
 **A graph with live patterns.** `compute_attribution_graph` takes `freeze_attention` and `freeze_norms`, both `True` by
@@ -124,7 +124,7 @@ subclasses `HookedTransformer` directly. TransformerLens 4.0 REMOVED that class,
 imported at all and the CT TransformerLens registry entries are disabled pending an upstream port to
 `TransformerBridge`. `CircuitTracerConfig` refuses `backend: transformerlens` by name when `HookedTransformer` is
 absent, and `backend` defaults to `nnsight`, so use that for circuit-tracer compositions meanwhile. Tracked in
-[interpretune#223](https://github.com/speediedan/interpretune/issues/223) — revisit when upstream
+[interpretune#223](https://github.com/interpretune/interpretune/issues/223) — revisit when upstream
 circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
 experimental variables fixed) is why the (now Hub-published) concept-direction experimentation
 standardized on the NNsight backend.
@@ -163,9 +163,9 @@ Pattern 3).
 ## Cross-Backend Composition (planned demo — not yet in-tree)
 
 Cross-backend *mixing* is deferred to a subsequent workstream (the RTE-focused research direction
-continues in [interpretune#220](https://github.com/speediedan/interpretune/issues/220)); no
+continues in [interpretune#220](https://github.com/interpretune/interpretune/issues/220)); no
 committed notebook currently demonstrates it — the planned demo is tracked in
-[interpretune#224](https://github.com/speediedan/interpretune/issues/224). The planned demo design, which `AnalysisStore`
+[interpretune#224](https://github.com/interpretune/interpretune/issues/224). The planned demo design, which `AnalysisStore`
 persistence already supports, composes independent sessions:
 
 1. **Stage A** — GPT-2 SAE analysis via TransformerBridge: runs `logit_diffs_base`, persists store to disk

@@ -202,11 +202,11 @@ class NeuronpediaConfig(ITSerializableCfg):
         default_factory=lambda: {
             "info": {
                 "creator_name": "interpretune-user",
-                "creator_url": "https://github.com/speediedan/interpretune",
+                "creator_url": "https://github.com/interpretune/interpretune",
                 "generator": {
                     "name": "Interpretune Circuit Tracer",
                     "version": "latest",
-                    "url": "https://github.com/speediedan/interpretune",
+                    "url": "https://github.com/interpretune/interpretune",
                 },
             },
         }

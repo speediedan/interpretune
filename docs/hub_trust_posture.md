@@ -82,7 +82,7 @@ Two consequences follow. Opting in for ops also opts in for adapters, because on
 variable governs one question. And the residual risk that differs is not the MRO but
 **dependencies**: an adapter's `requires.pip` names packages that run their own code when
 installed and imported. How those are installed is a separate design question
-([#457](https://github.com/speediedan/interpretune/issues/457)), and nothing here installs anything.
+([#457](https://github.com/interpretune/interpretune/issues/457)), and nothing here installs anything.
 
 ## The default, and how to opt in
 

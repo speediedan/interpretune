@@ -134,7 +134,7 @@ def test_host_state_reads_every_project_on_the_pool(monkeypatch):
                 "status": "notStarted",
                 "reason": "pullRequest",
                 "triggerInfo": {"pr.sourceSha": "a" * 40},
-                "repository": {"id": "speediedan/interpretune"},
+                "repository": {"id": "interpretune/interpretune"},
             },
         ],
         "finetuning-scheduler": [
@@ -201,7 +201,7 @@ JOB_ENV = {
     "SYSTEM_TEAMPROJECT": "interpretune",
     "SYSTEM_ACCESSTOKEN": "token",
     "BUILD_BUILDID": "1800",
-    "BUILD_REPOSITORY_NAME": "speediedan/interpretune",
+    "BUILD_REPOSITORY_NAME": "interpretune/interpretune",
     "BUILD_SOURCEVERSION": "a855ed3f" + "0" * 32,
 }
 

@@ -195,7 +195,7 @@ result = execute_analysis_op(module, batch, analysis_cfg=cfg, analysis_inputs=in
 ```
 
 This is the pattern the planned circuit-tracer cross-backend composition demo will use
-(tracked in [#224](https://github.com/speediedan/interpretune/issues/224); see
+(tracked in [#224](https://github.com/interpretune/interpretune/issues/224); see
 `circuit_tracer_backend_support.md` — no committed notebook demonstrates it yet).
 
 ## Current Limitations

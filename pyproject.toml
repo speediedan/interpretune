@@ -73,10 +73,10 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/speediedan/interpretune"
-"Bug Tracker" = "https://github.com/speediedan/interpretune/issues"
+"Homepage" = "https://github.com/interpretune/interpretune"
+"Bug Tracker" = "https://github.com/interpretune/interpretune/issues"
 "Documentation" = "https://interpretune.org/en/latest/"
-"Source Code" = "https://github.com/speediedan/interpretune"
+"Source Code" = "https://github.com/interpretune/interpretune"
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
@@ -704,7 +704,7 @@ special-tests = ["--mark_type=benchmark"]
 # pytest process the phase starts (gpu_phase.sh, through run-env) and reports each phase against its manifest, gated
 # below. The phases are the GPU job's own steps (gpu_phase.sh); a phase's selector is the selection-relevant part of
 # its step, not what only reruns or reports.
-repository = "speediedan/interpretune"
+repository = "interpretune/interpretune"
 # Every selection variable tests/conftest.py reads, stripped before each collection so an inherited one cannot change
 # what a phase is. The memory class goes too, so a two-stage phase's manifest covers both stages.
 selection-vars = [
