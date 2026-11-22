@@ -128,6 +128,15 @@ only when a read reaches it. `push_analysis_store` writes row groups of about 16
 11 requests rather than the 38 that 4 MB groups need. A store whose rows are each larger than the target (one
 attribution graph per row, for example) gets one row per group.
 
+**A streamed pull says when the first row will be expensive.** Before it streams, the pull reads each listed file's
+footer (one request of one block) and estimates what reaching the first row fetches: the largest row group's bytes for
+the columns you project, twice over when the file has more than one group, since a scan reads one group ahead. Above
+64 MB (`STREAMED_FIRST_ROW_WARN_BYTES`) it warns, naming the estimate and the two remedies: project with `columns=`, or
+re-publish the store so it gets the row-group target. A store pushed before the target was recorded is, below 100 MB,
+a single row group, so its first row costs the whole file; the estimate covers that case from the footer alone. It
+warns rather than refuses, since the read is correct, only slow. A file the envelope lists that is not in the
+repository at that commit is refused before any read, naming the commit and the files the envelope lists.
+
 ## Dashboard corpora
 
 Dashboard corpora are discovered from the same publishers. `find_dashboard_corpora` and `resolve_bucket_for` (in
