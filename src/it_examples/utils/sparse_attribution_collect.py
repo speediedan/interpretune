@@ -8,9 +8,67 @@ checks belong to the checkpoint collector before it calls this function.
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 from typing import Any, Mapping
 
 from it_examples.utils.sparse_attribution_report import SparseAttributionRow
+
+
+def _basis_layer_identity(tc: Any, layer: int) -> list[Any]:
+    from circuit_tracer.transcoder import SingleLayerTranscoder
+    from circuit_tracer.transcoder.activation_functions import JumpReLU
+
+    if type(tc) is not SingleLayerTranscoder or tc.layer_idx != layer or tc.lazy_encoder or tc.lazy_decoder:
+        raise ValueError(f"basis layer {layer} must be a materialized SingleLayerTranscoder in layer order")
+    if type(tc.activation_function) is not JumpReLU:
+        raise ValueError(
+            f"basis layer {layer} requires supported JumpReLU; got {type(tc.activation_function).__name__}"
+        )
+    bandwidth = float(tc.activation_function.bandwidth)
+    if not math.isfinite(bandwidth) or bandwidth <= 0:
+        raise ValueError(f"basis layer {layer} has invalid JumpReLU bandwidth")
+    return [tc.d_model, tc.d_transcoder, bandwidth, tc.W_skip is not None]
+
+
+def _basis_conventions(basis: Any, zero: Any) -> tuple[list[str], list[int | None]]:
+    if not isinstance(zero, slice) or any(
+        type(v) is not int and v is not None for v in (zero.start, zero.stop, zero.step)
+    ):
+        raise ValueError("basis fingerprinting requires an explicit integer zero-position slice")
+    hooks = [basis.feature_input_hook, basis.feature_output_hook]
+    if any(not isinstance(hook, str) or not hook for hook in hooks):
+        raise ValueError("basis fingerprinting requires the feature input and output hooks")
+    return hooks, [zero.start, zero.stop, zero.step]
+
+
+def transcoder_basis_id(replacement_model: Any) -> str:
+    """Fingerprint the actual per-layer JumpReLU basis, hooks and zero-position convention used for measurement.
+
+    Names of Hub repositories are not evidence of loaded tensor contents. This hashes every transcoder parameter and
+    buffer, including thresholds, and the non-tensor settings that change its feature basis. Lazy, cross-layer and
+    unfamiliar activation implementations are refused until their identity can be recorded completely.
+    """
+    from circuit_tracer.transcoder import TranscoderSet
+    from nnsight import Envoy
+
+    from it_examples.utils.sparse_attribution_checkpoint import tensor_state_sha256
+
+    basis = replacement_model.transcoders
+    if isinstance(basis, Envoy):
+        basis = basis._module
+    if type(basis) is not TranscoderSet or len(basis) != replacement_model.cfg.n_layers:
+        raise ValueError("basis fingerprinting requires one TranscoderSet layer per model layer")
+    hooks, zero = _basis_conventions(basis, replacement_model.zero_positions)
+    layers = [_basis_layer_identity(tc, layer) for layer, tc in enumerate(basis)]
+    identity = {
+        "format": "interpretune.transcoder-basis/1",
+        "state_sha256": tensor_state_sha256(basis.state_dict()),
+        "feature_hooks": hooks,
+        "zero_positions": zero,
+        "layers": layers,
+    }
+    return "sha256:" + hashlib.sha256(json.dumps(identity, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
 def head_loading_row(

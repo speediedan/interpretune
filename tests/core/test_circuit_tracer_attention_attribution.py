@@ -223,6 +223,46 @@ class TestRawSourceIdentity:
             _head_source_report(parts)
 
 
+class TestMeasuredBasisIdentity:
+    @pytest.fixture
+    def basis_toy(self):
+        # Structural mutations below must not leave the shared model's Envoy children pointing at replaced modules.
+        return tiny_gemma2_replacement_model(n_layers=2)
+
+    @pytest.mark.parametrize("field", ["decoder", "threshold", "bandwidth", "zero-positions", "hook"])
+    def test_actual_basis_changes_cannot_keep_the_same_identity(self, basis_toy, monkeypatch, field):
+        from it_examples.utils.sparse_attribution_collect import transcoder_basis_id
+
+        before = transcoder_basis_id(basis_toy)
+        basis = basis_toy.transcoders._module
+        tc = basis[0]
+        if field in ("decoder", "threshold"):
+            tensor = tc.W_dec if field == "decoder" else tc.activation_function.threshold
+            saved = tensor.detach().clone()
+            try:
+                with torch.no_grad():
+                    tensor.add_(0.25)
+                assert transcoder_basis_id(basis_toy) != before
+            finally:
+                with torch.no_grad():
+                    tensor.copy_(saved)
+        else:
+            obj, attribute, value = {
+                "bandwidth": (tc.activation_function, "bandwidth", 0.25),
+                "zero-positions": (basis_toy, "zero_positions", slice(0, 2)),
+                "hook": (basis, "feature_input_hook", "another-hook"),
+            }[field]
+            monkeypatch.setattr(obj, attribute, value)
+            assert transcoder_basis_id(basis_toy) != before
+
+    def test_an_unrecorded_activation_kind_is_refused(self, basis_toy, monkeypatch):
+        from it_examples.utils.sparse_attribution_collect import transcoder_basis_id
+
+        monkeypatch.setattr(basis_toy.transcoders._module[0], "activation_function", torch.nn.ReLU())
+        with pytest.raises(ValueError, match="supported JumpReLU"):
+            transcoder_basis_id(basis_toy)
+
+
 class TestHeadConductance:
     SWAPPED = torch.tensor([0, 3, 9, 7, 2, 5, 3, 8])
 
