@@ -7,6 +7,7 @@ from functools import partial
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import pytest
 import torch
@@ -120,7 +121,7 @@ class DecreasingValidation(TinyModule):
         self.log("val_loss", -float(self.current_epoch))
 
 
-def _run(tmp_path, collector, *, veto=False, checkpoint_include="all"):
+def _run(tmp_path, collector, *, veto=False, checkpoint_include: Literal["all", "scheduled"] = "all"):
     from finetuning_scheduler.core.checkpoint import BestCheckpoint
     from venngram.tuning import CanonicalView
 
@@ -146,6 +147,7 @@ def _run(tmp_path, collector, *, veto=False, checkpoint_include="all"):
     )
     report = SparseAttributionReportCallback(collector, str(tmp_path / "reports"))
     _train(module, max_epochs=2, callbacks=[fts, report])
+    assert fts.tuning_scheduler is not None
     return module, fts.tuning_scheduler, policy, seen
 
 
@@ -155,7 +157,9 @@ def test_reporting_runs_after_the_actual_final_selection(tmp_path, veto):
 
     collector = ScalarMeasurements()
     module, scheduler, policy, gates = _run(tmp_path, collector, veto=veto)
-    report_path = Path(module.sparse_attribution_report_path)
+    saved_path = module.sparse_attribution_report_path
+    assert isinstance(saved_path, str)
+    report_path = Path(saved_path)
     report = json.loads(report_path.read_text())
     checkpoint = report_path.with_name("checkpoint.pt")
     proof = verify_attribution_checkpoint(checkpoint, scheduler.view.checkpoint_state_dict())
@@ -166,7 +170,9 @@ def test_reporting_runs_after_the_actual_final_selection(tmp_path, veto):
     assert report["checkpoint_selection"] == "live_after_terminal_gates"
     assert report["gate_records"][-1]["accept"] is not veto
     assert gates[-1][0] is True
+    assert collector.seen is not None
     assert all(torch.equal(collector.seen[k], v) for k, v in module.state_dict().items())
+    assert policy.best_path is not None
     best = load_payload(policy.best_path)["model"]
     if veto:
         # The rejected candidate remains the policy's best. Reporting that path would silently name other weights.

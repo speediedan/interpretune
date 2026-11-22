@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 import torch
@@ -28,20 +29,19 @@ def sparse_module(request):
             if getattr(request, "param", "gemma2") == "gemma3":
                 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
-                self.model = Gemma3ForCausalLM(
-                    Gemma3TextConfig(
-                        architectures=["Gemma3ForCausalLM"],
-                        vocab_size=16,
-                        hidden_size=8,
-                        intermediate_size=16,
-                        num_hidden_layers=2,
-                        num_attention_heads=2,
-                        num_key_value_heads=2,
-                        head_dim=4,
-                        layer_types=["full_attention", "full_attention"],
-                        attn_implementation="eager",
-                    )
+                config = Gemma3TextConfig(
+                    architectures=["Gemma3ForCausalLM"],
+                    vocab_size=16,
+                    hidden_size=8,
+                    intermediate_size=16,
+                    num_hidden_layers=2,
+                    num_attention_heads=2,
+                    num_key_value_heads=2,
+                    head_dim=4,
+                    layer_types=["full_attention", "full_attention"],
                 )
+                config._attn_implementation = "eager"
+                self.model = Gemma3ForCausalLM(config)
                 out_site = "model.layers.{layer}.post_feedforward_layernorm"
             else:
                 self.model = Gemma2ForCausalLM(initial._module.config)
@@ -153,11 +153,11 @@ def test_shipping_column_pruning_preserves_validation_identity(sparse_module):
     from interpretune.base.datamodules import ITDataModule
     from it_examples.utils.rte_sparse_attribution import _validation_items
 
-    path = Path(__file__).resolve().parents[2] / "src/it_examples/examples/rte/configs/rte_sparse.gemma3.core.yaml"
+    path = Path(__file__).resolve().parents[1] / "examples/rte/configs/rte_sparse.gemma3.core.yaml"
     config = yaml.safe_load(path.read_text())["registered_cfg"]["datamodule_cfg"]
     data = SimpleNamespace(itdm_cfg=SimpleNamespace(remove_unused_columns=True, **config))
     dataset = Dataset.from_list(sparse_module.datamodule.dataset["validation"])
-    prepared = ITDataModule._remove_unused_columns(data, dataset, target_model=sparse_module.model)
+    prepared = ITDataModule._remove_unused_columns(cast(ITDataModule, data), dataset, target_model=sparse_module.model)
     assert "idx" in prepared.column_names
     sparse_module.datamodule.dataset["validation"] = prepared
     assert list(_validation_items(sparse_module)) == ["17", "29", "41"]
@@ -333,6 +333,7 @@ def test_production_factory_restores_caches_and_removes_owned_hooks_after_failur
             sparse_module._sparse_saved["temporary"] = torch.tensor(3)
             raise RuntimeError("measurement failure")
     assert sparse_module._sparse_saved is retained and sparse_module._sparse_mask is mask
+    assert clone is not None
     assert not clone._forward_pre_hooks
     assert all(not child._forward_hooks for child in clone.modules())
     assert verify_attribution_checkpoint(proof.path, sparse_module.state_dict()) == proof
@@ -408,7 +409,7 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
         },
     )
     # Hydrate the actual shipping callback configuration; only the tiny CPU artifact and output location differ.
-    shipped = Path(__file__).resolve().parents[2] / "src/it_examples/examples/rte/runs/rte_sparse.gemma3.core.yaml"
+    shipped = Path(__file__).resolve().parents[1] / "examples/rte/runs/rte_sparse.gemma3.core.yaml"
     callbacks = yaml.safe_load(shipped.read_text())["run_cfg"]["callbacks"]
     model_config = shipped.parents[1] / "configs/rte_sparse.gemma3.core.yaml"
     source_config = yaml.safe_load(model_config.read_text())
@@ -435,12 +436,28 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
         {"input_ids": ids[None], "attention_mask": torch.ones_like(ids)[None], "labels": torch.tensor([0])}
         for ids in _validation_items(module).values()
     ]
-    data = SimpleNamespace(train_dataloader=lambda: batches, val_dataloader=lambda: batches)
+
+    class BatchDataset(torch.utils.data.IterableDataset):
+        def __iter__(self):
+            return iter(batches)
+
+    class Data:
+        def prepare_data(self, target_model=None):
+            pass
+
+        def train_dataloader(self):
+            return torch.utils.data.DataLoader(BatchDataset(), batch_size=None)
+
+        def val_dataloader(self):
+            return torch.utils.data.DataLoader(BatchDataset(), batch_size=None)
+
+    data = Data()
     with only_token_zero_special(SimpleNamespace(tokenizer=module.datamodule.tokenizer)):
         core_train_loop(module, data, 1, 1, 2, callbacks=[fts, callback], validate_with_grad=True)
     path = Path(module.sparse_attribution_report_path)
     report = json.loads(path.read_text())
     checkpoint = path.with_name("checkpoint.pt")
+    assert fts.tuning_scheduler is not None
     selected = fts.tuning_scheduler.view.checkpoint_state_dict()
     proof = verify_attribution_checkpoint(checkpoint, selected)
     payload = load_payload(checkpoint)
