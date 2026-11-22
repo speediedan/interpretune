@@ -36,6 +36,37 @@ def _require_single_prompt(batch_size: int) -> None:
         )
 
 
+def _head_source_report(parts: list[Any]) -> dict[str, Any]:
+    """Retain the raw source partition and verify that every attention cut attributes the same sources."""
+    reference = parts[0]
+    nodes = reference.active_features.detach().cpu()
+    edges = reference.total.detach().cpu()
+    n_features = nodes.shape[0]
+    n_errors = reference.n_layers * reference.n_pos
+    if nodes.ndim != 2 or nodes.shape[1] != 3 or edges.shape != (n_features + n_errors + reference.n_pos,):
+        raise ValueError("head_loadings returned an incomplete source-node layout")
+    for part in parts:
+        if (
+            (part.n_layers, part.n_pos) != (reference.n_layers, reference.n_pos)
+            or not torch.equal(part.active_features.detach().cpu(), nodes)
+            or part.total.shape != edges.shape
+            or not torch.allclose(part.total.detach().cpu(), edges, atol=1e-5, rtol=1e-5)
+        ):
+            raise ValueError(f"head_loadings layer {part.layer} attributes different source nodes or edges")
+    if not torch.isfinite(edges).all():
+        raise ValueError("head_loadings returned nonfinite source edges")
+    return {
+        "head_loading_feature_nodes": nodes,
+        "head_loading_feature_edges": edges[:n_features],
+        "head_loading_error_edges": edges[n_features : n_features + n_errors].reshape(
+            reference.n_layers, reference.n_pos
+        ),
+        "head_loading_embedding_edges": edges[n_features + n_errors :],
+        "head_loading_head_edges": torch.stack([part.per_head.sum(1) for part in parts]).detach().cpu(),
+        "head_loading_bypass_edges": torch.stack([part.bypass.sum() for part in parts]).detach().cpu(),
+    }
+
+
 class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
 
@@ -762,8 +793,9 @@ class CircuitTracerAnalysisBackend:
         """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
 
         A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
-        same way as the edges together. The nnsight backend alone can do this, and circuit-tracer refuses others by
-        name, along with a layer no path into the target passes.
+        same way as the edges together. Raw source edges and head/bypass sums are retained so a multi-prompt report can
+        normalize once against measured decisions. The edge total excludes constant offsets and is not the decision
+        itself. The nnsight backend alone can do this; unsupported backends and unreachable layers are refused.
         """
         from circuit_tracer.attribution.head_loadings_nnsight import head_loadings
 
@@ -781,6 +813,7 @@ class CircuitTracerAnalysisBackend:
                 )
         if not parts:
             raise ValueError("head_loadings was given no layers to report")
+        sources = _head_source_report(parts)
         total = float(parts[0].total.sum())
         if total == 0.0:
             raise ValueError("the edges into this target sum to zero, so no head has a share of them")
@@ -790,6 +823,10 @@ class CircuitTracerAnalysisBackend:
             "head_loading_bypass_shares": torch.stack([part.bypass.sum() / total for part in parts]).detach().cpu(),
             "head_loading_total": total,
             "head_loading_partition_errors": torch.tensor([part.partition_error for part in parts]),
+            "head_loading_regime_json": json.dumps(
+                {"freeze_attention": freeze_attention, "freeze_norms": freeze_norms}, sort_keys=True
+            ),
+            **sources,
         }
 
     def head_conductance_report(

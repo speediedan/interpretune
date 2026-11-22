@@ -92,6 +92,24 @@ def test_unknown_bias_remains_unknown_and_the_remainder_is_visible():
     assert actual["source_shares"]["features"] == pytest.approx(0.7)
 
 
+def test_the_measured_attribution_regime_is_recorded():
+    assert report()["attribution_regime"] == {"freeze_attention": True, "freeze_norms": True}
+    measurements = [replace(row, freeze_attention=False) for row in rows()]
+    assert report(measurements)["attribution_regime"] == {"freeze_attention": False, "freeze_norms": True}
+
+
+def test_mixed_attribution_regimes_are_refused():
+    measurements = rows()
+    measurements[1] = replace(measurements[1], freeze_attention=False)
+    with pytest.raises(ValueError, match="same attribution regime"):
+        report(measurements)
+
+
+def test_regime_flags_must_be_boolean():
+    with pytest.raises(ValueError, match="boolean freeze_attention"):
+        report([replace(row, freeze_norms=1) for row in rows()])
+
+
 def test_partial_head_coverage_is_explicit():
     measurements = [
         replace(row, head_layers=[1], head_edges=[row.head_edges[1]], bypass_edges=[row.bypass_edges[1]])

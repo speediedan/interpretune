@@ -40,6 +40,8 @@ class SparseAttributionRow:
     bypass_edges: Sequence[float]
     edge_total: float
     bias: float | None = None
+    freeze_attention: bool = True
+    freeze_norms: bool = True
 
 
 def _finite(value: float, name: str) -> float:
@@ -94,6 +96,8 @@ def _row_identity(
         raise ValueError(f"row {row.row_id!r} has a different checkpoint or basis")
     if (row.bias is not None) != bias_known:
         raise ValueError("all rows must either measure bias or leave it unknown")
+    if type(row.freeze_attention) is not bool or type(row.freeze_norms) is not bool:
+        raise ValueError("each row must record boolean freeze_attention and freeze_norms")
 
 
 def _row_layout(row: SparseAttributionRow, n_layers: int, layers: tuple[int, ...], n_heads: int) -> None:
@@ -186,6 +190,8 @@ def checkpoint_attribution_report(
 
     for row in rows:
         _row_identity(row, checkpoint_sha256, basis_id, bias_known, seen)
+        if (row.freeze_attention, row.freeze_norms) != (reference.freeze_attention, reference.freeze_norms):
+            raise ValueError("all rows must use the same attribution regime")
         _row_layout(row, n_layers, layers, n_heads)
         decision = _decision(row)
         sign = 1.0 if decision > 0 else -1.0
@@ -228,6 +234,10 @@ def checkpoint_attribution_report(
         "model_id": model_id,
         "model_revision": model_revision,
         "target_token_ids": list(target_token_ids),
+        "attribution_regime": {
+            "freeze_attention": reference.freeze_attention,
+            "freeze_norms": reference.freeze_norms,
+        },
         "items": len(rows),
         "normalization": "decision_aligned_ratio_of_sums",
         "sum_abs_decision": denominator,

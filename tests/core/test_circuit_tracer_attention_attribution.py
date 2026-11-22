@@ -9,6 +9,7 @@ sums that make them meaningful.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,7 @@ import torch
 from torch import nn
 
 from interpretune.adapters.circuit_tracer import BaseCircuitTracerModule, CircuitTracerAttributeMixin
-from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
+from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND, _head_source_report
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
 from interpretune.analysis.backends import AttributionGraphSupport, HeadAttributionSupport, SupportsHeadAttribution
 from interpretune.analysis.ops.base import AnalysisBatch
@@ -122,6 +123,30 @@ class TestHeadLoadings:
         """A report of zeros would also partition the edges."""
         assert report.head_loading_shares.abs().max() > 1e-3
 
+    def test_raw_sources_partition_the_same_total_as_the_heads(self, toy, report):
+        n_features = len(report.head_loading_feature_nodes)
+        assert report.head_loading_feature_nodes.shape == (n_features, 3)
+        assert report.head_loading_feature_edges.shape == (n_features,)
+        assert report.head_loading_error_edges.shape == (toy.cfg.n_layers, len(TOY_PROMPT))
+        assert report.head_loading_embedding_edges.shape == (len(TOY_PROMPT),)
+        source_total = sum(
+            values.double().sum()
+            for values in (
+                report.head_loading_feature_edges,
+                report.head_loading_error_edges,
+                report.head_loading_embedding_edges,
+            )
+        )
+        assert float(source_total) == pytest.approx(report.head_loading_total, rel=1e-5, abs=1e-5)
+        assert report.head_loading_feature_edges.abs().max() > 0
+        assert report.head_loading_error_edges.abs().max() > 0
+        assert report.head_loading_embedding_edges.abs().max() > 0
+        assert torch.allclose(report.head_loading_head_edges / report.head_loading_total, report.head_loading_shares)
+        assert torch.allclose(
+            report.head_loading_bypass_edges / report.head_loading_total, report.head_loading_bypass_shares
+        )
+        assert json.loads(report.head_loading_regime_json) == FROZEN
+
     def test_layers_can_be_narrowed(self, toy):
         batch = head_loadings_impl(
             _ct_module(toy), AnalysisBatch(), None, 0, prompt=TOY_PROMPT, head_target=torch.tensor([3]), head_layers=[1]
@@ -135,6 +160,7 @@ class TestHeadLoadings:
             freeze_attention=False,
         )  # fmt: skip
         assert not torch.equal(live.head_loading_shares, report.head_loading_shares)
+        assert json.loads(live.head_loading_regime_json) == LIVE
 
     def test_a_missing_target_is_refused_by_name(self, toy):
         with pytest.raises(ValueError, match="head_target"):
@@ -146,6 +172,55 @@ class TestHeadLoadings:
                 _ct_module(toy), AnalysisBatch(), None, 0, prompt=TOY_PROMPT, head_target=torch.tensor([3]),
                 head_layers=[],
             )  # fmt: skip
+
+
+class TestRawSourceIdentity:
+    @pytest.fixture
+    def parts(self):
+        from circuit_tracer.attribution.head_loadings_nnsight import HeadLoadings
+
+        edges = torch.arange(1.0, 8.0)
+        reference = HeadLoadings(
+            layer=0,
+            per_head=torch.stack([edges / 4, edges / 4]),
+            bypass=edges / 2,
+            total=edges,
+            active_features=torch.tensor([[0, 1, 2]]),
+            n_layers=2,
+            n_pos=2,
+        )
+        return [reference, replace(reference, layer=1)]
+
+    def test_source_coordinates_keep_the_upstream_row_order(self, parts):
+        result = _head_source_report(parts)
+        assert result["head_loading_feature_nodes"].tolist() == [[0, 1, 2]]
+        assert result["head_loading_feature_edges"].tolist() == [1.0]
+        assert result["head_loading_error_edges"].tolist() == [[2.0, 3.0], [4.0, 5.0]]
+        assert result["head_loading_embedding_edges"].tolist() == [6.0, 7.0]
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"active_features": torch.tensor([[0, 1, 3]])},
+            {"total": torch.arange(2.0, 9.0)},
+            {"total": torch.ones(6)},
+            {"n_pos": 3},
+        ],
+    )
+    def test_a_cut_attributing_other_sources_is_refused(self, parts, change):
+        parts[1] = replace(parts[1], **change)
+        with pytest.raises(ValueError, match="layer 1 attributes different source"):
+            _head_source_report(parts)
+
+    def test_an_incomplete_source_vector_is_refused(self, parts):
+        parts[0] = replace(parts[0], total=torch.ones(6))
+        with pytest.raises(ValueError, match="incomplete source-node layout"):
+            _head_source_report(parts)
+
+    def test_nonfinite_source_edges_are_refused(self, parts):
+        parts = [replace(part, total=torch.full((7,), float("inf"))) for part in parts]
+        with pytest.raises(ValueError, match="nonfinite source edges"):
+            _head_source_report(parts)
 
 
 class TestHeadConductance:
@@ -245,6 +320,53 @@ class TestTheTopLevelOps:
 
         result = it.head_loadings(_ct_module(toy), None, None, 0, prompt=TOY_PROMPT, head_target=torch.tensor([3]))
         assert result.head_loading_shares.shape == (toy.cfg.n_layers, toy.cfg.n_heads)
+        assert result.head_loading_feature_nodes.shape[1] == 3
+        assert result.head_loading_error_edges.shape == (toy.cfg.n_layers, len(TOY_PROMPT))
+        assert result.head_loading_head_edges.shape == result.head_loading_shares.shape
+        assert json.loads(result.head_loading_regime_json) == FROZEN
+
+    def test_a_logit_gap_report_keeps_the_decision_separate_from_source_edges(self, toy):
+        import interpretune as it
+        import interpretune.analysis
+        from circuit_tracer.attribution.targets import CustomTarget
+
+        from it_examples.utils.sparse_attribution_collect import head_loading_row
+        from it_examples.utils.sparse_attribution_report import checkpoint_attribution_report
+
+        positive, negative = 3, 8
+        with torch.no_grad():
+            logits = toy._module(input_ids=TOY_PROMPT[None]).logits[0, -1]
+            decision = float(logits[positive] - logits[negative])
+        unembed = toy._module.get_output_embeddings().weight.detach()
+        target = CustomTarget("logit_gap", 1.0, unembed[positive] - unembed[negative])
+        raw = it.head_loadings(_ct_module(toy), None, None, 0, prompt=TOY_PROMPT, head_target=target)
+        row = head_loading_row(
+            raw, row_id="validation-1", checkpoint_sha256="a" * 64, basis_id="toy-transcoders",
+            decision=decision, answer_position=len(TOY_PROMPT) - 1,
+        )  # fmt: skip
+        summary = checkpoint_attribution_report(
+            [row], checkpoint_sha256="a" * 64, basis_id="toy-transcoders", model_id="tiny-gemma2",
+            model_revision="random-test-model", target_token_ids=(positive, negative),
+        )  # fmt: skip
+        assert row.decision == decision
+        assert row.bias is None
+        assert summary["attribution_regime"] == FROZEN
+        assert summary["source_shares"]["bias"] is None
+        assert summary["source_shares"]["unassigned"] == pytest.approx(1 - row.edge_total / decision, abs=1e-5)
+        assert row.edge_total != pytest.approx(decision, abs=1e-2)
+        assert torch.tensor(summary["head_shares"]) == pytest.approx(raw.head_loading_head_edges / decision, abs=1e-5)
+        assert row.feature_nodes == [tuple(node) for node in raw.head_loading_feature_nodes.tolist()]
+
+    @pytest.mark.parametrize("regime", [{}, {"freeze_attention": True, "freeze_norms": "false"}])
+    def test_a_row_with_incomplete_or_ambiguous_regime_is_refused(self, regime):
+        from it_examples.utils.sparse_attribution_collect import head_loading_row
+
+        with pytest.raises(ValueError, match="regime must"):
+            head_loading_row(
+                {"head_loading_regime_json": json.dumps(regime)},
+                row_id="validation-1", checkpoint_sha256="a" * 64, basis_id="toy-transcoders",
+                decision=1.0, answer_position=1,
+            )  # fmt: skip
 
     def test_head_conductance(self, toy):
         import interpretune as it

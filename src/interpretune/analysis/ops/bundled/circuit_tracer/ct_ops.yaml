@@ -125,6 +125,31 @@ head_loadings:
     head_loading_partition_errors:
       datasets_dtype: float32
       sequence_type: true
+    head_loading_feature_nodes:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    head_loading_feature_edges:
+      datasets_dtype: float32
+      sequence_type: true
+    head_loading_error_edges:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    head_loading_embedding_edges:
+      datasets_dtype: float32
+      sequence_type: true
+    head_loading_head_edges:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    head_loading_bypass_edges:
+      datasets_dtype: float32
+      sequence_type: true
+    head_loading_regime_json:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
 
 head_conductance:
   description: Credit each attention head for the measured change of a target between two prompts of the same length
