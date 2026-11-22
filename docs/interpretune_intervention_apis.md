@@ -210,12 +210,26 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     of another attribution graph (attribute the destination prompt, then compare) and reports which placements that
     graph selects, with their activations there, the fraction it selects, and, given the graph's per-feature influence
     scores, the share of its influence the matched features carry.
+  - **Graph subsets, on the model backend:** the same document applies where its space is the latent model attached at
+    the stage's site. `recipe_interventions(..., token_ids=, tokenizer=)` places the nodes by the same anchors and
+    writes them at that site's `hook_sae_acts_post` sub-hook, one `InterventionSpec` per layer and position that acts
+    on that position's features alone (explicit `positions` and `unit_indices`), so every other feature and position
+    is untouched. `replace` sets the node's value; `add` adds it to the activation the sub-hook sees, with no clean
+    capture. SAE, transcoder and block-sparse nodes are placed; a block-sparse node's vector value is the block's
+    contiguous columns. One latent model is attached at a hook, so a stage's nodes share one space, and cross-layer
+    transcoder nodes are refused by name. The positions index the sequence the backend runs, so pass one unpadded
+    prompt. A restriction (`outside: {set: <universe>, tokens: prompt}`) writes its dose (0 ablates) on every member
+    of a finite feature set of the book at every prompt position, except the coordinates the graph places, again one
+    spec per layer and position; the universe names the graph's space with explicit layers, and lists its features or
+    names the whole space (the latent model's width). Composed with a `replace` on the same graph, the sub-hook carries
+    the subset alone. `venngram_subsets` declares what this path applies, and `check_recipe` checks graph ops against
+    it.
 
   What each recipe op is honoured as, per surface and target:
 
   | Op | Model backend: whole activation | Model backend: units, or features at the latent sub-hook | Analysis backend: features, at explicit positions |
   |---|---|---|---|
-  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here | the dose $d$ |
+  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here, except graph nodes at their positions | the dose $d$ |
   | `add` | the operand times the dose, or the dose | the dose per member, added to the activation the forward pass meets | $a + d$, for the clean activation $a$ |
   | `scale` | the dose, as a multiplier | the dose per member, ones elsewhere | $a \cdot d$, for the clean activation $a$ |
   | `project`, `reject`, `patch`, `clamp` | the operand (a vector, or a pair for `patch`) | refused | refused |
