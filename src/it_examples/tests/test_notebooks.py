@@ -336,9 +336,9 @@ CT_ANALYSIS_BACKEND_PARAMS = [
         {"backend": "nnsight", "dashboard_mode": "public"},
         id="ct_analysis_backend_nnsight_public",
     ),
-    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
-    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
-    # when that lands; the nnsight case above covers the notebook meanwhile.
+    # circuit-tracer's TransformerLens backend now runs on a TransformerBridge, but this notebook has not yet been
+    # run on it (it needs a GPU and the gated Gemma 2 weights). Restore this case with that run; the nnsight case
+    # above covers the notebook meanwhile.
     # pytest.param(
     #     {"backend": "transformerlens", "dashboard_mode": "public"},
     #     id="ct_analysis_backend_tl_public",
@@ -429,9 +429,9 @@ def test_ct_attention_attribution_notebook(tmp_path: Path):
 # needs no services and is the CI lane; the local one is opt-in (see below).
 CT_CONCEPT_STEERING_PARAMS = [
     pytest.param({}, id="ct_concept_steering_public"),
-    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
-    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
-    # when that lands; the nnsight case above covers the notebook meanwhile.
+    # circuit-tracer's TransformerLens backend now runs on a TransformerBridge, but this notebook has not yet been
+    # run on it (it needs a GPU and the gated Gemma 2 weights). Restore this case with that run; the nnsight case
+    # above covers the notebook meanwhile.
     # pytest.param({"BACKEND": "transformerlens"}, id="ct_concept_steering_tl_public"),
 ]
 

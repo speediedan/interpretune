@@ -11,8 +11,6 @@ cleanup_cuda fixture ensures GPU memory is freed after each test.
 from __future__ import annotations
 
 import os
-import sys
-import types
 
 import httpx
 import pytest
@@ -22,7 +20,6 @@ import nnsight
 from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
 
 from interpretune.config import CircuitTracerConfig
-from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.adapters.circuit_tracer import ReplacementModelType
 from tests.runif import RunIf
 
@@ -41,63 +38,12 @@ def third_party_backend(monkeypatch):
     return "thirdparty"
 
 
-def _stub_transformer_lens(monkeypatch, mode: str) -> None:
-    """``hooked`` has the class; ``missing`` lacks it; ``migration_error`` raises ImportError on access, as 4.0
-    does."""
-    stub = types.ModuleType("transformer_lens")
-    if mode == "hooked":
-        stub.HookedTransformer = type("HookedTransformer", (), {})
-    elif mode == "migration_error":
-
-        def __getattr__(name):
-            raise ImportError(f"'{name}' was removed in TransformerLens 4.0.")
-
-        stub.__getattr__ = __getattr__  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "transformer_lens", stub)
-
-
 class TestCircuitTracerConfig:
     """Test CircuitTracerConfig backend configuration."""
 
     def test_default_backend_is_nnsight(self):
-        """The TransformerLens backend needs HookedTransformer, which transformer-lens 4.0 removed."""
         cfg = CircuitTracerConfig()
         assert cfg.backend == "nnsight"
-
-    @pytest.mark.parametrize("mode", ["missing", "migration_error"])
-    def test_transformerlens_backend_is_refused_without_hooked_transformer(self, monkeypatch, mode):
-        _stub_transformer_lens(monkeypatch, mode)
-        with pytest.raises(ValueError, match=r"backend 'transformerlens' needs transformer_lens\.HookedTransformer"):
-            require_hooked_transformer()
-
-    def test_transformerlens_backend_is_accepted_where_hooked_transformer_exists(self, monkeypatch):
-        """Positive control: the refusal keys on the class being absent, not on the backend name."""
-        _stub_transformer_lens(monkeypatch, "hooked")
-        require_hooked_transformer()
-
-    def test_a_config_naming_the_transformerlens_backend_stays_loadable(self, monkeypatch):
-        """Configs are declarative: loading, validating and serializing one must not need the backend's model."""
-        _stub_transformer_lens(monkeypatch, "missing")
-        assert CircuitTracerConfig(backend="transformerlens").backend == "transformerlens"
-
-    def test_building_the_transformerlens_replacement_model_is_refused(self, monkeypatch):
-        """The refusal fires on the load path, before circuit-tracer is asked for a model it cannot import."""
-        from types import SimpleNamespace
-
-        from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, ReplacementModel
-
-        _stub_transformer_lens(monkeypatch, "migration_error")
-
-        def _unreachable(*args, **kwargs):
-            raise AssertionError("ReplacementModel.from_pretrained reached despite the refusal")
-
-        monkeypatch.setattr(ReplacementModel, "from_pretrained", _unreachable)
-        stub = SimpleNamespace(
-            circuit_tracer_cfg=CircuitTracerConfig(backend="transformerlens"),
-            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-2-2b"),
-        )
-        with pytest.raises(ValueError, match=r"Use backend='nnsight' instead"):
-            BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
         "split", [{"device_map": "sequential", "max_memory": {0: "11GiB", 1: "6GiB"}}, {}], ids=["split", "default"]
@@ -205,7 +151,7 @@ class TestCircuitTracerBackendTypes:
     """Test backend type handling in CircuitTracerAdapter."""
 
     def test_backend_types_are_importable(self):
-        """The adapter must import under transformer-lens 4.0, so it no longer imports the TL product."""
+        """The adapter imports no backend's product, so choosing one backend never imports another's framework."""
         assert NNSightReplacementModel is not None
         # The union type itself is checked at type-check time
         assert ReplacementModelType is not None
@@ -216,15 +162,6 @@ class TestCircuitTracerBackendTypes:
 # =============================================================================
 
 
-# circuit-tracer's TransformerLens backend subclasses HookedTransformer, which TransformerLens 4.0 removes, so its
-# registry compositions are disabled until circuit-tracer ports it onto TransformerBridge. Restore with them.
-_CT_TL_DISABLED = pytest.mark.skip(
-    reason="circuit-tracer TransformerLens backend disabled pending its TransformerLens 4.0 support; "
-    "its compositions are commented out in tests/test_module_registry.yaml"
-)
-
-
-@_CT_TL_DISABLED
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerTLBackend:
     """TransformerLens backend integration tests for CircuitTracerAdapter.
@@ -233,8 +170,8 @@ class TestCircuitTracerTLBackend:
     transformer_lens, circuit_tracer) adapter combination. Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    # unmeasured: the class is skipped while the TransformerLens backend is disabled (see _CT_TL_DISABLED),
-    # so there is nothing to calibrate until it returns; conservative until then
+    # unmeasured: not yet calibrated since the TransformerLens backend returned on a TransformerBridge;
+    # conservative until then
     @RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_tl_backend_integration(self, get_it_session__ct_tl_gemma2__setup):
         """Verify TL backend initialization: property access, model loading, typing, and config preservation."""
@@ -254,7 +191,6 @@ class TestCircuitTracerTLBackend:
         assert it_session.module.model.config is not None
 
 
-@_CT_TL_DISABLED
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerLightningTLBackendInitialization:
     """Test Lightning + TransformerLens backend initialization.
@@ -262,8 +198,8 @@ class TestCircuitTracerLightningTLBackendInitialization:
     Requires CUDA with bf16 support (Gemma2 model) and Lightning.
     """
 
-    # unmeasured: the class is skipped while the TransformerLens backend is disabled (see _CT_TL_DISABLED),
-    # so there is nothing to calibrate until it returns; conservative until then
+    # unmeasured: not yet calibrated since the TransformerLens backend returned on a TransformerBridge;
+    # conservative until then
     @RunIf(lightning=True, bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     @pytest.mark.parametrize(
         "session_fixture",

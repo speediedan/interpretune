@@ -407,7 +407,7 @@ class CircuitTracerTLGemma2(BaseCfg):
     )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
-            backend="transformerlens",  # though TL is default we explicitly set backend here for clarity
+            backend="transformerlens",  # the default is nnsight
             transcoder_set="gemma",
             analysis_target_tokens=["▁Dallas", "▁Austin"],
             max_feature_nodes=8192,
@@ -434,7 +434,7 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
     )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
-            backend="transformerlens",  # though TL is default we explicitly set backend here for clarity
+            backend="transformerlens",  # the default is nnsight
             transcoder_set="gemma",
             analysis_target_tokens=["▁Dallas", "▁Austin"],
             max_feature_nodes=8192,
