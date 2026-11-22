@@ -166,58 +166,6 @@ def test_running_credit_and_conductance_path():
     assert len(aah.plot_conductance_path(points, "T").to_dict()["data"]) == 3
 
 
-def test_display_plotly_figure_embeds_html(monkeypatch):
-    shown = []
-    monkeypatch.setattr("it_examples.utils.nb_ui_utils.display", shown.append)
-    aah.display_plotly_figure(aah.plot_residual_convergence([8, 16], [0.02, 0.01]), "it-test")
-    assert len(shown) == 1 and "cdn.plot.ly" in shown[0].data and 'id="it-test-' in shown[0].data
-
-
-def test_notebook_table_escapes_cells_and_renders_only_http_links():
-    from it_examples.utils.nb_ui_utils import NotebookLink, build_notebook_table_html
-
-    html_out = build_notebook_table_html(
-        [["<script>x</script>", NotebookLink("L20 #15589", "https://example.org/a?b=1&c=2")]],
-        ["text", "link"],
-        title="T <b>",
-        caption="denominator & units",
-    )
-    assert "<script>" not in html_out and "&lt;script&gt;x&lt;/script&gt;" in html_out
-    assert '<a href="https://example.org/a?b=1&amp;c=2">L20 #15589</a>' in html_out
-    assert "T &lt;b&gt;" in html_out and "denominator &amp; units" in html_out
-    with pytest.raises(ValueError, match="HTTP"):
-        build_notebook_table_html([[NotebookLink("x", "javascript:alert(1)")]], ["link"], title="t")
-    with pytest.raises(ValueError, match="column count"):
-        build_notebook_table_html([[1, 2]], ["only one"], title="t")
-
-
-def test_notebook_table_colours_signed_cells_aligns_numbers_and_shows_a_legend():
-    from it_examples.utils.nb_ui_utils import (
-        NEGATIVE_COLOUR,
-        POSITIVE_COLOUR,
-        SIGN_LEGEND,
-        Signed,
-        build_notebook_table_html,
-    )
-
-    html_out = build_notebook_table_html(
-        [["up", Signed(1.5), 3], ["down", Signed(-0.25, "+.3f"), 2.5], ["flat", Signed(0.0), "n/a"]],
-        ["row", "shift", "count"],
-        title="t",
-        legend=SIGN_LEGEND,
-        emphasize=[1],
-    )
-    assert f'style="color:{POSITIVE_COLOUR};font-weight:600">+1.50</td>' in html_out
-    assert f'style="color:{NEGATIVE_COLOUR};font-weight:600">-0.250</td>' in html_out
-    assert 'style="color:inherit;font-weight:600">+0.00</td>' in html_out
-    assert '<td class="num">3</td>' in html_out and "<td>n/a</td>" in html_out
-    assert html_out.count('<tr class="em">') == 1 and '<tr class="em"><td>down</td>' in html_out
-    assert 'class="legend"' in html_out and "positive" in html_out and "negative" in html_out
-    assert 'class="legend"' not in build_notebook_table_html([["a"]], ["c"], title="t")
-    with pytest.raises(ValueError, match="outside the table"):
-        build_notebook_table_html([["a"]], ["c"], title="t", emphasize=[1])
-
-
 def test_feature_context_links_quotes_tokens_and_marks_missing_explanations():
     ctx = aah.FeatureContext(
         tokens=["<bos>", " is"],

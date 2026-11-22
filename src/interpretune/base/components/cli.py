@@ -14,6 +14,7 @@ from typing_extensions import override
 from functools import reduce
 
 import torch
+import yaml
 from transformers import logging as transformers_logging
 
 # `ActionConfigFile` is public jsonargparse API but is absent from its `__all__` and imported without the
@@ -59,6 +60,11 @@ log = logging.getLogger(__name__)
 # before the loader ever ran. `tests/core/test_components_cli.py` pins the parse surface against the
 # shipped configs so a future dialect change cannot ship that way again.
 ONE_DOOR_BODY_KEYS: tuple[str, ...] = ("shared_config", "registered_cfg", "adapter_ctx")
+# The session keys that take a mapping. jsonargparse sets `--<key>.<name> <value>` as one key of the mapping, so a
+# deeper path (`--registered_cfg.module_cfg.init_args.auto_comp_cfg.init_args.module_cfg_name X`) would arrive as a
+# single key with dots in it rather than as a nested value. Those paths are split out of the arguments before parsing
+# and merged as nested overrides instead (see `ITSessionMixin._split_nested_session_args`).
+NESTED_SESSION_ARG_ROOTS: tuple[str, ...] = ("session_cfg", "shared_config", "registered_cfg")
 
 
 def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: int = max_seed_value) -> int:
@@ -213,6 +219,50 @@ class ITSessionMixin:
         return mapping
 
     @staticmethod
+    def _split_nested_session_args(args: ArgsType) -> tuple[ArgsType, dict[str, dict[str, Any]]]:
+        """Split the nested session paths out of command-line arguments, returning the rest and the overrides.
+
+        A path two or more levels below a session mapping key (``--registered_cfg.module_cfg.init_args.x 1`` or
+        ``--registered_cfg.module_cfg.init_args.x=1``) becomes
+        ``{"registered_cfg": {"module_cfg": {"init_args": {"x": 1}}}}``, its value read as YAML, as jsonargparse reads a
+        mapping's values. A path one level below the key is left to jsonargparse, which sets it correctly. Arguments
+        that are not a sequence of strings are returned unchanged.
+        """
+        argv = sys.argv[1:] if args is None else args
+        if not isinstance(argv, (list, tuple)) or not all(isinstance(a, str) for a in argv):
+            return args, {}
+        prefixes = tuple(f"--{root}." for root in NESTED_SESSION_ARG_ROOTS)
+        remaining: list[str] = []
+        overrides: dict[str, dict[str, Any]] = {}
+        i = 0
+        while i < len(argv):
+            arg = argv[i]
+            flag, eq, value = arg.partition("=")
+            root, _, path = flag[2:].partition(".") if flag.startswith(prefixes) else ("", "", "")
+            if "." not in path:
+                remaining.append(arg)
+                i += 1
+                continue
+            if not eq:
+                if i + 1 >= len(argv):
+                    raise MisconfigurationException(f"`{flag}` sets a nested session value, but no value follows it.")
+                value = argv[i + 1]
+                i += 1
+            i += 1
+            try:
+                parsed = yaml.safe_load(value)
+            except yaml.YAMLError:
+                parsed = value
+            *parents, leaf = path.split(".")
+            nested: dict[str, Any] = {leaf: parsed}
+            for key in reversed(parents):
+                nested = {key: nested}
+            overrides[root] = ITSessionMixin._deep_merge(overrides.get(root, {}), nested)
+        if not overrides:
+            return args, {}
+        return remaining, overrides
+
+    @staticmethod
     def _resolve_hub_args(args: ArgsType) -> ArgsType:
         """Command-line arguments with each ``hub://`` file reference resolved to its cached file (#847), so that
         ``--config hub://<org>/<repo>/<path>`` reads a run configuration a component ships."""
@@ -300,6 +350,13 @@ class ITSessionMixin:
         session_mapping = self._deep_merge(session_mapping, dict(self._get(config, "session_cfg") or {}))
         overrides = {k: v for k in ONE_DOOR_BODY_KEYS if (v := self._get(config, k))}
         session_mapping = self._deep_merge(session_mapping, overrides) if overrides else session_mapping
+        # nested session paths from the command line (see `_split_nested_session_args`) win over the files and the
+        # parsed mappings, as any command-line value does
+        nested = getattr(self, "_nested_session_overrides", None) or {}
+        if nested_session := nested.get("session_cfg"):
+            session_mapping = self._deep_merge(session_mapping, nested_session)
+        if nested_body := {k: v for k, v in nested.items() if k != "session_cfg"}:
+            session_mapping = self._deep_merge(session_mapping, nested_body)
         # Typed it_session_cfg.* wins over the shim keys above (specific beats general), both win
         # over files. Only explicitly-set fields merge: adapter_ctx carries a non-empty dataclass
         # default, so it is compared against that default rather than truthiness-tested. The one
@@ -503,6 +560,7 @@ class ITCLI(ITSessionMixin):
         # e.g. self.config = parser.parse_object(args)
         args = self._resolve_hub_args(args)
         self._load_hub_adapters_from_args(args)
+        args, self._nested_session_overrides = self._split_nested_session_args(args)
         self.config = parser.parse_args(args)  # pyright: ignore[reportArgumentType]
 
     def _set_seed(self) -> None:
@@ -675,6 +733,11 @@ if _LIGHTNING_AVAILABLE:
                 """Load hub adapters named in raw arguments, from ITSessionMixin."""
                 ...
 
+            @staticmethod
+            def _split_nested_session_args(args: ArgsType) -> tuple[ArgsType, dict[str, dict[str, Any]]]:
+                """Split nested session paths out of raw arguments, from ITSessionMixin."""
+                ...
+
             def _session_mapping_from_sources(
                 self,
                 config_files: Sequence[Any],
@@ -727,6 +790,7 @@ if _LIGHTNING_AVAILABLE:
             parse as Lightning does."""
             args = self._resolve_hub_args(args)
             self._load_hub_adapters_from_args(args)
+            args, self._nested_session_overrides = self._split_nested_session_args(args)
             super().parse_arguments(parser, args)  # pyright: ignore[reportAttributeAccessIssue]
 
         def _it_session_object_attr(self, key) -> InterpretunableType | None:
