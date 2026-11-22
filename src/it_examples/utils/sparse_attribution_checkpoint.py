@@ -8,7 +8,7 @@ proves the selected training state and exact validation coverage, not the driver
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -38,6 +38,7 @@ class CheckpointMeasurements:
     model_id: str
     model_revision: str
     target_token_ids: tuple[int, int]
+    checks: Mapping[str, Any] = field(default_factory=dict)
 
 
 def tensor_state_sha256(state: Mapping[str, Any]) -> str:
@@ -183,9 +184,17 @@ class SparseAttributionReportCallback:
         report["validation_coverage_verified"] = True
         report["checkpoint_selection"] = "live_after_terminal_gates"
         report["gate_records"] = scheduler.gate_records
+        report["measurement_checks"] = dict(measurements.checks)
         payload = json.dumps(report, indent=2, allow_nan=False) + "\n"
         destination = run_dir / "attribution.json"
         pending = run_dir / "attribution.json.tmp"
         pending.write_text(payload, encoding="utf-8")
         pending.replace(destination)
         ctx.module.sparse_attribution_report_path = str(destination)
+        from interpretune.utils import rank_zero_info
+
+        source = report["source_shares"]
+        rank_zero_info(
+            f"Selected-checkpoint attribution: {report['items']} validation items; "
+            f"feature share {source['features']:+.4f}, error share {source['errors']:+.4f}; {destination}"
+        )
