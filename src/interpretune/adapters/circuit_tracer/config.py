@@ -81,13 +81,13 @@ class CircuitTracerConfig(ITSerializableCfg):
     offload: str | None = None
     """Hold attention patterns constant during attribution, so each edge is an exact direct effect.
 
-    ``False`` (nnsight and interp_engine backends) also credits nodes for changing where attention looks, which makes
+    ``False`` on supported backends also credits nodes for changing where attention looks, which makes
     each edge a first-order derivative. The regime is recorded on the graph and survives storage and pruning.
     """
     freeze_attention: bool = True
     """Hold every norm scale constant during attribution, query and key norms included.
 
-    ``False`` is nnsight and interp_engine backends only. Recorded on the graph like ``freeze_attention``.
+    ``False`` requires backend support. Recorded on the graph like ``freeze_attention``.
     """
     freeze_norms: bool = True
     """Lazily load transcoder encoder weights from disk on access.

@@ -332,8 +332,11 @@ class TestTheInterpEngineBackend:
         )
         assert shares[1].head_loading_shares.abs().max() > 1e-3, "no head carries anything"
 
-    def test_head_conductance_runs_on_the_real_model(self, twins):
+    @pytest.mark.parametrize("backend_name", ["interp_engine", "a_third_party_backend"])
+    def test_head_conductance_runs_on_the_real_model(self, twins, monkeypatch, backend_name):
         nnsight, interp_engine = twins
+        # Suspending permanent hooks is a backend capability, independent of its registered name.
+        monkeypatch.setattr(interp_engine, "backend", backend_name)
         weights = torch.zeros(interp_engine.cfg.d_vocab)
         weights[3], weights[8] = 1.0, -1.0
         reports = [

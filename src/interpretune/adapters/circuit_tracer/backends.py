@@ -762,8 +762,8 @@ class CircuitTracerAnalysisBackend:
         """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
 
         A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
-        same way as the edges together. The nnsight and interp_engine backends can do this; circuit-tracer refuses
-        others by name, along with a layer no path into the target passes.
+        same way as the edges together. Circuit-tracer selects the backend's implementation and refuses unsupported
+        backends, along with a layer no path into the target passes.
         """
         from circuit_tracer.attribution.head_loadings import head_loadings
 
@@ -814,13 +814,10 @@ class CircuitTracerAnalysisBackend:
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
         model = module.replacement_model
-        # conductance hooks the causal LM's modules directly and reads its logits, so it needs them as the model
-        # computes: nnsight's hooks live only inside a trace, while interp_engine's are permanent and stand aside for
-        # the call in `real_model()`
-        if model.backend == "interp_engine":
-            causal_lm_context = model.real_model()
-        else:
-            causal_lm_context = contextlib.nullcontext(model._module)
+        # A backend with permanent replacement hooks supplies a context that suspends them. Trace-scoped hooks
+        # are already inactive outside their trace, so the underlying causal LM needs no suspension there.
+        real_model = getattr(model, "real_model", None)
+        causal_lm_context = real_model() if real_model is not None else contextlib.nullcontext(model._module)
         with attribution_frozen(model, module), causal_lm_context as causal_lm:
             report = head_conductance(
                 causal_lm,
