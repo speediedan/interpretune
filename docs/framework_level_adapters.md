@@ -126,7 +126,7 @@ For any `compatibility_attrs` key that is **not** `log` or `log_dict`, a `_dummy
 | Loop orchestration | Manual `core_*_loop` | `Trainer.fit()` / `Trainer.test()` |
 | Logging | Accumulate-and-print | TensorBoard, W&B, CSV, etc. |
 | Callbacks | A minimal `CoreCallback` list (step, validation-end and epoch boundaries) | Early stopping, checkpointing, LR monitor |
-| Distributed training | Not supported | DDP, FSDP, DeepSpeed |
+| Distributed training | `SessionRunnerCfg.placement` under `torchrun`: `ddp`, `fsdp2` or `tp` ([core loop placements](core_loop_data_parallel.md)) | DDP, FSDP, DeepSpeed |
 | Mixed precision | `precision` (`bf16-mixed`, `bf16-true`, `32`) via `torch.autocast` | Precision plugins |
 | Checkpointing | `checkpoint_state` / `load_checkpoint_state` (module, optimizers, lr schedulers, RNG), saved by a callback | Automatic model checkpointing |
 | Progress bars | Not supported | Built-in progress tracking |
@@ -163,15 +163,16 @@ framework adapter:
 | Top-level op wrappers (`it.concept_direction(...)`) | Core only | Lazy `OpWrapper` proxies registered on the `interpretune` module |
 
 All four entry points ultimately call the configured `AnalysisCfg.op(...)`.
-Running analysis workflows through a Lightning `Trainer` is planned future work.
+A Lightning `Trainer` runs a composition's analysis step through `predict` and `test`, but it does not build an
+`AnalysisStore` from the outputs (see the limitations below).
 
 See [Analysis Runner Usage](analysis_runner_usage.md) for detailed API documentation
 and notebook usage patterns.
 
 ## Current Limitations
 
-- **Analysis runner is core-only** — `AnalysisRunner` extends `SessionRunner` and is not yet integrated with the Lightning adapter. Running analysis workflows through a Lightning `Trainer` is planned future work.
-- **No distributed support in core** — Multi-GPU/multi-node training requires the Lightning adapter.
+- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, but nothing builds an `AnalysisStore` from them, and the analysis hooks fire only in the core runner (see [Analysis Runner Usage](analysis_runner_usage.md)).
+- **Analysis loops run in one process.** The core training and test loops take a distributed placement (`ddp`, `fsdp2` or `tp`; see [Data-parallel training on the core loop](core_loop_data_parallel.md)), but the analysis loop does not.
 - **Core callbacks are minimal**: The core loop exposes step, validation-end and epoch boundaries and checkpoint state, but ships no ready-made early-stopping or checkpointing callbacks; Lightning provides those.
 
 ## Related Documents
