@@ -70,6 +70,20 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   interpretune's weight edits and works on every composition; the TransformerLens composition's `peft` LoRA adapters
   are whole-matrix, roled by name, and the two do not interact. Use `rank=` to tune many units of wide tensors with
   few parameters, and the full delta when the selection is small.
+
+  At an attention site, `point:attn.hook_z & layers:12`, the units are heads. Head $h$ is a block of $d_{head}$
+  coordinates: columns $h d_{head}$ to $(h+1) d_{head} - 1$ of the output projection $W_O$, and the matching rows (and
+  bias entries) of the value projection $W_V$ for the value head it reads. The block size is the component map row's
+  `unit_block` (venngram component map schema 6, measured by `venngram.maps.verification.with_layouts`), never read
+  from the model's config; a map that records none is refused, naming the field. Under grouped-query attention one
+  value head serves a group of query heads, so tuning its rows for one head would move the others: the value side is
+  refused unless the selection covers whole groups, naming the group and the heads it lacks. `value_side=False` tunes
+  only the $W_O$ blocks, for any heads. A fused QKV projection records no value block, so it needs `value_side=False`.
+
+  Heads are a convenience over coordinates, not a replacement. On a tensor target, `units` may be coordinates, which
+  may cross head boundaries (`component:attn.o & layers:12 & leaf:weight` with `[4, 5, 6, 7]`), or whole heads
+  (`{"heads": [1]}`), expanded along the row's unit axis exactly as venngram resolves the address
+  `units: {heads: [1]}` ([#868](https://github.com/interpretune/interpretune/issues/868)).
 - `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
   attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
   a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block

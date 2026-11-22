@@ -147,20 +147,17 @@ class TestCheckRecipe:
 
         root = tmp_path / "published"
         root.mkdir()
-        recipe = {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "dose-the-units",
+        # the recipe is a treatment of its address book: venngram retired the standalone recipe document kind
+        treatment = {
             "model": {"id": "m", "revision": "r1"},
-            "book": BOOK,
             "stages": [
                 {"site": "mlp.hook_out", "ops": [{"op": "add", "target": {"set": "chess"}, "value": {"dose": 0.8}}]}
             ],
         }
-        (root / "recipe.yaml").write_text(yaml.safe_dump(recipe))
+        (root / "book.yaml").write_text(yaml.safe_dump({**BOOK, "treatments": {"dose-the-units": treatment}}))
         (root / "support.yaml").write_text(yaml.safe_dump(document))
         store.publish(
-            "local", str(root), root, documents=[("recipe", "recipe.yaml"), ("support_record", "support.yaml")]
+            "local", str(root), root, documents=[("address_book", "book.yaml"), ("support_record", "support.yaml")]
         )
         report = conformance.check(f"local:{root}", supports=[record])
         assert report.ok, [(d.path, d.error, dict(d.refusals)) for d in report.documents]
