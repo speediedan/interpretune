@@ -7,7 +7,7 @@ settings:
   enabled: true
   # ADVISORY, as in the attribution-analysis notebook's config: the installed circuit-tracer comes from the git pin in
   # pyproject.toml, and a stale value warns rather than fails. Keep it accurate after a pin bump.
-  target_package_version: "0.5.3.dev54+g6a2782927"  # circuit_tracer this notebook was validated against
+  target_package_version: "0.5.3.dev61+g5ecad1d25"  # circuit_tracer this notebook was validated against
   log_to_console: false
   log_to_file: true
   log_dir: /tmp
@@ -39,8 +39,8 @@ file_hooks:
   ap_head_loadings_rows:
     file_path: attribution/head_loadings_nnsight.py
     enable: true
-    regex_pattern: '^\\s*bypass = rows\\[n_heads\\]'
-    insert_after: true
+    regex_pattern: '^\\s*return assemble\\(rows, layer, n_heads, ctx, n_layers, n_pos\\)'
+    insert_after: false
     description: "Per-copy edge rows behind one layer's head loadings (one copy per head, the bypass, the edge)"
 
   ap_conductance_path_points:
