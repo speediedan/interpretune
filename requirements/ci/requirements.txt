@@ -873,7 +873,7 @@ traitlets==5.16.1
     #   nbclient
     #   nbconvert
     #   nbformat
-transformer-lens==4.0.0
+transformer-lens==4.1.0
     # via
     #   --override (workspace)
     #   interpretune (pyproject.toml)

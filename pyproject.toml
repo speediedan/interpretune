@@ -215,6 +215,8 @@ git-deps = [
     #   attribution regimes                 `attribute(freeze_attention=, freeze_norms=)`, recorded on the graph,
     #                                       on the nnsight and interp_engine backends (#781, #933)
     #   head reports                        `head_loadings` and `head_conductance`, on both backends (#781, #933)
+    #   TransformerLens backend             `TransformerLensReplacementModel` on a TransformerBridge, since
+    #                                       TransformerLens 4 removed the HookedTransformer it subclassed (#223)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -225,7 +227,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@5ecad1d25ebeda704336dcdf00f67383edb5120e",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@290cb75e0f1c71fe2e65ce354cd4852d07fa7ce3",
     # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
     # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
@@ -324,9 +326,12 @@ docs = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    # force transformer-lens 4.0 over sae-dashboard's cap (`^2.2.0`, i.e. <3.0.0). sae-lens' range
-    # (`>=3.0.0,<5`) and circuit-tracer's floor admit it without an override.
-    "transformer-lens==4.0.0",
+    # force transformer-lens 4 over sae-dashboard's cap (`^2.2.0`, i.e. <3.0.0). sae-lens' range
+    # (`>=3.0.0,<5`) and circuit-tracer's floor admit it without an override. At least 4.1: 4.0's bridge
+    # replaced transformers' Gemma 2 and 3 `eager_attention_forward` for the whole process, which breaks the
+    # nnsight backend's attention hooks once any bridge (circuit-tracer's TransformerLens backend included)
+    # has been built.
+    "transformer-lens==4.1.0",
     # transformer-lens 4.0 requires jaxtyping>=0.3, and sae-dashboard caps it below 0.3 (`^0.2.28`).
     # sae-dashboard imports only the annotation types (`Float`, `Int`, `Bool`) and never type-checks at
     # runtime, and every one of its modules imports under jaxtyping 0.3.

@@ -2,8 +2,7 @@
 # The capital-states experiment (circuit-tracer's capital tutorial): its prompt and the two logits it attributes,
 # the answer and the city it is reached through. Named targets replace circuit-tracer's salient-logit selection.
 # The backend is chosen at run time (`circuit_tracer_cfg.backend`): "nnsight", the default here, or "transformerlens",
-# which is unavailable until circuit-tracer ports its TransformerLens replacement model to TransformerLens 4.0's
-# TransformerBridge (TransformerLens 4.0 removed HookedTransformer, which that model subclasses).
+# circuit-tracer's replacement model on a TransformerLens TransformerBridge.
 task_variant: capital_states
 model: gemma2
 composition: [circuit_tracer]
