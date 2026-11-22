@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, contextmanager
 import math
+import re
 from typing import Any, Callable, Iterator, Mapping
 
 from it_examples.utils.sparse_attribution_checkpoint import (
@@ -122,6 +123,19 @@ def _measurement_hf_state(model: Any) -> dict[str, Any]:
     return {name: value for name, value in state.items() if name not in artifact_keys}
 
 
+def _model_provenance(module: Any) -> tuple[str, str]:
+    config = module.it_cfg
+    model_id = getattr(config, "model_name_or_path", None)
+    loader = getattr(config, "hf_from_pretrained_cfg", None)
+    arguments = getattr(loader, "pretrained_kwargs", None)
+    revision = arguments.get("revision") if isinstance(arguments, Mapping) else None
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("RTE attribution requires the selected module's HF model_name_or_path")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError("RTE attribution requires an immutable 40-character HF-loader revision pin")
+    return model_id, revision
+
+
 class RteSparseAttributionCollector:
     """Collect the selected sparse RTE model's head/source measurements over its complete validation set.
 
@@ -130,12 +144,12 @@ class RteSparseAttributionCollector:
             checkpoint, it returns a context manager yielding a module for ``it.head_loadings``. The yielded
             module's replacement model must preserve the selected HF weights and any fitted enforcement. No
             default factory silently replaces an enforced run with its bare weights.
-        model_id: The model whose selected checkpoint is being measured.
-        model_revision: Immutable revision of its base model.
         logit_atol: Absolute tolerance when comparing both reconstructed answer logits with the selected run.
         logit_rtol: Relative tolerance for that comparison. The default is for float32 CPU/GPU measurement.
 
-    The context manager owns construction, device placement and cleanup. This collector never switches enforcement
+    Model identity comes from the selected module's HF load configuration, which must pin ``revision`` to a full
+    commit hash. It is not inferred from a moving Hub branch or a separate caller-supplied label. The context manager
+    owns construction, device placement and cleanup. This collector never switches enforcement
     off, samples the validation set, changes the target, or treats matching version strings as weight evidence.
     """
 
@@ -143,8 +157,6 @@ class RteSparseAttributionCollector:
         self,
         measurement_factory: Callable[[Any, VerifiedAttributionCheckpoint], AbstractContextManager[Any]]
         | Mapping[str, Any],
-        model_id: str,
-        model_revision: str,
         logit_atol: float = 1e-5,
         logit_rtol: float = 1e-5,
     ) -> None:
@@ -154,12 +166,9 @@ class RteSparseAttributionCollector:
             measurement_factory = instantiate_hub_aware_class(dict(measurement_factory))
         if not callable(measurement_factory):
             raise ValueError("measurement_factory must return a context manager for the selected model")
-        if not model_id.strip() or not model_revision.strip():
-            raise ValueError("model_id and immutable model_revision must be stated")
         if any(not math.isfinite(value) or value < 0 for value in (logit_atol, logit_rtol)):
             raise ValueError("logit tolerances must be finite and nonnegative")
         self.measurement_factory = measurement_factory
-        self.model_id, self.model_revision = model_id, model_revision
         self.logit_atol, self.logit_rtol = logit_atol, logit_rtol
 
     def __call__(self, module: Any, checkpoint: VerifiedAttributionCheckpoint) -> CheckpointMeasurements:
@@ -171,6 +180,7 @@ class RteSparseAttributionCollector:
         from interpretune.analysis.ops.base import AnalysisBatch
 
         _check_selected_subject(module, checkpoint)
+        model_id, revision = _model_provenance(module)
         items = _validation_items(module)
         targets = _target_tokens(module)
         enforced = module.sparse_enforce
@@ -214,13 +224,15 @@ class RteSparseAttributionCollector:
                 raise ValueError("measurement basis or HF weights changed during attribution")
         if module.sparse_enforce != enforced:
             raise ValueError("the measurement factory changed the selected sparse enforcement mode")
+        if _model_provenance(module) != (model_id, revision):
+            raise ValueError("the selected model provenance changed during attribution")
         _check_selected_subject(module, checkpoint)
         return CheckpointMeasurements(
             rows,
             list(items),
             basis,
-            self.model_id,
-            self.model_revision,
+            model_id,
+            revision,
             targets,
             checks={
                 "selected_hf_state_sha256": weights_sha,

@@ -108,6 +108,30 @@ def _complete_validation_coverage(measurements: CheckpointMeasurements) -> list[
     return expected
 
 
+def _report_summary(report: Mapping[str, Any], destination: Path) -> str:
+    source = report["source_shares"]
+    heads = [
+        (layer, head, value)
+        for layer, values in zip(report["head_layers"], report["head_shares"])
+        for head, value in enumerate(values)
+    ]
+    largest = max(heads, key=lambda entry: abs(entry[2]), default=None)
+    head = f"largest head L{largest[0]} H{largest[1]} {largest[2]:+.4f}" if largest else "no measured heads"
+    features = report["top_answer_features"]
+    top = (
+        f"top answer feature L{features[0]['layer']} F{features[0]['feature']} {features[0]['share']:+.4f}"
+        if features
+        else "no active answer features"
+    )
+    bias = "unmeasured" if source["bias"] is None else f"{source['bias']:+.4f}"
+    return (
+        f"Selected-checkpoint attribution: {report['items']} validation items; "
+        f"feature share {source['features']:+.4f}, error share {source['errors']:+.4f}, "
+        f"embedding share {source['embeddings']:+.4f}, bias {bias}, unassigned {source['unassigned']:+.4f}; "
+        f"{head}; {top}; {destination}"
+    )
+
+
 class SparseAttributionReportCallback:
     """Save and report the live selected checkpoint after FTSCoreCallback's final restore and gates.
 
@@ -193,8 +217,4 @@ class SparseAttributionReportCallback:
         ctx.module.sparse_attribution_report_path = str(destination)
         from interpretune.utils import rank_zero_info
 
-        source = report["source_shares"]
-        rank_zero_info(
-            f"Selected-checkpoint attribution: {report['items']} validation items; "
-            f"feature share {source['features']:+.4f}, error share {source['errors']:+.4f}; {destination}"
-        )
+        rank_zero_info(_report_summary(report, destination))

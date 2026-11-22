@@ -2,6 +2,9 @@
 #
 #   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gpt2.core.yaml
 #
+# This CPU schedule fixture does not emit the Gemma head/source report: the pinned NNsight head-attribution
+# backend has no GPT-2 mapping. Use rte_sparse.gemma3.core for the automatic report.
+#
 # The session is the component's `rte_sparse.gpt2.core` configuration (GPT-2 with random transcoders) and the schedule
 # `ft_schedules/rte_sparse.gpt2.yaml`. Phase 0 calibrates the penalty's normalizer and tunes with the penalty on; at its
 # boundary the best checkpoint is restored and the graph hook builds the enforcement from it. Recovery re-thaws in two

@@ -18,6 +18,7 @@ shared_config:
   os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
   model_name_or_path: google/gemma-3-1b-it
   tokenizer_kwargs:
+    revision: dcc83ea841ab6100d6b47a070329e1ba4cf78752
     model_input_names: ['input_ids', 'attention_mask']
     padding_side: left
     add_bos_token: true
@@ -70,6 +71,7 @@ registered_cfg:
         class_path: interpretune.config.mixins.HFFromPretrainedConfig
         init_args:
           pretrained_kwargs:
+            revision: dcc83ea841ab6100d6b47a070329e1ba4cf78752
             device_map: cuda
             dtype: float32
             attn_implementation: eager

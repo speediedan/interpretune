@@ -50,6 +50,8 @@ def sparse_module(request):
                 out_site = "model.layers.{layer}.mlp"
             self.it_cfg = SimpleNamespace(
                 profiler_cfg=SimpleNamespace(which=None),
+                model_name_or_path="tiny-gemma",
+                hf_from_pretrained_cfg=SimpleNamespace(pretrained_kwargs={"revision": "a" * 40}),
                 entailment_mapping_indices=torch.tensor([3, 8]),
                 sparse_chain={
                     "reg_layers": [0, 1],
@@ -126,6 +128,8 @@ class RebuiltModel:
             replacement._module.config.final_logit_softcapping = 30.0
         elif self.defect == "changed-enforcement-mode":
             module.sparse_enforce = not module.sparse_enforce
+        elif self.defect == "changed-model-provenance":
+            module.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["revision"] = "b" * 40
         with only_token_zero_special(replacement):
             yield _ct_module(replacement)
 
@@ -137,7 +141,7 @@ def _proof(tmp_path, module):
 
 
 def _collector(factory=None):
-    return RteSparseAttributionCollector(factory or RebuiltModel(), "tiny-gemma2", "test-revision")
+    return RteSparseAttributionCollector(factory or RebuiltModel())
 
 
 def test_full_validation_collection_checks_actual_weights_logits_and_source_partitions(sparse_module, tmp_path):
@@ -174,6 +178,7 @@ def test_full_validation_collection_checks_actual_weights_logits_and_source_part
         ("same-gap-other-logits", "answer logits.*do not match"),
         ("softcap", "final_logit_softcapping"),
         ("changed-enforcement-mode", "changed the selected sparse enforcement mode"),
+        ("changed-model-provenance", "selected model provenance changed"),
     ],
 )
 def test_reconstruction_defects_are_refused_before_accepting_measurements(sparse_module, tmp_path, defect, match):
@@ -330,7 +335,9 @@ def test_invalid_validation_inputs_are_refused(sparse_module, tmp_path, defect):
 
 @pytest.mark.parametrize("sparse_module", ["gemma2", "gemma3"], indirect=True)
 @pytest.mark.parametrize("veto", [False, True], ids=["accepted", "veto"])
-def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sparse_module, tmp_path, veto):
+def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
+    sparse_module, tmp_path, veto, monkeypatch
+):
     from functools import partial
     import json
     from pathlib import Path
@@ -341,6 +348,8 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sp
     from interpretune.tuning.core_loop import FTSCoreCallback
     from it_examples.utils.sparse_attribution_checkpoint import SparseAttributionReportCallback, tensor_state_sha256
     from it_examples.utils.rte_sparse_attribution import _validation_items
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+    import yaml
 
     module = sparse_module
     for layer in module.sparse_cfg["enforce_layers"]:
@@ -370,7 +379,30 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sp
             "view": view,
         },
     )
-    callback = SparseAttributionReportCallback(_collector(_production_factory(module)), str(tmp_path / "reports"))
+    # Hydrate the actual shipping callback configuration; only the tiny CPU artifact and output location differ.
+    shipped = Path(__file__).resolve().parents[2] / "src/it_examples/examples/rte/runs/rte_sparse.gemma3.core.yaml"
+    callbacks = yaml.safe_load(shipped.read_text())["run_cfg"]["callbacks"]
+    model_config = shipped.parents[1] / "configs/rte_sparse.gemma3.core.yaml"
+    source_config = yaml.safe_load(model_config.read_text())
+    loader = source_config["registered_cfg"]["module_cfg"]["init_args"]
+    assert loader["hf_from_pretrained_cfg"]["init_args"]["pretrained_kwargs"]["revision"] == (
+        "dcc83ea841ab6100d6b47a070329e1ba4cf78752"
+    )
+    assert (
+        source_config["shared_config"]["tokenizer_kwargs"]["revision"]
+        == (loader["hf_from_pretrained_cfg"]["init_args"]["pretrained_kwargs"]["revision"])
+    )
+    assert callbacks[0]["class_path"] == "interpretune.tuning.core_loop.FTSCoreCallback"
+    configured = callbacks[1]
+    assert configured["class_path"].endswith(".SparseAttributionReportCallback")
+    configured["init_args"]["output_dir"] = str(tmp_path / "reports")
+    factory = configured["init_args"]["collector"]["init_args"]["measurement_factory"]["init_args"]
+    assert factory["zero_positions"] == 1
+    factory["transcoder_set"] = _production_factory(module).transcoder_set
+    callback = instantiate_hub_aware_class(configured)
+    assert isinstance(callback, SparseAttributionReportCallback)
+    messages = []
+    monkeypatch.setattr("interpretune.utils.rank_zero_info", messages.append)
     batches = [
         {"input_ids": ids[None], "attention_mask": torch.ones_like(ids)[None], "labels": torch.tensor([0])}
         for ids in _validation_items(module).values()
@@ -387,6 +419,7 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sp
     assert tensor_state_sha256(payload["model"]) == proof.state_sha256 == report["checkpoint_state_sha256"]
     assert report["checkpoint_sha256"] == proof.sha256
     assert report["checkpoint_selection"] == "live_after_terminal_gates"
+    assert report["model_revision"] == "a" * 40
     assert report["validation_row_ids"] == ["17", "29", "41"]  # The loop's validation limit is one batch.
     assert report["items"] == 3 and report["validation_coverage_verified"] and report["complete_head_layers"]
     assert report["measurement_checks"]["sparse_enforcement_enabled"] is True
@@ -395,3 +428,24 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(sp
     assert not torch.equal(initial_norm, module.model.model.norm.weight)
     assert any(name.startswith("sparse_enforce_") for name in payload["model"])
     assert not any(name.startswith("sparse_tcs.") for name in payload["model"])
+    assert any(
+        "largest head L" in message
+        and "error share" in message
+        and "bias unmeasured" in message
+        and str(path) in message
+        for message in messages
+    )
+
+
+@pytest.mark.parametrize("revision", [None, "main", "not-a-commit", 17])
+def test_moving_or_missing_loaded_model_revision_is_refused(sparse_module, tmp_path, revision):
+    sparse_module.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["revision"] = revision
+    collector = RteSparseAttributionCollector(RebuiltModel())
+    with pytest.raises(ValueError, match="immutable 40-character HF-loader revision pin"):
+        collector(sparse_module, _proof(tmp_path, sparse_module))
+
+
+def test_the_selected_module_must_identify_its_model(sparse_module, tmp_path):
+    sparse_module.it_cfg.model_name_or_path = ""
+    with pytest.raises(ValueError, match="HF model_name_or_path"):
+        _collector()(sparse_module, _proof(tmp_path, sparse_module))

@@ -54,6 +54,57 @@ At each boundary the ended phase's best checkpoint is restored and attribution g
 Each recovery phase starts a fresh optimizer, and the plateau transition judges each phase against its own best
 (`reset_best_on_phase`), so a recovery phase that starts below phase 0's best is not ended for that.
 
+## Selected-checkpoint report
+
+The Gemma 3 run configuration places `SparseAttributionReportCallback` after `FTSCoreCallback`. After the terminal
+gates finish, it saves the selected model and fitted enforcement state beside the run's other checkpoints, then
+measures every validation item. A final veto therefore reports the state that survives the veto. The training loop's
+validation batch limit does not restrict this report. The callback prints a compact source summary, the largest
+head share, the top answer-position feature and the report path with the run's usual output.
+
+Each completed run writes a separate directory under `checkpoints/rte_sparse.gemma3.core/attribution/` containing:
+
+- `checkpoint.pt`: the full selected FTS checkpoint, including optimizer state and fitted tensors. Fixed transcoder
+  artifacts are identified separately and remain outside the checkpoint.
+- `attribution.json`: checkpoint file and tensor hashes, the model load configuration's immutable revision pin, actual
+  transcoder-basis identity, target token ids, validation identities, gate records and measured attribution regime.
+  It includes feature/error/embedding shares, feature and error shares by layer, top answer-position features, and
+  each layer's per-head and bypass shares.
+
+For a signed contribution $c_i$ and the item's Yes-minus-No logit gap $y_i$, the reported share is
+
+$$
+S(c) = \frac{\sum_i \mathrm{sign}(y_i) c_i}{\sum_i |y_i|}
+$$
+
+A positive share supports the measured decision; a negative share opposes it. This is a ratio of sums over the
+validation set, so an item with a small gap cannot dominate through a large per-item ratio. Values are not clipped.
+Each attention layer is a separate cut through the same source edges. Add its heads and bypass within that layer;
+do not add all head layers together. Those edges need not sum to the measured decision, so a head cut need not sum
+to one. The report records both quantities and verifies every source/head partition.
+
+The current head-loading graph exposes feature, error and embedding sources but no separately measured bias source.
+The report therefore records `bias: null` and an explicit `unassigned` remainder. That remainder includes everything
+outside the measured source edges; it is not a pure-bias measurement. This limitation remains part of
+[the reporting issue](https://github.com/interpretune/interpretune/issues/1114).
+
+The collector reconstructs the selected HF weights while retaining the run's active fitted enforcement, and checks
+both answer logits against `sparse_forward` on every item before accepting its attribution. Copying weights alone
+would drop enforcement. It also verifies the complete actual transcoder basis and its enforced layers, rechecks the
+selected tensors after measurement, and refuses mismatched or incomplete evidence. Direct shares use frozen
+attention patterns and norm scales, recorded explicitly in `attribution_regime`. The leading zero-position count is
+one, matching the sparsity chain's local graph convention, and forms part of the basis identity.
+
+The model load configuration pins `revision` to an immutable Hub commit. The collector records that same pin;
+missing or moving revisions are refused rather than inferred from the current Hub branch.
+
+Reporting currently requires a single-process float32 selected model and a complete, unsharded FTS checkpoint. The
+original model, a measurement copy, optimizer state, full transcoders and attribution batches must fit together;
+pretrained GPU memory and runtime for this reporting path have not yet been calibrated. The CPU tests use tiny real
+Gemma 2/3 models with the actual sparse forward and fitted enforcement. The GPT-2 run is a CPU schedule fixture with
+random transcoders; it does not emit this report because the pinned NNsight head-attribution backend has no GPT-2
+mapping. Use the Gemma 3 configuration for the automatic head/source report.
+
 ## What it has shown
 
 Three seeds on one 24 GB GPU, about 30 minutes each (results on
@@ -73,8 +124,9 @@ Three seeds on one 24 GB GPU, about 30 minutes each (results on
   up to 0.2 between epochs at nearly constant accuracy, and a plateau of patience 1 ends a phase on one such swing, after
   which the restore discards the later, sparser weights. One seed ended two of its phases after two epochs and finished
   on its least sparse checkpoint. Final selection on `val_task` alone does not pursue sparsity.
-- **Whether phasing helps is untested:** no run has had a step-matched single-phase control, and three seeds are too
-  few to set the gate's bounds, which sit close to the recovery results at the current circuit-tracer pin.
+- **The initial three seeds do not isolate phasing.** Follow-up step-matched controls and stopping/selection
+  experiments are recorded in [#988](https://github.com/interpretune/interpretune/issues/988). The initial three seeds
+  alone are too few to set the gate's bounds, which sit close to their recovery results.
 - **The dictionary is fixed.** With the published transcoders held, part of any sparsity gain can be the decision
   moving off the dictionary, into error terms or attention routing, which a frozen-pattern graph does not see.
 - **One model, one task, and graphs built at one circuit-tracer pin.** The reference is graphed at circuit-tracer
@@ -82,14 +134,12 @@ Three seeds on one 24 GB GPU, about 30 minutes each (results on
 
 ## Open questions and follow-up work
 
-- [interpretune#988](https://github.com/speediedan/interpretune/issues/988): step-matched controls, a stopping rule
-  sized to its metric, sparsity-aware selection and per-epoch instruments. The rest of this list builds on it.
-- [interpretune#989](https://github.com/speediedan/interpretune/issues/989): how much of the decision moves into
-  attention routing under the penalty, with attention-aware attribution.
+The completed follow-ups cover [step-matched controls and selection](https://github.com/interpretune/interpretune/issues/988),
+[attention routing](https://github.com/interpretune/interpretune/issues/989) and
+[J++ lens readouts](https://github.com/interpretune/interpretune/issues/991). Remaining experiments include:
+
 - [interpretune#990](https://github.com/speediedan/interpretune/issues/990): stages by component, unit set, dictionary
   order and penalty strength, rather than by layer band.
-- [interpretune#991](https://github.com/speediedan/interpretune/issues/991): graphs against J++ lens readouts at each
-  layer.
 - [interpretune#992](https://github.com/speediedan/interpretune/issues/992): training informed by the premise and
   hypothesis spans that agree or contradict.
 - [interpretune#993](https://github.com/speediedan/interpretune/issues/993): dictionaries beyond fixed point

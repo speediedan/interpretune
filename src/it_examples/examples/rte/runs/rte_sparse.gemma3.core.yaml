@@ -1,5 +1,5 @@
 # The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it on interpretune's core loop (#899,
-# #936), on one 24 GB GPU (research-class: a reserved window, not CI):
+# #936), on one GPU (research-class: a reserved window, not CI):
 #
 #   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gemma3.core.yaml
 #
@@ -15,7 +15,9 @@
 # judged, so the second step always runs. The final gate judges the global best, whichever phase holds it, and a veto
 # ends the run on the previous phase's best (#899 and #936 have the outcome per seed). The reference is graphed at
 # circuit-tracer bd6bc784, and graphs from another circuit-tracer are not comparable with it. Every phase is judged on
-# `val_task`, the phase-invariant task loss.
+# `val_task`, the phase-invariant task loss. Final reporting measures every validation item with fitted enforcement
+# retained. Budget the selected model, a second HF copy, optimizer and full transcoders together; this reporting
+# path's pretrained GPU memory requirement has not yet been calibrated.
 session_ref: speediedan/rte:rte_sparse.gemma3.core
 seed_everything: 0
 run_cfg:
@@ -72,3 +74,16 @@ run_cfg:
                   gate_rows: [860, 861, 862, 863, 864, 865, 866, 867, 868, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878,
                     879, 880, 881, 882, 883, 884, 885, 886, 887, 1021, 1027, 1055, 1058, 1059, 1069, 1097, 1121, 1136,
                     1139, 1142, 1150]
+    - class_path: it_examples.utils.sparse_attribution_checkpoint.SparseAttributionReportCallback
+      init_args:
+        output_dir: checkpoints/rte_sparse.gemma3.core/attribution
+        top_k: 10
+        collector:
+          class_path: it_examples.utils.rte_sparse_attribution.RteSparseAttributionCollector
+          init_args:
+            # Identity comes from the selected module's pinned HF load configuration.
+            measurement_factory:
+              class_path: it_examples.utils.rte_sparse_measurement.RteSparseMeasurementFactory
+              init_args:
+                transcoder_set: mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine
+                zero_positions: 1
