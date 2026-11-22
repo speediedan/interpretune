@@ -61,6 +61,15 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+
+  With `rank=r`, each matrix's delta is low-rank over the selected slices only, LoRA's factorization restricted to the
+  units: $\Delta_S = \tfrac{\alpha}{r} B A$, where $B$ has one row per selected unit and starts at zero, $A$ has one
+  column per entry of a slice, and `alpha` defaults to $r$ (a scale of 1). Both factors take the adapter's role. Full
+  slices hold $|S| k$ entries and the factors $r (|S| + k)$, so a rank at or above $|S| k / (|S| + k)$ saves nothing
+  and is refused, naming the bound. A bias has nothing to factor and keeps its full delta. This adapter is part of
+  interpretune's weight edits and works on every composition; the TransformerLens composition's `peft` LoRA adapters
+  are whole-matrix, roled by name, and the two do not interact. Use `rank=` to tune many units of wide tensors with
+  few parameters, and the full delta when the selection is small.
 - `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
   attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
   a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block
@@ -210,12 +219,26 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     of another attribution graph (attribute the destination prompt, then compare) and reports which placements that
     graph selects, with their activations there, the fraction it selects, and, given the graph's per-feature influence
     scores, the share of its influence the matched features carry.
+  - **Graph subsets, on the model backend:** the same document applies where its space is the latent model attached at
+    the stage's site. `recipe_interventions(..., token_ids=, tokenizer=)` places the nodes by the same anchors and
+    writes them at that site's `hook_sae_acts_post` sub-hook, one `InterventionSpec` per layer and position that acts
+    on that position's features alone (explicit `positions` and `unit_indices`), so every other feature and position
+    is untouched. `replace` sets the node's value; `add` adds it to the activation the sub-hook sees, with no clean
+    capture. SAE, transcoder and block-sparse nodes are placed; a block-sparse node's vector value is the block's
+    contiguous columns. One latent model is attached at a hook, so a stage's nodes share one space, and cross-layer
+    transcoder nodes are refused by name. The positions index the sequence the backend runs, so pass one unpadded
+    prompt. A restriction (`outside: {set: <universe>, tokens: prompt}`) writes its dose (0 ablates) on every member
+    of a finite feature set of the book at every prompt position, except the coordinates the graph places, again one
+    spec per layer and position; the universe names the graph's space with explicit layers, and lists its features or
+    names the whole space (the latent model's width). Composed with a `replace` on the same graph, the sub-hook carries
+    the subset alone. `venngram_subsets` declares what this path applies, and `check_recipe` checks graph ops against
+    it.
 
   What each recipe op is honoured as, per surface and target:
 
   | Op | Model backend: whole activation | Model backend: units, or features at the latent sub-hook | Analysis backend: features, at explicit positions |
   |---|---|---|---|
-  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here | the dose $d$ |
+  | `replace` | the operand, or the dose broadcast | units: selected-coordinate replacement; latent features: refused here, except graph nodes at their positions | the dose $d$ |
   | `add` | the operand times the dose, or the dose | the dose per member, added to the activation the forward pass meets | $a + d$, for the clean activation $a$ |
   | `scale` | the dose, as a multiplier | the dose per member, ones elsewhere | $a \cdot d$, for the clean activation $a$ |
   | `project`, `reject`, `patch`, `clamp` | the operand (a vector, or a pair for `patch`) | refused | refused |
