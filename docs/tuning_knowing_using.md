@@ -178,9 +178,10 @@ The paper's Table 9 also covers Llama-3.2-1B, and every arm above was repeated o
 `configs/kug_lrsd.llama3_2_1b.core.yaml`. It keeps the recipe and changes what the model fixes: the paper's Llama fact
 seed (1340: 794 unique single-hop questions and 427 two-hop questions), and, since the model has 16 decoder blocks
 rather than 28, the layer pair 12 to 8 (block 8's state is trained toward block 12's, at $0.5L$ and $0.75L$ as on
-Qwen) and the band of blocks 4 to 11 ($0.25L$ to $0.75L$) for the gated and mid-only arms. Their schedules,
-`ft_schedules/kug_gated.llama3_2_1b.yaml` and `ft_schedules/kug_mid_only.llama3_2_1b.yaml`, name that band by regex. The
-no-refreeze arm's schedule refreezes nothing, so it runs unchanged. Llama-3.2's chat template stamps the current date
+Qwen) and the band of blocks 4 to 11 ($0.25L$ to $0.75L$) for the gated and mid-only arms. The gated and mid-only
+schedules, `ft_schedules/kug_gated.yaml` and `ft_schedules/kug_mid_only.yaml`, name that band by depth fraction
+(`role:adapter & layers:0.25d:0.75d`), so the same two schedules serve both models: blocks 7 to 20 on Qwen and 4 to 11
+on Llama. The no-refreeze arm's schedule refreezes nothing, so it runs unchanged. Llama-3.2's chat template stamps the current date
 into its system prompt, and the configuration pins it to the authors' date so that every run sees the same prompt.
 
 Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:

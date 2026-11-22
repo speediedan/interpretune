@@ -21,7 +21,7 @@ run_cfg:
         log_path: kug_gated.qwen2_5_1_5b.core.exact_match.json
     - class_path: interpretune.tuning.core_loop.FTSCoreCallback
       init_args:
-        schedule: hub://speediedan/knowing-using/ft_schedules/kug_gated.qwen2_5_1_5b.yaml
+        schedule: hub://speediedan/knowing-using/ft_schedules/kug_gated.yaml
         tuning_scheduler_kwargs:
           transition:
             class_path: knowing_using.MetricThresholdTransition

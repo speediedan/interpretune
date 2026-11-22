@@ -525,29 +525,18 @@ def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, c
 def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
     kug, kug_revision, clean_cli_env, tmp_path, monkeypatch
 ):
-    """The gated arm's run configuration, with a threshold of 0 (so phase 1 opens after the first epoch) and the
-    shipped schedule's structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    """The gated arm's run configuration and its shipped schedule, with a threshold of 0 (so phase 1 opens after
+    the first epoch).
+
+    The schedule names the mid band by depth fraction, so on the tiny model's 4 blocks it is blocks 1 and 2, as it is
+    blocks 7 to 20 of Qwen2.5-1.5B's 28.
+    """
     from interpretune.base.components.cli import core_cli_main
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.chdir(tmp_path)
-    schedule = {
-        0: {"params": [r"model\..*\.lora_[AB]\..*"], "phase_config": {"lrsd_lambda": 0.0}},
-        1: {
-            "params": [],
-            "refreeze": [r"model\..*\.layers\.(?:0|3)\..*\.lora_[AB]\..*"],
-            "phase_config": {"lrsd_lambda": 1.0},
-        },
-    }
-    schedule_path = tmp_path / "gated_schedule.yaml"
-    schedule_path.write_text(yaml.safe_dump(schedule))
     transition = {"class_path": "knowing_using.MetricThresholdTransition", "init_args": {"threshold": 0.0}}
-    run_config = _run_config(
-        kug_revision,
-        tmp_path,
-        run_key="kug_gated.qwen2_5_1_5b.core",
-        fts_init_args={"schedule": str(schedule_path)},
-    )
+    run_config = _run_config(kug_revision, tmp_path, run_key="kug_gated.qwen2_5_1_5b.core")
     cfg = yaml.safe_load(run_config.read_text())
     cfg["run_cfg"]["callbacks"][1]["init_args"]["tuning_scheduler_kwargs"]["transition"] = transition
     run_config.write_text(yaml.safe_dump(cfg))
@@ -563,17 +552,17 @@ def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
 
 
 def test_the_mid_only_run_trains_the_mid_band_on_cross_entropy(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
-    """The mid-only arm's run configuration (its ``lrsd_lambda: 0.0`` included), with the shipped schedule's
-    structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    """The mid-only arm's run configuration (its ``lrsd_lambda: 0.0`` included) and its shipped schedule, whose
+    depth-fraction band is blocks 1 and 2 of the tiny model's 4.
+
+    The tiny model is a PEFT-wrapped model whose config names its architecture, the case venngram once mounted at the
+    PEFT wrapper and refused (#1142).
+    """
     from interpretune.base.components.cli import core_cli_main
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.chdir(tmp_path)
-    schedule_path = tmp_path / "mid_only_schedule.yaml"
-    schedule_path.write_text(yaml.safe_dump({0: {"params": [r"model\..*\.layers\.(?:1|2)\..*\.lora_[AB]\..*"]}}))
-    run_config = _run_config(
-        kug_revision, tmp_path, run_key="kug_mid_only.qwen2_5_1_5b.core", fts_init_args={"schedule": str(schedule_path)}
-    )
+    run_config = _run_config(kug_revision, tmp_path, run_key="kug_mid_only.qwen2_5_1_5b.core")
     args, _, _ = _tiny_run_args(kug, tmp_path, run_config)
     core_cli_main(run_mode="train", args=args + ["--run_cfg.max_epochs=2"])
 
