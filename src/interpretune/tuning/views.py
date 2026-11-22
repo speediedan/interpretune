@@ -143,6 +143,22 @@ def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> An
 _REMINDED: set[str] = set()
 
 
+def _peft_mount(root: nn.Module) -> str | None:
+    """The path in ``root`` of the model a PEFT wrapper at ``root.model`` carries (``model.base_model.model``), or
+    ``None`` when ``root.model`` is not a PEFT model.
+
+    venngram mounts a base map at the outermost module whose class or ``config.architectures`` names a mapped
+    architecture. A ``PeftModel`` reports its base model's ``config``, which records ``architectures`` once loaded from
+    a checkpoint, so without a named mount the map would be placed at the wrapper, where none of its paths are (#1142).
+    """
+    model = getattr(root, "model", None)
+    get_base_model = getattr(model, "get_base_model", None)
+    if not callable(get_base_model) or type(model).__module__.split(".")[0] != "peft":
+        return None
+    base = get_base_model()
+    return next((path for path, module in root.named_modules() if module is base and path), None)
+
+
 def default_view(
     root: nn.Module, roles: Mapping[str, str] | None = None, attached: Mapping[str, str] | None = None
 ) -> Any:
@@ -154,6 +170,8 @@ def default_view(
     ``role:latent & layers:12:`` selects by depth. A placement the map cannot make (a site no map row places at or
     above) is left out, with a warning: that module's tensors locate at no layer, and still resolve by name and role.
 
+    A model PEFT wraps is described where PEFT keeps it (``model.base_model.model``), not at the wrapper.
+
     Where no published component map describes the model, this is the identity view (:func:`identity_view`), with an
     info-level reminder that registering a map adds layers and components; where venngram's registry cannot be read,
     it is the identity view with a warning. Either way the composition stays trainable.
@@ -162,19 +180,19 @@ def default_view(
     from venngram.registry import RegistryError
     from venngram.tuning import TunableViewError
 
-    roles, attached = dict(roles or {}), dict(attached or {})
+    roles, attached, mount = dict(roles or {}), dict(attached or {}), _peft_mount(root)
     try:
         try:
-            return venngram.view(root, roles=roles, attached=attached)
+            return venngram.view(root, roles=roles, attached=attached, mount=mount)
         except TunableViewError:
             if not attached:
                 raise
-        unattached = venngram.view(root, roles=roles)  # a refusal that is not a placement's is raised here
+        unattached = venngram.view(root, roles=roles, mount=mount)  # a refusal that is not a placement's is raised here
         # venngram refuses the view for any one placement it cannot make: keep those it can, one by one
         placeable, unplaced = {}, {}
         for key, at in attached.items():
             try:
-                venngram.view(root, roles=roles, attached={key: at})
+                venngram.view(root, roles=roles, attached={key: at}, mount=mount)
                 placeable[key] = at
             except TunableViewError as err:
                 unplaced[key] = err
@@ -183,7 +201,7 @@ def default_view(
             f"{', '.join(unplaced)} could not be placed at their sites in {type(root).__name__}'s view, so their"
             f" tensors locate at no layer or component: address them by name or role ({reasons})."
         )
-        return venngram.view(root, roles=roles, attached=placeable) if placeable else unattached
+        return venngram.view(root, roles=roles, attached=placeable, mount=mount) if placeable else unattached
     except KeyError as err:
         model = getattr(root, "model", None)
         named = f"{type(root).__name__}" + (f" ({type(model).__name__})" if isinstance(model, nn.Module) else "")
