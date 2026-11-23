@@ -6,7 +6,7 @@ A local, dispatched nnsight composition registers the nnsight model's HF module 
 (in `register_tunable_modules()`), so the optimizer, checkpoints and the default view, venngram's composed view mounted
 at `hf_model`, reach its parameters. nnsight builds the model through its own constructor, so a `lora_cfg` or
 `bitsandbytesconfig` in `hf_from_pretrained_cfg` is not applied
-([interpretune#942](https://github.com/speediedan/interpretune/issues/942)). A composition
+([interpretune#942](https://github.com/interpretune/interpretune/issues/942)). A composition
 executing remotely (NDIF) has no local weights to tune, and one built with `dispatch=False` keeps its weights on the
 meta device; both are refused, each with its reason.
 
@@ -15,7 +15,7 @@ the map places them, so an address written for the core/HF or TransformerLens co
 same tensors here: `layers:-3: & component:attn.*` is the top three blocks' attention on each.
 
 The paths to fuller local nnsight tuning, such as tuning applied through nnsight's own tracing, are tracked in
-[interpretune#814](https://github.com/speediedan/interpretune/issues/814).
+[interpretune#814](https://github.com/interpretune/interpretune/issues/814).
 
 ## Remote (NDIF) tuning in bounded sessions
 
@@ -69,4 +69,4 @@ model, so such a chunk trained nothing. The mode is tested in process, through n
 separate process that holds its own copy of the model and returns only the saved values; it has not yet been run
 against NDIF itself.
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/interpretune/interpretune/issues/812).

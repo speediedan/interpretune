@@ -37,7 +37,7 @@ def _task(name, start, end, result="succeeded"):
 def _evidence_dir(root: Path, selected, failed=(), scope="selected") -> Path:
     """A build's ``it-phases`` directory as a build that predates the telemetry record published it."""
     manifest = {
-        "repository": "speediedan/interpretune",
+        "repository": "interpretune/interpretune",
         "revision": REV,
         "phase": "cuda",
         "scope": scope,

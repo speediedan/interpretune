@@ -58,7 +58,7 @@ Interpretune uses [uv](https://github.com/astral-sh/uv) for dependency managemen
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and create an out-of-tree venv (keeps parallel envs easy)
-git clone https://github.com/speediedan/interpretune.git && cd interpretune
+git clone https://github.com/interpretune/interpretune.git && cd interpretune
 export VENV_BASE=${HOME}/.venvs IT_TARGET_VENV=it_latest
 uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13
 source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
@@ -241,6 +241,6 @@ SAE-Lens among other frameworks, and is the author of research packages includin
 [finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler).
 
 **Contributors are enthusiastically welcomed!** The
-[IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place to
+[IT-MVP milestone](https://github.com/interpretune/interpretune/milestone/1) is the best place to
 find priority items and good first issues — thank you in advance for contributing to the
 open-source interpretability ecosystem.

@@ -57,7 +57,7 @@ Each recovery phase starts a fresh optimizer, and the plateau transition judges 
 ## What it has shown
 
 Three seeds on one 24 GB GPU, about 30 minutes each (results on
-[interpretune#899](https://github.com/speediedan/interpretune/issues/899)):
+[interpretune#899](https://github.com/interpretune/interpretune/issues/899)):
 
 - **The chain's order holds on every seed.** Each stage continues from the one before, as the separate-process chain
   it ports did.
@@ -82,15 +82,15 @@ Three seeds on one 24 GB GPU, about 30 minutes each (results on
 
 ## Open questions and follow-up work
 
-- [interpretune#988](https://github.com/speediedan/interpretune/issues/988): step-matched controls, a stopping rule
+- [interpretune#988](https://github.com/interpretune/interpretune/issues/988): step-matched controls, a stopping rule
   sized to its metric, sparsity-aware selection and per-epoch instruments. The rest of this list builds on it.
-- [interpretune#989](https://github.com/speediedan/interpretune/issues/989): how much of the decision moves into
+- [interpretune#989](https://github.com/interpretune/interpretune/issues/989): how much of the decision moves into
   attention routing under the penalty, with attention-aware attribution.
-- [interpretune#990](https://github.com/speediedan/interpretune/issues/990): stages by component, unit set, dictionary
+- [interpretune#990](https://github.com/interpretune/interpretune/issues/990): stages by component, unit set, dictionary
   order and penalty strength, rather than by layer band.
-- [interpretune#991](https://github.com/speediedan/interpretune/issues/991): graphs against J++ lens readouts at each
+- [interpretune#991](https://github.com/interpretune/interpretune/issues/991): graphs against J++ lens readouts at each
   layer.
-- [interpretune#992](https://github.com/speediedan/interpretune/issues/992): training informed by the premise and
+- [interpretune#992](https://github.com/interpretune/interpretune/issues/992): training informed by the premise and
   hypothesis spans that agree or contradict.
-- [interpretune#993](https://github.com/speediedan/interpretune/issues/993): dictionaries beyond fixed point
+- [interpretune#993](https://github.com/interpretune/interpretune/issues/993): dictionaries beyond fixed point
   transcoders.
