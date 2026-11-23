@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.org/en/latest/)
-[![codecov](https://codecov.io/gh/speediedan/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/speediedan/interpretune)
+[![codecov](https://codecov.io/gh/interpretune/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/interpretune/interpretune)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/interpretune/interpretune/blob/main/pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 
@@ -209,7 +209,7 @@ python -m gpu_epsilon.special_tests --lease --mark_type=profile_ci
 
 CI runs the full matrix (Linux/macOS/Windows CPU + a self-hosted GPU pipeline with
 CUDA/standalone/profiling phases); coverage is tracked on
-[codecov](https://codecov.io/gh/speediedan/interpretune). See `tests/README.md` for the testing
+[codecov](https://codecov.io/gh/interpretune/interpretune). See `tests/README.md` for the testing
 guide and `requirements/utils/lock_ci_requirements.sh` for CI-locked requirements regeneration.
 
 ## Contributing
