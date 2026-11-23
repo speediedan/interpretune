@@ -144,8 +144,14 @@ holds, are computed on the CPU as the model is built and kept through the placem
 way `from_pretrained` renames them, and a parameter tied to one the checkpoint supplies (an LM head tied to the
 embedding) needs no key of its own. Before reading anything, every rank refuses a checkpoint key that matches no model
 key and a parameter no key supplies, naming them, and a model whose checkpoint needs transformers' weight converters
-(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load. A Hub model's
-safetensors files are downloaded to the local cache first, on every rank.
+(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load, naming the
+converters that match a key of the checkpoint. A Hub model's safetensors files are downloaded to the local cache first,
+on every rank.
+
+A checkpoint already in the model's own layout, such as one written from `model.state_dict()`, loads with its own keys
+and no conversion, whatever the model's mapping would do to them. Its keys alone do not show the layout, because a
+converter can edit a tensor under its own key, so this holds only for a model whose hub layout has a key the model
+does not. For any other model with converters the conversion path decides, and the checkpoint is refused.
 
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
