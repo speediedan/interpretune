@@ -279,7 +279,7 @@ class TestFixtureNormalizationRules:
     def test_urls_and_plain_strings_pass_through(self):
         from tests.core.loader_equivalence import _normalize_env_paths
 
-        for value in ("https://github.com/speediedan/interpretune", "gpt2", "a\\literal\\backslash"):
+        for value in ("https://github.com/interpretune/interpretune", "gpt2", "a\\literal\\backslash"):
             assert _normalize_env_paths(value) == value
 
     def test_fixture_key_derives_posix_from_windows_shaped_path(self):

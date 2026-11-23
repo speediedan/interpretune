@@ -78,9 +78,9 @@ def main(argv):
         print(content)
     else:
         out.write_text(
-            "No package-like changes found in the req diff patch This is usually an artifact of "
-            "pip-compile logging changes and can be ignored but you may inspect the req diff patch in the "
-            "`regen-ci-req-report` workflow logs manually if desired."
+            "No package-like changes found in the req diff patch. This is usually an artifact of "
+            "pip-compile logging changes and can be ignored, but you may inspect the patch in the "
+            "`regen-pins-diff` artifact of the `regen-ci-req-report` run if desired."
         )
         print("No package-like changes found in patch")
     return 0

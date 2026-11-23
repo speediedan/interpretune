@@ -25,6 +25,8 @@ from interpretune.analysis.backends import (
     FLOWS,
     Capability,
     CaptureSupport,
+    GradientActivationResult,
+    GradientResult,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -43,6 +45,7 @@ from interpretune.analysis.backends import (
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
+from interpretune.analysis.backends.prefix_cache import carries_prefix_cache, prefix_cache_kwargs
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
 # Must be set before the first trace context is entered.
@@ -455,10 +458,17 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     measured in interpretune#630. An explicit all-ones mask is semantically
     identical to no mask (attend everything; the hook stands aside on all-ones
     masks exactly as it does when no mask is passed).
+
+    A prefix key/value cache (``past_key_values``, with ``use_cache`` and ``cache_position``) is passed on, as a fresh
+    copy for this invocation, so every forward a trace runs reads the prefix the caller handed it. Beside a cache no
+    mask is synthesized: one of the tokens' width would leave out the cached positions, and the model builds the mask
+    that covers them itself. A trace runs one cache, so it takes one invocation of a batch carrying one.
     """
     invoke_kwargs = {
         key: value for key, value in batch.items() if key in {"attention_mask", "position_ids", "token_type_ids"}
     }
+    cache_kwargs = prefix_cache_kwargs(batch)
+    invoke_kwargs.update(cache_kwargs)
     if "input" in batch:
         tokens = batch["input"]
     elif "input_ids" in batch:
@@ -469,7 +479,7 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
                 f"NNsight trace invocation requires 'input' or 'input_ids'; got batch keys: {sorted(batch.keys())}"
             )
         return tracer.invoke(**invoke_kwargs)
-    if "attention_mask" not in invoke_kwargs and isinstance(tokens, torch.Tensor):
+    if "attention_mask" not in invoke_kwargs and not cache_kwargs and isinstance(tokens, torch.Tensor):
         invoke_kwargs["attention_mask"] = torch.ones_like(tokens)
     return tracer.invoke(tokens, **invoke_kwargs)
 
@@ -1030,7 +1040,8 @@ class NNsightModelBackend:
             clear_contexts: Unused (present for protocol compatibility).
             configs_per_pass: Maximum number of configs to batch per execution context.
                 ``None`` falls back to the backend default; if that is also ``None``,
-                all configs are batched in one trace.
+                all configs are batched in one trace. A batch carrying a prefix key/value cache runs one config per
+                trace, each from the cache as handed.
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
@@ -1042,6 +1053,10 @@ class NNsightModelBackend:
         all_results: list[torch.Tensor] = []
         chunk_size = configs_per_pass if configs_per_pass is not None else self._configs_per_pass
         chunk_size = chunk_size or len(hook_configs)
+        if carries_prefix_cache(batch):
+            # nnsight merges the forward arguments of a trace's invocations into one call, so invocations sharing a
+            # trace would share one cache sized for a single copy of the batch: each config runs in a trace of its own
+            chunk_size = 1
 
         for chunk_start in range(0, len(hook_configs), chunk_size):
             chunk = hook_configs[chunk_start : chunk_start + chunk_size]
@@ -1313,13 +1328,15 @@ class NNsightModelBackend:
         readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        capture_activations: bool = False,
+    ) -> GradientResult | GradientActivationResult:
         """Apply interventions to the gradients at hook points inside NNsight's backward tracer.
 
         A baseline trace captures the gradients (and gives the hook shapes a raw payload is canonicalized against),
         then a second applies the edits: each site's ``.grad`` is read, folded through its specs and assigned back, so
         the edited gradient is the one that flows on. Gradients are requested in reverse forward order, the order the
-        backward pass produces them in. The activations a readout reads are read inside the same trace. With no
+        backward pass produces them in. The activations a readout reads are read inside the same trace, and with
+        ``capture_activations`` the baseline trace also saves the activation at each captured site. With no
         interventions only the baseline trace runs, and the edited gradients are the baseline ones.
         """
         readout = as_readout(readout)
@@ -1343,8 +1360,15 @@ class NNsightModelBackend:
             captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
         reads = resolve_readout_sites(readout, available)
 
-        pre_grads, value = self._traced_backward(
-            model, batch, readout, latent_model_handles, {}, [*sites, *captured_names], reads
+        pre_grads, value, activations = self._traced_backward(
+            model,
+            batch,
+            readout,
+            latent_model_handles,
+            {},
+            [*sites, *captured_names],
+            reads,
+            activations_at=captured_names if capture_activations else (),
         )
         if isinstance(interventions, InterventionDict):
             intervention_dict = interventions
@@ -1353,11 +1377,12 @@ class NNsightModelBackend:
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
         pre_grads = {name: pre_grads[name] for name in captured_names}
         if not intervention_dict:  # nothing to edit: a second trace would only repeat the first (gradient capture)
-            return pre_grads, dict(pre_grads), value
-        post_grads, _ = self._traced_backward(
-            model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
-        )
-        return pre_grads, post_grads, value
+            post_grads = dict(pre_grads)
+        else:
+            post_grads, _, _ = self._traced_backward(
+                model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
+            )
+        return (pre_grads, post_grads, value, activations) if capture_activations else (pre_grads, post_grads, value)
 
     def _traced_backward(
         self,
@@ -1368,9 +1393,11 @@ class NNsightModelBackend:
         specs: Mapping[str, Sequence[InterventionSpec]],
         capture: Sequence[str],
         reads: Mapping[str, str],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        activations_at: Sequence[str] = (),
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]:
         """One traced forward and backward pass applying ``specs`` to the gradient at each named site, returning
-        the gradients at ``capture`` (each after any edit at its own site) and the readout's value.
+        the gradients at ``capture`` (each after any edit at its own site), the readout's value, and the activation
+        at each site in ``activations_at`` (the forward pass is never edited, so it is the one every pass sees).
 
         A latent model's sub-hooks are the stage values its splice produces, so a site under an attached latent model is
         read from its splice and every other site from its envoy, all in forward order. ``reads`` maps each site the
@@ -1391,6 +1418,7 @@ class NNsightModelBackend:
         tokens = batch.get("input_ids", batch.get("input"))
         last_pos = int(torch.as_tensor(tokens).shape[-1] - 1)
         saved: dict[str, Any] = {}
+        saved_activations: dict[str, Any] = {}
 
         with torch.set_grad_enabled(True), model.trace() as tracer:
             with _invoke_trace(tracer, batch):
@@ -1406,6 +1434,8 @@ class NNsightModelBackend:
                         envoy = _navigate_envoy(model, resolved.module_path)
                         value = _read_envoy_activation(envoy, resolved)
                         proxies[name] = track_gradient(value) if name in graded else value
+                for name in activations_at:
+                    saved_activations[name] = _nnsight.save(proxies[name])
                 scalar = readout(model.output.logits, {key: proxies[name] for name, key in reads.items()})
                 saved_metric = _nnsight.save(scalar)
                 with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
@@ -1424,9 +1454,11 @@ class NNsightModelBackend:
 
         if missing := sorted(set(capture) - set(saved)):
             raise ValueError(f"no gradient was captured at {missing}; none of those names resolved to a traced site")
-        return {name: torch.as_tensor(saved[name]).detach().clone() for name in capture}, torch.as_tensor(
-            saved_metric
-        ).detach()
+        return (
+            {name: torch.as_tensor(saved[name]).detach().clone() for name in capture},
+            torch.as_tensor(saved_metric).detach(),
+            {name: torch.as_tensor(saved_activations[name]).detach().clone() for name in activations_at},
+        )
 
 
 # ==============================================================================

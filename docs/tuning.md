@@ -53,7 +53,7 @@ Tuning is one of several places Interpretune consumes venngram:
 - **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
   backends' native intervention ops or an analysis backend's feature interventions, and a support record derived from
   each backend's own refuses what it cannot express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
-  [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
+  [#905](https://github.com/interpretune/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
 - **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
   returned with its pinned reference for provenance), a local file or an inline mapping, so an experiment's treatment is
   shared as data rather than code.
@@ -239,9 +239,9 @@ and component and for latent models spliced by site address (`tests/core/test_cr
 | [core / HF](tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
 | [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | LoRA tensors from `lora_cfg` as `adapter:<name>` (see [LoRA adapters](tuning_transformer_lens.md#lora-adapters)); the rest as on its page |
 | [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
-| [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
-| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; remote compositions train session-created adapter or intervention tensors in [bounded remote sessions](tuning_nnsight.md#remote-ndif-tuning-in-bounded-sessions) instead; local paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) | |
-| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
+| [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/interpretune/interpretune/issues/942)) |
+| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; remote compositions train session-created adapter or intervention tensors in [bounded remote sessions](tuning_nnsight.md#remote-ndif-tuning-in-bounded-sessions) instead; local paths tracked in [#814](https://github.com/interpretune/interpretune/issues/814) | |
+| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/interpretune/interpretune/issues/813) |
 | [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view, which fits `(core, interp_engine)` with no override (measured by the adapter's tuning conformance); its circuit-tracer composition takes the circuit-tracer view | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 

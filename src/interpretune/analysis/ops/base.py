@@ -399,13 +399,23 @@ class ColCfg:
     sequence_type: bool = True  # Default to sequence type for most fields
     array_dtype: str | None = None  # Override for array fields, defaults to datasets_dtype
     default: Any = None  # Optional execution-time default used by AnalysisBatch scoped attribute resolution
+    # What the column's values name in the model they were computed on (a `SiteBinding`, a mapping or a list of either,
+    # held as a tuple), so a published store can be checked against another model. None: the column names no site.
+    site: Any = None
+
+    def __post_init__(self) -> None:
+        from interpretune.analysis.site_bindings import parse_site
+
+        object.__setattr__(self, "site", parse_site(self.site))
 
     def to_dict(self) -> dict:
         """Convert to JSON serializable dict."""
+        from interpretune.analysis.site_bindings import site_to_list
+
         result = {}
         for f in fields(ColCfg):
             val = getattr(self, f.name)
-            result[f.name] = val
+            result[f.name] = site_to_list(val) if f.name == "site" else val
         return result
 
     @classmethod
@@ -443,6 +453,7 @@ class ColCfg:
                 self.sequence_type,
                 self.array_dtype,
                 hashable_default,
+                self.site,
             )
         )
 
