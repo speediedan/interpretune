@@ -167,7 +167,10 @@ class TestClassMixins:
         assert it_m.model.transformer.h[0].attn.c_proj.weight.quant_type == "nf4"
         assert it_m.model.transformer.h[0].attn.c_proj.base_layer.compute_dtype == torch.bfloat16
         assert getattr(it_m.model.transformer.h[0].attn.c_proj, "lora_A", None) is not None
-        assert it_m.model.base_model.model.is_gradient_checkpointing
+        base = it_m.model.base_model.model
+        # transformers 5.24 renamed `is_gradient_checkpointing` and deprecated the old name
+        renamed = hasattr(base, "is_activation_checkpointing")
+        assert base.is_activation_checkpointing if renamed else base.is_gradient_checkpointing
 
     @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.5)
     @pytest.mark.parametrize(
@@ -688,3 +691,16 @@ class TestClassificationMixin:
         assert torch.equal(label_ids, torch.tensor([10, 20, 30, 10], device=module.device))
         assert returned_labels.device == module.device
         assert torch.equal(returned_labels, labels.to(module.device))
+
+
+def test_enable_activation_checkpointing_uses_current_name(recwarn):
+    """Activation checkpointing is enabled without transformers 5.24's warning for the deprecated name."""
+    from transformers import GPT2Config, GPT2LMHeadModel
+
+    from interpretune.base.components.mixins import enable_activation_checkpointing
+
+    model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_head=2, n_embd=8, vocab_size=16, n_positions=8))
+    enable_activation_checkpointing(model)
+    renamed = hasattr(model, "is_activation_checkpointing")
+    assert model.is_activation_checkpointing if renamed else model.is_gradient_checkpointing
+    assert not [w for w in recwarn.list if "checkpointing_enable` is deprecated" in str(w.message)]
