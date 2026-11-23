@@ -37,9 +37,11 @@ from interpretune.protocol import (
     LatentModelFqn,
     AnalysisCfgProtocol,
     StrOrPath,
+    batch_protocol_fields,
 )
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
+from interpretune.analysis.store_dtypes import latent_model_column_dtype, validate_declared_dtype
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
 
@@ -327,7 +329,7 @@ def schema_to_features(
         if col_cfg.intermediate_only:
             continue
 
-        dtype = col_cfg.array_dtype or col_cfg.datasets_dtype
+        dtype = validate_declared_dtype(col_name, col_cfg.array_dtype or col_cfg.datasets_dtype)
 
         # Handle per-latent-model hook fields first
         if col_cfg.per_latent_model_hook:
@@ -343,7 +345,8 @@ def schema_to_features(
                         sae_features[hook_key] = DatasetsSequence(Value(dtype=dtype))
                     else:
                         sae_features[hook_key] = Array2D(
-                            shape=(None, handle.cfg.d_sae), dtype=handle.cfg.dtype or default_dtype
+                            shape=(None, handle.cfg.d_sae),
+                            dtype=latent_model_column_dtype(handle.cfg.dtype, default=default_dtype),
                         )
             features_dict[col_name] = sae_features
             continue
@@ -460,7 +463,11 @@ def analysis_store_from_batches(
         from interpretune.analysis.backends import resolve_analysis_backend
 
         analysis_backend = resolve_analysis_backend(analysis_backend)
-    it_format_kwargs = {"analysis_backend": analysis_backend} if analysis_backend is not None else None
+    # The column configs travel with the store, as on the runner's path: without them a reader cannot undo a
+    # dynamic-dimension swap or rebuild a per-latent mapping, and a pushed envelope records no col_cfg to re-attach.
+    it_format_kwargs: dict[str, Any] = {"col_cfg": {name: cfg.to_dict() for name, cfg in output_schema.items()}}
+    if analysis_backend is not None:
+        it_format_kwargs["analysis_backend"] = analysis_backend
     return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
 
 
@@ -480,7 +487,9 @@ class AnalysisStore:
             column, and positional access is refused, since a stream has no positions to index.
         stack_batches: stack per-batch tensors into a single tensor on access rather than returning
             them per batch -- convenient for analysis, wrong when batches have ragged shapes.
-        protocol_cls: the batch protocol describing the columns, which fixes how rows decode.
+        protocol_cls: the batch protocol naming the columns that get attribute access (``store.<name>``), its bases'
+            fields included; a declared column the store does not hold reads as None. Rows decode through the op
+            schema (``it_format_kwargs['col_cfg']``), not the protocol.
     """
 
     # The loaded single-split dataset, or None while the store is built incrementally. A path or a
@@ -781,8 +790,8 @@ class AnalysisStore:
         if name in ("dataset", "stream", "_protocol_cls"):
             raise AttributeError(name)
         source = self.stream if self.stream is not None else self.dataset
-        # First check if it's a protocol-defined column
-        if name in self._protocol_cls.__annotations__:
+        # First check if it's a protocol-defined column (inherited fields included)
+        if name in batch_protocol_fields(self._protocol_cls):
             # Check if the column actually exists in the dataset
             if source is not None and name in (getattr(source, "column_names", None) or []):
                 return self[name]

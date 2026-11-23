@@ -200,9 +200,9 @@ This is the pattern the planned circuit-tracer cross-backend composition demo wi
 
 ## Current Limitations
 
-- **Lightning integration** — `AnalysisRunner` extends `SessionRunner` (core framework). Running analysis workflows through a Lightning `Trainer` is not yet supported.
+- **Lightning integration is partial:** `AnalysisRunner` extends `SessionRunner` (core framework). A Lightning-composed module with an `analysis_cfg` runs its analysis step under a `Trainer`: `Trainer.predict` routes each batch through the configured step (manual, or generated from the op) and returns its per-batch outputs, and `Trainer.test` runs the same setup while its batches still go through the module's own `test_step`. With `interpretune.adapters.lightning.AnalysisStoreCallback` in the `Trainer`'s callbacks, `Trainer.predict` also writes those rows as the analysis config's `AnalysisStore`, as `AnalysisRunner.run_analysis` does: the op's output features and format, `output_store.save_dir`, `output_store.dataset`, and the `on_analysis_start` and `on_analysis_end` hooks around the run. It runs in one process, and it holds a run's rows in host memory until the run ends, where the core loop streams them to the store. A module with no analysis op, a multi-process predict and a run that yields no rows are refused by name. Streaming, distributed runs and analysis checkpointing under a `Trainer` are tracked in [#211](https://github.com/speediedan/interpretune/issues/211).
 - **Single-process only** — Analysis loops do not support distributed execution.
-- **Core-only hooks** — Analysis hooks (`on_analysis_start`, etc.) are only fired by the core runner, not by Lightning callbacks.
+- **Analysis hooks under Lightning:** `AnalysisStoreCallback` fires `on_analysis_start` and `on_analysis_end` around a predict run. `on_analysis_epoch_end` fires only in the core runner.
 
 ## Related Documents
 

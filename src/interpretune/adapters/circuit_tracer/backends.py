@@ -762,10 +762,10 @@ class CircuitTracerAnalysisBackend:
         """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
 
         A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
-        same way as the edges together. The nnsight backend alone can do this, and circuit-tracer refuses others by
-        name, along with a layer no path into the target passes.
+        same way as the edges together. Circuit-tracer selects the backend's implementation and refuses unsupported
+        backends, along with a layer no path into the target passes.
         """
-        from circuit_tracer.attribution.head_loadings_nnsight import head_loadings
+        from circuit_tracer.attribution.head_loadings import head_loadings
 
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
@@ -814,9 +814,13 @@ class CircuitTracerAnalysisBackend:
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
         model = module.replacement_model
-        with attribution_frozen(model, module):
+        # A backend with permanent replacement hooks supplies a context that suspends them. Trace-scoped hooks
+        # are already inactive outside their trace, so the underlying causal LM needs no suspension there.
+        real_model = getattr(model, "real_model", None)
+        causal_lm_context = real_model() if real_model is not None else contextlib.nullcontext(model._module)
+        with attribution_frozen(model, module), causal_lm_context as causal_lm:
             report = head_conductance(
-                model._module,  # the raw causal LM: conductance hooks its modules directly and reads its logits
+                causal_lm,
                 model.ensure_tokenized(prompt_from),
                 model.ensure_tokenized(prompt_to),
                 torch.as_tensor(target_weights),

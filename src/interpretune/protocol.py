@@ -880,6 +880,16 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     prompts: list[str] | None
 
 
+def batch_protocol_fields(protocol_cls: type) -> frozenset[str]:
+    """The field names a batch protocol declares, its bases' included.
+
+    A class's own ``__annotations__`` holds only the fields that class declares, so reading it alone drops every
+    inherited field: a protocol extending the default would lose ``prompts``, ``preds`` and the rest. The names are
+    collected over the MRO instead, with ``inspect.get_annotations`` per class, which never evaluates them.
+    """
+    return frozenset(name for cls in protocol_cls.__mro__ for name in inspect.get_annotations(cls))
+
+
 class ClassificationModuleProtocol(Protocol):
     """The module surface classification loss helpers use: a loss callable and logit standardization."""
 
