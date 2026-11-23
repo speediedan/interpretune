@@ -163,17 +163,16 @@ framework adapter:
 | Top-level op wrappers (`it.concept_direction(...)`) | Core only | Lazy `OpWrapper` proxies registered on the `interpretune` module |
 
 All four entry points ultimately call the configured `AnalysisCfg.op(...)`.
-A Lightning `Trainer` runs a composition's analysis step through `predict` and `test`, but it does not build an
-`AnalysisStore` from the outputs yet. Basic `AnalysisStore` construction under a `Trainer` is planned for the
-alpha and tracked in [#211](https://github.com/interpretune/interpretune/issues/211) (see the limitations
-below).
+A Lightning `Trainer` runs a composition's analysis step through `predict` and `test`. With
+`interpretune.adapters.lightning.AnalysisStoreCallback` in its callbacks, `Trainer.predict` also writes the rows as the
+`AnalysisStore` (see [Analysis Runner Usage](analysis_runner_usage.md)).
 
 See [Analysis Runner Usage](analysis_runner_usage.md) for detailed API documentation
 and notebook usage patterns.
 
 ## Current Limitations
 
-- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, but nothing builds an `AnalysisStore` from them yet, and the analysis hooks fire only in the core runner (see [Analysis Runner Usage](analysis_runner_usage.md)). Basic `AnalysisStore` construction under a `Trainer` remains to be implemented, tracked in [#211](https://github.com/interpretune/interpretune/issues/211).
+- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, and `interpretune.adapters.lightning.AnalysisStoreCallback` writes an `AnalysisStore` from a single-process `predict`. Streaming the rows to the store, distributed analysis runs, analysis checkpointing and the per-epoch analysis hook under a `Trainer` remain to be implemented, tracked in [#211](https://github.com/interpretune/interpretune/issues/211) (see [Analysis Runner Usage](analysis_runner_usage.md)).
 - **Analysis loops run in one process.** The core training and test loops take a distributed placement (`ddp`, `fsdp2` or `tp`; see [Data-parallel training on the core loop](core_loop_data_parallel.md)), but the analysis loop does not.
 - **Core callbacks are minimal**: The core loop exposes step, validation-end and epoch boundaries and checkpoint state, but ships no ready-made early-stopping or checkpointing callbacks; Lightning provides those.
 

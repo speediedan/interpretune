@@ -67,6 +67,52 @@ Its role is deliberately narrow:
 
 This means the formatter is not a serialization escape hatch. It does not deserialize opaque Python objects from opaque blobs. It only tensorizes data that Arrow already knows how to decode, and any richer object hydration has to start from those primitive decoded fields.
 
+### Dtype fidelity
+
+A column's dtype is the one its schema declares (`array_dtype`, else `datasets_dtype`). What a reader gets back is
+that dtype, with the values and shape that were written, from all three readers: the store in memory (Arrow),
+`pull_analysis_store` (Parquet, eager) and `pull_analysis_store(streaming=True)` (Parquet, streamed). The table is
+measured over scalar, sequence, 2-D (`Array2D`) and ragged 3-D (nested sequence) columns, and
+`tests/core/test_analysis_store_dtype_fidelity.py` fails if any row changes.
+
+| Declared dtype | Parquet holds | A reader gets |
+| --- | --- | --- |
+| `bool` | `boolean` | `torch.bool` |
+| `int8`, `int16`, `int32`, `int64` | the same integer width | `torch.int8`, `torch.int16`, `torch.int32`, `torch.int64` |
+| `uint8` | `uint8` | `torch.uint8` |
+| `float16` | `halffloat` | `torch.float16` |
+| `float32` | `float` | `torch.float32` |
+| `float64` | `double` | `torch.float64` |
+| `bfloat16` | refused when the schema is built, naming the column: Arrow has no bfloat16 type | |
+
+A **bfloat16 tensor** is written to a `float32` column, which holds every bfloat16 value exactly; it reads back as
+`float32`. A latent-model column (`per_latent_model_hook`) takes its dtype from the latent model's config, and a
+latent model loaded in bfloat16 gets `float32` columns for the same reason.
+
+**Writing a tensor of another dtype** into a column is accepted when casting it to the column's dtype and back
+reproduces every value. A float rounded to a narrower declared float is also accepted, with a warning naming the
+column once per dtype pair: a schema's float dtype is the precision its op stores, and a model run in float64
+produces float64 values for the bundled ops' float32 columns. Anything else is refused with `StoreDtypeError`, which
+names the column, both dtypes and the first value the cast would change. The check runs in `AnalysisOp.process_batch`, which both writers go through (the
+runner's generator and `analysis_store_from_batches`). Measured examples, where "before" is what a store held without
+the check:
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| bfloat16, float16, int8, int16, uint8 or bool into `float32` | values exact | accepted |
+| float64 into `float32`, float32 into `float16` | values rounded, silently | rounded, with a warning naming the column |
+| a float past the declared float's range (1e5 into `float16`) | stored as `inf`, silently | refused |
+| float into `int64` or `int32` | fractions truncated, silently (a generic Arrow error for a 2-D column from the runner) | refused, unless every value is integral |
+| int32 or int64 into `float32` | values past $2^{24}$ rounded, silently, in a scalar column; a generic Arrow error in other shapes | refused, unless every value survives |
+| int64 into `int32` | a generic Arrow overflow error | refused, naming the column |
+| anything but 0 and 1 into `bool` | every non-zero value stored as `True`, silently | refused |
+
+Two reads narrowed silently before this table was measured, and no longer do: a `float64` column read back as
+`float32` (rounding every value, from every reader), and `float16`, `int8`, `int16`, `int32` and `uint8` columns read
+back as `float32` or `int64`. A store written by `analysis_store_from_batches` also carried no column configs, so a
+`dyn_dim` column read back with its dimensions still swapped and its pushed envelope recorded no `col_cfg`; it now
+carries them, as the runner's stores do.
+
 ### AnalysisStore access
 
 [AnalysisStore](../src/interpretune/analysis/core.py#L348) wraps a dataset and always reads it back through the `interpretune` formatter.
@@ -191,17 +237,44 @@ Alongside those two, the `interpretune` block carries what a reader needs to reb
 | `col_cfg` | the serialized per-column config the formatter is re-attached from | never |
 | `analysis_backend` | a registered backend **name**, not an instance | no backend attached |
 | `protocol_cls` | the batch protocol's import path, when an op declared a non-default one | it is the default |
+| `protocol_fields` | the field names that protocol declares, its bases' included | it is the default |
 
-All three record a **portable reference resolved on the way back**, never a live object. And all three
-are recorded at write time rather than reconstructed at read time, for the reason op-collection
-provenance is: what a name resolves to later is not necessarily what produced the store.
+The first three record a **portable reference resolved on the way back**, never a live object;
+`protocol_fields` records the protocol's attribute surface as plain data. All four are recorded at
+write time rather than reconstructed at read time, for the reason op-collection provenance is: what a
+name resolves to later is not necessarily what produced the store.
 
 `protocol_cls` closes a gap where a store pushed with a custom protocol came back with the default —
 the columns were intact, but the attribute surface the protocol exists to provide was silently absent.
 Pulling a store resolves `protocol_cls` only from `interpretune` or from a hub component module already
 loaded through the remote-code gate, since importing a path runs its module. Anything else, or a path
-that does not name a batch protocol, is **refused by name**: serving the default in its place is
-exactly the failure recording the protocol is meant to prevent.
+that does not name a batch protocol, is **refused**: serving the default in its place is exactly the
+failure recording the protocol is meant to prevent.
+
+#### Reading a store without its producer's code
+
+A protocol decides only which columns get attribute access (`store.preds`); every column reads and
+decodes through `col_cfg`, which is data. So a reader who wants a third-party store's columns without
+trusting its op collection asks for that explicitly:
+
+```python
+store = it.hub.pull_analysis_store("someone/store", protocol="schema")
+store["preds"]  # decoded exactly as in a resolved pull
+store.preds     # attribute access from the recorded protocol_fields
+```
+
+`protocol="schema"` imports nothing. The store gets a stand-in protocol declaring the names in
+`protocol_fields`, so attribute access matches a resolved pull, a declared column the store lacks
+included (it reads as None). The stand-in carries `recorded_protocol` (the path the envelope names)
+and `fields_from`. An envelope written before `protocol_fields` existed gets the store's own columns
+as its fields (`fields_from == "columns"`), so there a declared column the store lacks raises
+`AttributeError` instead. What a schema read gives up is the protocol's own methods, if it defines any.
+The default, `protocol="resolve"`, never falls back to a schema read: a caller always gets the
+reduced surface by asking for it.
+
+Re-publishing a schema-read store records the original `protocol_cls` path and fields, not the
+stand-in's. For discovery before any pull, `describe_analysis_store` returns the cached envelope
+(`col_cfg`, `protocol_cls`, `protocol_fields`, `subject`) without the network.
 
 ### Schema versioning policy
 

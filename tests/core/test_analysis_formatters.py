@@ -332,8 +332,8 @@ class TestITAnalysisFormatter:
         """Test that parent TorchFormatter._tensorize is called."""
         formatter = ITAnalysisFormatter()
 
-        # Test with a numpy array that should be converted to tensor
-        np_array = np.array([1.0, 2.0, 3.0])
+        # A float32 array takes TorchFormatter's path (float64 keeps its dtype on the formatter's own path)
+        np_array = np.array([1.0, 2.0, 3.0], dtype=np.float32)
 
         # Mock the parent method to verify it's called
         with patch(

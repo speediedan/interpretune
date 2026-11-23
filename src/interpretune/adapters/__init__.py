@@ -16,6 +16,7 @@ _LAZY_ADAPTER_ATTRS = {
     "LightningAdapter": "interpretune.adapters.lightning.LightningAdapter",
     "LightningDataModule": "interpretune.adapters.lightning.LightningDataModule",
     "LightningModule": "interpretune.adapters.lightning.LightningModule",
+    "AnalysisStoreCallback": "interpretune.adapters.lightning.AnalysisStoreCallback",
     # TransformerLens
     "TransformerLensAdapter": "interpretune.adapters.transformer_lens.adapter.TransformerLensAdapter",
     "ITLensModule": "interpretune.adapters.transformer_lens.adapter.ITLensModule",

@@ -19,7 +19,10 @@ exactly which file it would execute without executing anything.
 One envelope field names code: an AnalysisStore's `protocol_cls`, the import path of the batch
 protocol it was written with. Pulling a store resolves it only from `interpretune` itself or from a
 hub component module this process has already loaded through the gate below, so it never imports
-anything new. Any other path is refused by name, rather than replaced with the default protocol.
+anything new. Any other path is refused, rather than replaced with the default protocol. To read
+such a store's columns without trusting its producer, pull it with `protocol="schema"`: nothing is
+imported, and attribute access comes from the field names the envelope records (see
+[AnalysisStore serialization](analysis_store_serialization.md)).
 
 Three paths execute publisher-authored Python in your process, and all three are gated:
 
