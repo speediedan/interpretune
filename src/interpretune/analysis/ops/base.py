@@ -11,6 +11,7 @@ import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.protocol import BaseAnalysisBatchProtocol
+from interpretune.analysis.store_dtypes import check_storable
 
 # Cross-backend batch key aliases. Different backends store tokenized input under different keys:
 # TransformerLens (HookedTransformer) uses 'input', HuggingFace/NNsight uses 'input_ids'.
@@ -869,6 +870,13 @@ class AnalysisOp:
                             # Keep the original value if it's not in the expected per-latent format
                             serialized_dict[hook_name] = latent_dict
                     setattr(analysis_batch, col_name, serialized_dict)
+
+            # A latent-model hook column takes its dtype from the latent model, not from this declaration, and a
+            # non-tensor column is not cast; every other column must hold what it is given without changing it.
+            if not (col_cfg.non_tensor or col_cfg.per_latent_model_hook):
+                check_storable(
+                    col_name, getattr(analysis_batch, col_name), col_cfg.array_dtype or col_cfg.datasets_dtype
+                )
 
         return analysis_batch
 
