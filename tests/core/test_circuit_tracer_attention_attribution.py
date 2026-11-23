@@ -29,6 +29,7 @@ from tests.core.circuit_tracer_toy import (
     TOY_PROMPT,
     BaseModelBackendStandIn,
     only_token_zero_special,
+    tiny_gemma2_backend_twins,
     tiny_gemma2_replacement_model,
 )
 
@@ -285,3 +286,73 @@ class TestTheTopLevelOps:
         object.__setattr__(module, "_analysis_backend", _NoHeads())
         with pytest.raises(Exception, match="head_attribution"):
             it.head_loadings(module, None, None, 0, prompt=TOY_PROMPT, head_target=torch.tensor([3]))
+
+
+class TestTheInterpEngineBackend:
+    """The same techniques on circuit-tracer's interp_engine backend give the nnsight backend's answers on the same
+    weights.
+
+    Each comparison has a control: the two models' logits agree (so the weights really are shared), and a
+    patterns-live graph differs from the frozen one (so agreeing is not two backends ignoring the regime).
+    """
+
+    @pytest.fixture(scope="class")
+    def twins(self):
+        nnsight, interp_engine = tiny_gemma2_backend_twins()
+        with only_token_zero_special(nnsight):
+            yield nnsight, interp_engine
+
+    def test_the_twins_share_their_weights(self, twins):
+        nnsight, interp_engine = twins
+        with torch.no_grad():
+            expected = nnsight._module(TOY_PROMPT.unsqueeze(0)).logits
+            logits = interp_engine.forward(TOY_PROMPT)
+        torch.testing.assert_close(logits, expected)
+
+    def test_a_live_regime_reaches_the_graph(self, twins):
+        _, interp_engine = twins
+        module = _ct_module(interp_engine)
+        frozen, live = _graph_batch(module), _graph_batch(module, freeze_attention=False)
+        assert json.loads(frozen.graph_attribution_regime_json) == FROZEN
+        assert json.loads(live.graph_attribution_regime_json) == LIVE
+        assert not torch.equal(frozen.adjacency_matrix, live.adjacency_matrix)
+
+    @pytest.mark.parametrize("regime", [FROZEN, LIVE], ids=["frozen", "patterns_live"])
+    def test_head_loadings_match_the_nnsight_backend(self, twins, regime):
+        nnsight, interp_engine = twins
+        shares = [
+            head_loadings_impl(
+                _ct_module(model), AnalysisBatch(), None, 0, prompt=TOY_PROMPT, head_target=torch.tensor([3]), **regime
+            )
+            for model in (nnsight, interp_engine)
+        ]
+        torch.testing.assert_close(shares[1].head_loading_shares, shares[0].head_loading_shares, atol=1e-5, rtol=1e-4)
+        torch.testing.assert_close(
+            shares[1].head_loading_bypass_shares, shares[0].head_loading_bypass_shares, atol=1e-5, rtol=1e-4
+        )
+        assert shares[1].head_loading_shares.abs().max() > 1e-3, "no head carries anything"
+
+    @pytest.mark.parametrize("backend_name", ["interp_engine", "a_third_party_backend"])
+    def test_head_conductance_runs_on_the_real_model(self, twins, monkeypatch, backend_name):
+        nnsight, interp_engine = twins
+        # Suspending permanent hooks is a backend capability, independent of its registered name.
+        monkeypatch.setattr(interp_engine, "backend", backend_name)
+        weights = torch.zeros(interp_engine.cfg.d_vocab)
+        weights[3], weights[8] = 1.0, -1.0
+        reports = [
+            head_conductance_impl(
+                _ct_module(model),
+                AnalysisBatch(),
+                None,
+                0,
+                prompt=TOY_PROMPT,
+                counterfactual_prompt=TestHeadConductance.SWAPPED,
+                target_weights=weights,
+                n_steps=4,
+            )  # fmt: skip
+            for model in (nnsight, interp_engine)
+        ]
+        for name in ("head_conductance_qk", "head_conductance_ov", "head_conductance_resid"):
+            torch.testing.assert_close(getattr(reports[1], name), getattr(reports[0], name), atol=1e-5, rtol=1e-4)
+        # the replacement model is itself again afterwards: its frozen attention is selected, not eager
+        assert interp_engine.hf_model.config._attn_implementation != "eager"

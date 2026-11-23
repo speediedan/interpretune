@@ -73,11 +73,13 @@ explained 94% of that read's response (measurements on #660).
 ### Attention in attribution: regimes and head reports
 
 An attribution graph holds attention patterns constant by default, so it credits no node for changing where attention
-looks, and an edge does not say which head carried it. Three things address that, and only the nnsight model-level
-adapter, `(core, nnsight, circuit_tracer)`, currently supports them. Support for the
-[TransformerLens adapter](https://github.com/speediedan/interpretune/issues/932) and for
-[interp-engine](https://github.com/speediedan/interpretune/issues/933) are future follow-ups, to be taken up once the
-nnsight version has matured.
+looks, and an edge does not say which head carried it. Three things address that, and two compositions support them:
+the nnsight model-level adapter, `(core, nnsight, circuit_tracer)`, and the interp-engine composition, whose
+circuit-tracer backend is `interp_engine`. On the same weights the two give the same graphs, head loadings and head
+conductance in every regime. Support for the
+[TransformerLens adapter](https://github.com/speediedan/interpretune/issues/932) waits on circuit-tracer's
+TransformerLens backend importing under TransformerLens 4
+([interpretune#223](https://github.com/speediedan/interpretune/issues/223)).
 
 **A graph with live patterns.** `compute_attribution_graph` takes `freeze_attention` and `freeze_norms`, both `True` by
 default, from a call or from `CircuitTracerConfig`. With either set to `False`, an edge is no longer an exact direct
@@ -96,6 +98,8 @@ $$
 
 so a positive share pushes the same way as the edges together, and at every layer the shares and the bypass share sum
 to 1, within `head_loading_partition_errors`. It accepts the same two regime options. Skip transcoders are covered.
+On the interp-engine composition a target read at an intermediate block or at a position other than the last is refused,
+as its attribution graphs refuse one.
 
 **Head conductance: credit for a measured change between two prompts.** A graph is local, so it does not give credit
 that adds up across a discrete change such as a name swap. `head_conductance` does, on the real model with no
@@ -106,7 +110,8 @@ and every head's pattern (QK) and value (OV) parts sum to $T(1) - T(0)$, up to t
 $1/K^2$ in the step count `n_steps`, so check it before reading a result. A path that moves sharply needs many more
 steps than the default. `head_conductance_first_order` is what a linearization at the first prompt predicts.
 `key_positions` also reports how much of each head's parts goes through those positions. It needs a model on the eager
-attention implementation.
+attention implementation. On the interp-engine composition it runs inside the replacement model's `real_model()`,
+which selects eager attention and sets the transcoder and freeze hooks aside for the call.
 
 ## Backend Support
 
