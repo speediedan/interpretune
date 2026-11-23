@@ -8,7 +8,7 @@ helpers rather than instantiating them directly.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, TypeAlias, overload, runtime_checkable
 
 import torch
 
@@ -20,6 +20,13 @@ from interpretune.analysis.backends.capabilities import (
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
 from interpretune.analysis.backends.readouts import Readout
 from interpretune.protocol import NamesFilter
+
+# `bwd_w_intervention`'s result: the gradients at each captured site from the baseline and the intervened pass, and
+# the readout's value; with `capture_activations`, also the activation at each captured site.
+GradientResult: TypeAlias = tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]
+GradientActivationResult: TypeAlias = tuple[
+    dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]
+]
 
 
 @runtime_checkable
@@ -606,6 +613,7 @@ class SupportsGradientIntervention(Protocol):
     site upstream of an edit sees the edit's effect, and the forward pass (and therefore the readout) is unchanged.
     """
 
+    @overload
     def bwd_w_intervention(
         self,
         model: Any,
@@ -614,7 +622,32 @@ class SupportsGradientIntervention(Protocol):
         readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        capture_activations: Literal[False] = False,
+    ) -> GradientResult: ...
+
+    @overload
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        readout: Readout | Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+        *,
+        capture_activations: Literal[True],
+    ) -> GradientActivationResult: ...
+
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        readout: Readout | Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+        capture_activations: bool = False,
+    ) -> GradientResult | GradientActivationResult:
         """Run two forward and backward passes and return the gradients at the capture sites from each.
 
         1. **Baseline**: the gradients of ``readout``, with nothing edited.
@@ -636,10 +669,15 @@ class SupportsGradientIntervention(Protocol):
                 captures the intervention sites. A captured intervention site reports the gradient after its edit,
                 which is the one that flows on.
             latent_model_handles: Latent models to attach, so their sub-hooks can be edited or captured.
+            capture_activations: Also return the activation at each captured site, read in the baseline pass. The
+                forward pass is never edited, so it is the activation both passes see, and a gradient-times-activation
+                attribution needs no separate forward pass to get it.
 
         Returns:
             ``(pre_grads, post_grads, value)``: the gradients at every captured site keyed by concrete hook name, from
-            the baseline and the intervened pass, and the readout's value (the forward pass is the same in both).
+            the baseline and the intervened pass, and the readout's value (the forward pass is the same in both). With
+            ``capture_activations``, ``(pre_grads, post_grads, value, activations)``, the activations keyed as the
+            gradients are.
         """
         ...
 
