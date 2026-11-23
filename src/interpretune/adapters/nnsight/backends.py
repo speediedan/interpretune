@@ -43,6 +43,7 @@ from interpretune.analysis.backends import (
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
+from interpretune.analysis.backends.prefix_cache import carries_prefix_cache, prefix_cache_kwargs
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
 # Must be set before the first trace context is entered.
@@ -455,10 +456,17 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     measured in interpretune#630. An explicit all-ones mask is semantically
     identical to no mask (attend everything; the hook stands aside on all-ones
     masks exactly as it does when no mask is passed).
+
+    A prefix key/value cache (``past_key_values``, with ``use_cache`` and ``cache_position``) is passed on, as a fresh
+    copy for this invocation, so every forward a trace runs reads the prefix the caller handed it. Beside a cache no
+    mask is synthesized: one of the tokens' width would leave out the cached positions, and the model builds the mask
+    that covers them itself. A trace runs one cache, so it takes one invocation of a batch carrying one.
     """
     invoke_kwargs = {
         key: value for key, value in batch.items() if key in {"attention_mask", "position_ids", "token_type_ids"}
     }
+    cache_kwargs = prefix_cache_kwargs(batch)
+    invoke_kwargs.update(cache_kwargs)
     if "input" in batch:
         tokens = batch["input"]
     elif "input_ids" in batch:
@@ -469,7 +477,7 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
                 f"NNsight trace invocation requires 'input' or 'input_ids'; got batch keys: {sorted(batch.keys())}"
             )
         return tracer.invoke(**invoke_kwargs)
-    if "attention_mask" not in invoke_kwargs and isinstance(tokens, torch.Tensor):
+    if "attention_mask" not in invoke_kwargs and not cache_kwargs and isinstance(tokens, torch.Tensor):
         invoke_kwargs["attention_mask"] = torch.ones_like(tokens)
     return tracer.invoke(tokens, **invoke_kwargs)
 
@@ -1030,7 +1038,8 @@ class NNsightModelBackend:
             clear_contexts: Unused (present for protocol compatibility).
             configs_per_pass: Maximum number of configs to batch per execution context.
                 ``None`` falls back to the backend default; if that is also ``None``,
-                all configs are batched in one trace.
+                all configs are batched in one trace. A batch carrying a prefix key/value cache runs one config per
+                trace, each from the cache as handed.
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
@@ -1042,6 +1051,10 @@ class NNsightModelBackend:
         all_results: list[torch.Tensor] = []
         chunk_size = configs_per_pass if configs_per_pass is not None else self._configs_per_pass
         chunk_size = chunk_size or len(hook_configs)
+        if carries_prefix_cache(batch):
+            # nnsight merges the forward arguments of a trace's invocations into one call, so invocations sharing a
+            # trace would share one cache sized for a single copy of the batch: each config runs in a trace of its own
+            chunk_size = 1
 
         for chunk_start in range(0, len(hook_configs), chunk_size):
             chunk = hook_configs[chunk_start : chunk_start + chunk_size]

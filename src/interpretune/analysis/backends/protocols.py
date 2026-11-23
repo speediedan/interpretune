@@ -299,6 +299,12 @@ class ModelBackendCore(Protocol):
     its own handle and reach it from these methods, because nothing else will pass it in. This was unstated
     until the first third-party adapter left the HF model in the slot, kept its engine handle elsewhere, and
     found its ops receiving a handle its wrapper could not take.
+
+    **A batch may carry a prefix key/value cache** (``past_key_values``, with ``use_cache`` and ``cache_position``),
+    so a trace runs only the tokens it scores and reads the rest of the sequence from the cache. A backend either runs
+    every forward of every method from the cache as the caller handed it, or refuses the batch by name
+    (:func:`~interpretune.analysis.backends.prefix_cache.refuse_prefix_cache`). It never drops the cache: the tokens
+    would then run without their context and return plausible, wrong values.
     """
 
     @property
