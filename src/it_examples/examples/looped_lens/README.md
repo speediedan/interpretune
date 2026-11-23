@@ -13,6 +13,7 @@ visit, the output format of NDIF's Looped Lens Challenge.
 | `looped_lens_runtime.py` | the runtime: book to site table (venngram), local reads by forward hooks (torch and transformers), remote reads on NDIF (the nnsight client) |
 | `looped_lens_ops.py`, `looped_lens_ops.yaml` | the `looped_lens_read` op (alias `looped_lens`) |
 | `ARTIFACTS.md` | the checkpoint head and the trained translators: what they are and where they come from |
+| `model_specs.yaml` | interpretune session specs for Inkling 2 Mini, on NDIF and locally |
 
 ## Readouts
 
@@ -46,22 +47,41 @@ leave-one-family-out picks).
 
 ## Use
 
-```python
-import interpretune as it  # with this directory on IT_ANALYSIS_OP_PATHS
-from interpretune.analysis.ops.base import AnalysisBatch
+The model specs in `model_specs.yaml` build an interpretune session for Inkling 2 Mini: `inkling2.mini_ndif` reads on
+NDIF with no local weights, `inkling2.mini` loads the weights locally.
 
-# `module.model` is Inkling 2 Mini (HF, or an nnsight wrapper for NDIF); `batch` carries input_ids, attention_mask
-out = it.looped_lens_read(
-    module, AnalysisBatch(), batch, 0,
-    looped_lens_table="books/inkling2_mini_icv_coda_remote_k10_n6.yaml",
-    looped_lens_map="<venngram checkout>/inkling2_mini.yaml",
-)
+```python
+import os
+
+os.environ["IT_ANALYSIS_OP_PATHS"] = "<this directory>"  # before interpretune is imported
+import torch
+import interpretune as it
+from interpretune.analysis.ops.base import AnalysisBatch
+from interpretune.harness.sessions import experiment_session
+
+with experiment_session(
+    "runs", "looped_lens", model_family="inkling2", model_variant="mini_ndif", model_specs="model_specs.yaml"
+) as (session, module, tokenizer):
+    ids = tokenizer("The Great Pyramid of Giza is in the country of", add_special_tokens=False)["input_ids"]
+    batch = {"input_ids": torch.tensor([ids]), "attention_mask": torch.ones(1, len(ids), dtype=torch.long)}
+    out = it.looped_lens_read(
+        module, AnalysisBatch(), batch, 0,
+        looped_lens_table="books/inkling2_mini_icv_coda_remote_k10_n6.yaml",
+        looped_lens_map="<venngram checkout>/registry/candidates/inkling2_mini.yaml",
+        looped_lens_remote=True,
+        looped_lens_head="<head>.safetensors",  # see ARTIFACTS.md
+    )
 out.looped_lens_labels  # ['L15p3:coda', 'L19:active', ...]
 out.looped_lens_tokens  # per prompt, per site: K tokens
 ```
 
-For NDIF, pass `looped_lens_remote=True` and `looped_lens_head` (the checkpoint's final norm and unembedding; see
-`ARTIFACTS.md`): states come back from one trace per prompt and are decoded locally.
+On NDIF the states come back from one trace per prompt (coda readouts as extra rows of it) and are decoded locally with
+the checkpoint's final norm and unembedding (`looped_lens_head`). Locally, drop `looped_lens_remote` and
+`looped_lens_head`. Resolving a book needs venngram's execution map (main at c49e5f58 or later); a resolved site table
+(`.json`) needs no venngram at all.
+
+Read through such a session on NDIF, the first book scores exactly what its runtime scores on the 33 held-out items
+(majority 0.852, 30 of 33).
 
 ## Limits
 
