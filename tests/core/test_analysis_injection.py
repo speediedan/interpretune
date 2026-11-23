@@ -496,3 +496,29 @@ def test_patched_import_follows_future_import(tmp_path, docstring):
     import_line = lines.index("from interpretune.analysis.injection.analysis_hook_patcher import HOOK_REGISTRY")
     assert import_line > lines.index("from __future__ import annotations")
     assert "    HOOK_REGISTRY.execute('ap_after_value', locals())" in lines
+
+
+@pytest.mark.parametrize("notebook_tree", ["dev", "publish"])
+def test_attention_notebook_hooks_match_the_pinned_package(tmp_path, notebook_tree):
+    """Catch moved upstream anchors before the GPU notebook executes its injection setup."""
+    import circuit_tracer
+
+    from interpretune.analysis.injection.analysis_hook_patcher import patch_file_with_hooks, validate_file_hooks
+    from interpretune.analysis.injection.config_parser import load_config
+
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "src/it_examples/notebooks"
+        / notebook_tree
+        / "circuit_tracer_examples/attention_attribution_injection_config.yaml"
+    )
+    config = load_config(config_path)
+    package_root = Path(circuit_tracer.__file__).parent
+    enabled_hooks = [hook for hook in config.file_hooks.values() if hook.enabled]
+    assert enabled_hooks
+    assert validate_file_hooks(config.file_hooks, package_root) == {"missing": [], "multiple": []}
+    for index, hook in enumerate(enabled_hooks):
+        patched = patch_file_with_hooks(package_root / hook.file_path, [hook], tmp_path / f"hook_{index}.py")
+        source = patched.read_text()
+        assert f"HOOK_REGISTRY.execute('{hook.point_id}', locals())" in source
+        compile(source, str(patched), "exec")

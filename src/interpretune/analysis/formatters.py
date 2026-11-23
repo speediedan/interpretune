@@ -12,6 +12,11 @@ from contextlib import contextmanager
 
 from interpretune.analysis import ColCfg
 
+#: Numeric dtypes a reader gets back unchanged. TorchFormatter reads every other float as float32 and every other
+#: integer as int64: float32, int64 and bool already map to themselves, and uint16/uint32 widen to int64 there because
+#: torch has few operations on them.
+_KEEP_NUMPY_DTYPES = frozenset(np.dtype(name) for name in ("float16", "float64", "int8", "int16", "int32", "uint8"))
+
 
 class OpSchemaExt:
     """Provides operation schema extensions for tensor processing."""
@@ -121,7 +126,12 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
             if any(isinstance(x, (dict, list)) for x in value):
                 return [self._tensorize(x, field_name) for x in value]
 
-        tensor = TorchFormatter._tensorize(self, value)
+        if isinstance(value, (np.number, np.ndarray)) and value.dtype in _KEEP_NUMPY_DTYPES:
+            # TorchFormatter reads every float column as float32 and every integer column as int64, which narrows a
+            # float64 column on every read; a store column reads back as the dtype it declares instead.
+            tensor = torch.tensor(value, **self.torch_tensor_kwargs)
+        else:
+            tensor = TorchFormatter._tensorize(self, value)
         if isinstance(tensor, torch.Tensor):
             return self.apply_dynamic_dimension(tensor, field_name)
         return tensor
