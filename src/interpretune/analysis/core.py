@@ -4,7 +4,7 @@ from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Typ
 from types import MappingProxyType
 import os
 from pathlib import Path
-from copy import deepcopy
+from copy import copy, deepcopy
 
 import torch
 from torch._dynamo.utils import is_namedtuple_cls, namedtuple_fields
@@ -529,6 +529,8 @@ class AnalysisStore:
         # What the columns were computed on (an `interpretune.hub.subject.StoreSubject`), stamped at the same
         # moment and for the same reason; None when the store did not come from a module.
         self.subject: StoreSubject | None = None
+        # What `resolve_on` read this view against; `subject` stays what the columns were computed on.
+        self.resolved_on: StoreSubject | None = None
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 
@@ -772,6 +774,53 @@ class AnalysisStore:
         assert self.dataset is not None, "Dataset should be loaded before selecting columns"
         self.dataset = self.dataset.select_columns(column_names)
         return self
+
+    def resolve_on(self, target: Any) -> "AnalysisStore":
+        """A view of this store read against another model, refusing columns that do not carry over.
+
+        Each column's declared site bindings (``ColCfg.site``) are checked against ``target`` before any row is read:
+        layer indices carry over only at the source's depth, hook-name keys only where both component maps resolve
+        them, token ids and positions only under the same tokenizer, latent features only with the same dictionaries,
+        and values in the model's activation space only for the same model at the same revision. The view holds this
+        store's rows unchanged (its ``subject`` stays the model they were computed on) and records ``target`` as
+        ``resolved_on``.
+
+        Args:
+            target: A module, or the :class:`~interpretune.hub.subject.StoreSubject` to read this store against.
+
+        Raises:
+            StoreResolutionError: The store states no subject, its columns declare no site bindings, or a binding does
+                not carry over (each column named with the reason).
+            StoreSubjectError: ``target`` is a module that states no model id.
+        """
+        from interpretune.analysis.site_bindings import StoreResolutionError, check_bindings, declares_bindings
+        from interpretune.hub.subject import StoreSubject, subject_from_module
+
+        target = target if isinstance(target, StoreSubject) else subject_from_module(target)
+        if self.subject is None:
+            raise StoreResolutionError(
+                "This store states no subject (the model its columns were computed on), so nothing can be shown to"
+                " carry over. Set `store.subject`, or re-push it with a current interpretune."
+            )
+        col_cfg = (self.it_format_kwargs or {}).get("col_cfg")
+        if not declares_bindings(col_cfg):
+            raise StoreResolutionError(
+                "This store declares no site bindings: it was written before op schemas declared what their columns"
+                " name. Re-push it with a current interpretune (bindings are never inferred from column names)."
+            )
+        assert col_cfg is not None
+        features = self._column_features()
+        keys = {name: tuple(f) for name, f in features.items() if isinstance(f, dict)}
+        check_bindings(col_cfg, features, keys, self.subject, target)
+        view = copy(self)
+        view.resolved_on = target
+        return view
+
+    def _column_features(self) -> dict[str, Any]:
+        """Each held column's feature, read from the schema (a stream's schema needs no rows)."""
+        source = self.stream if self.stream is not None else self.dataset
+        assert source is not None, "Dataset should be loaded before reading its features"
+        return dict(source.features or {})
 
     def __getattr__(self, name: str) -> Any:
         """Allow accessing dataset columns and attributes.
