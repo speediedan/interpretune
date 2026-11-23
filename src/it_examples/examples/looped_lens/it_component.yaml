@@ -1,0 +1,8 @@
+---
+# The looped lens for Inkling 2 Mini as an interpretune ops component. Op discovery is manifest-routed: only the files
+# listed under `ops.files` are op definitions; the lens books, the runtime and the card are ordinary files.
+it_schema_version: 1
+kinds: [ops]
+ops:
+  files:
+    - looped_lens_ops.yaml

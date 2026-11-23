@@ -1,0 +1,28 @@
+# A looped lens for Inkling 2 Mini as a venngram address book: the best majority configuration under item
+# cross-validation without coda sites (item-CV 0.928, multihop 0.90, leave one family out 0.854; held out 29 of 33;
+# blind gemma judge 0.939 on dev basic and multihop), K=10, no filter. Plain readouts only, so it runs remotely on NDIF;
+# the pass-3 active block at layer 15 is the mid-loop site that carries multihop bridges.
+schema_version: 12
+name: inkling2-mini-looped-lens-icv-nocoda-k10-n6
+description: Read sites of a six-site looped lens for Inkling 2 Mini (plain readouts only; runs remotely).
+portability: family
+applies_to: {architectures: [Inkling2LoopForConditionalGeneration]}
+sets:
+  l21: "point:state.active & layers:21"
+  l19_moe: "point:mlp.mix & layers:19"
+  l23_moe: "point:mlp.mix & layers:23"
+  l18_moe: "point:mlp.mix & layers:18"
+  l19: "point:state.active & layers:19"
+  l15p3: "point:state.active & layers:15 & passes:3"
+lens:
+  model: thinkingmachines/Inkling-2-Mini
+  K: 10
+  variant: plain
+  filters: []
+  readouts:
+    - {set: l21, readout: plain}
+    - {set: l19_moe, readout: plain}
+    - {set: l23_moe, readout: plain}
+    - {set: l18_moe, readout: plain}
+    - {set: l19, readout: plain}
+    - {set: l15p3, readout: plain}
