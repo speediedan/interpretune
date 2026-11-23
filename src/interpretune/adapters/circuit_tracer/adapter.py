@@ -411,6 +411,30 @@ class BaseCircuitTracerModule(BaseITModule):
                 )
 
     @staticmethod
+    def _complete_bridge_cfg(bridge: Any) -> None:
+        """Fill the two config fields ``HookedTransformer``'s config carried and a ``TransformerBridge``'s leaves
+        unset.
+
+        Circuit-tracer copies the model's config into every graph, and that config's ``to_dict`` drops unset fields, so
+        a graph stored by the analysis backend could not rebuild its config when read back (``KeyError``). The bridge
+        knows both values under other names: its tokenizer's ``name_or_path``, and ``cfg.architecture``.
+
+        Raises:
+            MisconfigurationException: When the bridge has no tokenizer name or architecture to record.
+        """
+        cfg = bridge.cfg
+        if cfg.tokenizer_name is None:
+            cfg.tokenizer_name = getattr(getattr(bridge, "tokenizer", None), "name_or_path", None) or None
+        if getattr(cfg, "original_architecture", None) is None:
+            cfg.original_architecture = getattr(cfg, "architecture", None)
+        missing = [name for name in ("tokenizer_name", "original_architecture") if not getattr(cfg, name, None)]
+        if missing:
+            raise MisconfigurationException(
+                f"circuit-tracer's TransformerLens backend records {missing} in the graphs it stores, and the "
+                "TransformerBridge has neither those config fields nor a tokenizer `name_or_path` / `cfg.architecture`."
+            )
+
+    @staticmethod
     def _replacement_model_from_bridge(cfg: CircuitTracerConfig, bridge: Any, lazy_encoder: bool) -> Any:
         """Circuit-tracer's TransformerLens replacement model, made from ``bridge`` with ``cfg``'s transcoders.
 
@@ -427,6 +451,7 @@ class BaseCircuitTracerModule(BaseITModule):
         )
         from circuit_tracer.utils.hf_utils import load_transcoder_from_hub
 
+        BaseCircuitTracerModule._complete_bridge_cfg(bridge)
         transcoders, _ = load_transcoder_from_hub(
             cfg.transcoder_set,
             device=torch.device(bridge.cfg.device),

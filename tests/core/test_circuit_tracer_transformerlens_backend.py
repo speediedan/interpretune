@@ -59,6 +59,22 @@ class TestTheTransformerLensBackend:
         assert batches[0].adjacency_matrix.abs().max() > 1e-3, "an empty graph would match trivially"
         torch.testing.assert_close(batches[1].adjacency_matrix, batches[0].adjacency_matrix, atol=1e-4, rtol=1e-3)
 
+    def test_a_stored_graph_reads_back_once_the_bridge_config_is_completed(self, twins):
+        """A bridge leaves ``tokenizer_name`` and ``original_architecture`` unset, so a graph built on it cannot
+        rebuild its config from storage until the composition fills them."""
+        _, transformerlens = twins
+        cfg = transformerlens.cfg
+        assert cfg.tokenizer_name is None and cfg.original_architecture is None, "the control needs the bridge's own"
+        with pytest.raises(KeyError):
+            DEFAULT_CT_ANALYSIS_BACKEND.hydrate_graph_from_batch(_graph_batch(_ct_module(transformerlens)))
+        BaseCircuitTracerModule._complete_bridge_cfg(transformerlens)
+        try:
+            graph = DEFAULT_CT_ANALYSIS_BACKEND.hydrate_graph_from_batch(_graph_batch(_ct_module(transformerlens)))
+            assert graph.cfg.tokenizer_name == transformerlens.tokenizer.name_or_path
+            assert graph.cfg.original_architecture == cfg.architecture == "Gemma2ForCausalLM"
+        finally:
+            cfg.tokenizer_name = cfg.original_architecture = None
+
     def test_the_unembedding_input_resolves_by_its_bridge_name(self, twins):
         """``unembed.hook_in`` needed a legacy alias on the HookedTransformer model; the bridge has it by name."""
         _, transformerlens = twins
@@ -88,8 +104,35 @@ class TestTheCompositionRefuses:
         with pytest.raises(MisconfigurationException, match="enable_compatibility_mode: false"):
             module._convert_hf_to_bridge()
 
+    def test_a_bridge_without_a_tokenizer_name(self):
+        bridge = SimpleNamespace(
+            cfg=SimpleNamespace(tokenizer_name=None, original_architecture=None, architecture="Gemma2ForCausalLM"),
+            tokenizer=None,
+        )
+        with pytest.raises(MisconfigurationException, match=r"\['tokenizer_name'\]"):
+            BaseCircuitTracerModule._complete_bridge_cfg(bridge)
+
     def test_a_bridge_for_another_backend(self):
         with pytest.raises(MisconfigurationException, match="only the 'transformerlens' backend"):
             BaseCircuitTracerModule._replacement_model_from_bridge(
                 CircuitTracerConfig(backend="nnsight"), object(), False
             )
+
+
+def test_the_replacement_model_is_made_from_a_completed_bridge_config(monkeypatch):
+    """The composition's own path fills the config before circuit-tracer copies it into its model."""
+    import circuit_tracer.utils.hf_utils as hf_utils
+    from circuit_tracer.replacement_model.replacement_model_transformerlens import TransformerLensReplacementModel
+
+    monkeypatch.setattr(hf_utils, "load_transcoder_from_hub", lambda *args, **kwargs: (None, None))
+    monkeypatch.setattr(TransformerLensReplacementModel, "from_bridge", classmethod(lambda cls, bridge, _: bridge))
+    bridge = SimpleNamespace(
+        cfg=SimpleNamespace(
+            device="cpu", tokenizer_name=None, original_architecture=None, architecture="Gemma2ForCausalLM"
+        ),
+        tokenizer=SimpleNamespace(name_or_path="google/gemma-2-2b"),
+    )
+    made = BaseCircuitTracerModule._replacement_model_from_bridge(
+        CircuitTracerConfig(backend="transformerlens"), bridge, False
+    )
+    assert (made.cfg.tokenizer_name, made.cfg.original_architecture) == ("google/gemma-2-2b", "Gemma2ForCausalLM")
