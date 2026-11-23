@@ -48,6 +48,7 @@ module:
     rte_ft.gpt2.core: configs/rte_ft.gpt2.core.yaml
     rte_ft.gpt2.nnsight: configs/rte_ft.gpt2.nnsight.yaml
     rte_ft.gpt2.transformer_lens: configs/rte_ft.gpt2.transformer_lens.yaml
+    rte_ft.qwen3.core: configs/rte_ft.qwen3.core.yaml
     rte_sparse.gemma3.core: configs/rte_sparse.gemma3.core.yaml
     rte_sparse.gpt2.core: configs/rte_sparse.gpt2.core.yaml
 datamodules:

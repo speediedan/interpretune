@@ -61,6 +61,15 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+
+  With `rank=r`, each matrix's delta is low-rank over the selected slices only, LoRA's factorization restricted to the
+  units: $\Delta_S = \tfrac{\alpha}{r} B A$, where $B$ has one row per selected unit and starts at zero, $A$ has one
+  column per entry of a slice, and `alpha` defaults to $r$ (a scale of 1). Both factors take the adapter's role. Full
+  slices hold $|S| k$ entries and the factors $r (|S| + k)$, so a rank at or above $|S| k / (|S| + k)$ saves nothing
+  and is refused, naming the bound. A bias has nothing to factor and keeps its full delta. This adapter is part of
+  interpretune's weight edits and works on every composition; the TransformerLens composition's `peft` LoRA adapters
+  are whole-matrix, roled by name, and the two do not interact. Use `rank=` to tune many units of wide tensors with
+  few parameters, and the full delta when the selection is small.
 - `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
   attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
   a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block

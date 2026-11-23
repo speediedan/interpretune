@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -130,10 +130,23 @@ if _LIGHTNING_AVAILABLE:
             step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
             if not callable(step):
                 return False, None
-            from collections.abc import Iterator
+            from collections.abc import Iterator, Mapping
 
             result = step(batch, batch_idx, dataloader_idx)
-            return True, (list(result) if isinstance(result, Iterator) else result)
+            result = list(result) if isinstance(result, Iterator) else result
+            rows = getattr(self, "_it_analysis_rows", None)
+            if rows is not None:
+                # an AnalysisStoreCallback is collecting this predict run's rows: every item the step yields is a row,
+                # as in the core analysis loop, and a mapping returned whole is one row
+                try:
+                    rows.extend([result] if isinstance(result, Mapping) else result)
+                except TypeError as err:
+                    raise MisconfigurationException(
+                        f"the analysis step `{getattr(analysis_cfg, 'step_fn', 'analysis_step')}` returned a"
+                        f" {type(result).__name__}, which is not an iterable of rows, so no AnalysisStore can be built"
+                        " from it"
+                    ) from err
+            return True, result
 
         def on_predict_start(self) -> None:
             """Ensure analysis setup ran before a Trainer predict loop, then defer to Lightning."""
@@ -178,7 +191,87 @@ if _LIGHTNING_AVAILABLE:
                 composition_classes=(LightningAdapter, BaseITModule, LightningModule),
                 description="lightning adapter to be used with lightning",
             )
+
+    from lightning.pytorch.callbacks import Callback
+
+    class AnalysisStoreCallback(Callback):
+        """Write an analysis composition's ``AnalysisStore`` from a ``Trainer.predict`` run.
+
+        ``Trainer.predict`` runs an analysis composition's configured step on each batch. With this callback in the
+        Trainer's callbacks, the rows those steps yield are also written as the analysis config's ``AnalysisStore``,
+        as ``AnalysisRunner.run_analysis`` writes them: the same features and format from the op's output schema, the
+        same ``output_store.save_dir``, ``output_store.dataset`` set to the result, and the ``on_analysis_start`` and
+        ``on_analysis_end`` hooks around the run.
+
+        Scope: predict in one process. The rows are held until the run ends, where the core analysis loop streams them
+        to the store, so a run's analysis outputs must fit in host memory. A module without an analysis config and op,
+        a multi-process predict, and a run that yields no rows are each refused by name.
+        """
+
+        def on_predict_start(self, trainer: Any, pl_module: Any) -> None:
+            """Check the run can build a store, run the analysis start hooks and start collecting rows."""
+            analysis_cfg = getattr(getattr(pl_module, "it_cfg", None), "analysis_cfg", None)
+            if analysis_cfg is None or getattr(analysis_cfg, "op", None) is None:
+                raise MisconfigurationException(
+                    "AnalysisStoreCallback writes the AnalysisStore of an analysis composition, but this module has no"
+                    " analysis config with an op. Set `analysis_cfg` on the module, or drop the callback."
+                )
+            if trainer.world_size > 1:
+                raise MisconfigurationException(
+                    f"AnalysisStoreCallback builds the AnalysisStore in one process, but this Trainer runs"
+                    f" {trainer.world_size} processes, whose rows the store would miss. Run the analysis predict on"
+                    " one device."
+                )
+            from interpretune.base.call import _call_itmodule_hook
+
+            pl_module._ensure_analysis_setup()  # runs before the module's own predict-start hook
+            pl_module._it_analysis_rows = []
+            _call_itmodule_hook(pl_module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
+
+        def on_predict_end(self, trainer: Any, pl_module: Any) -> None:
+            """Write the collected rows as the store, then run the analysis end hooks."""
+            from interpretune.base.call import _call_itmodule_hook
+
+            rows = getattr(pl_module, "_it_analysis_rows", None)
+            pl_module._it_analysis_rows = None
+            try:
+                self._write(pl_module, rows or [])
+            finally:
+                _call_itmodule_hook(pl_module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
+
+        @staticmethod
+        def _write(pl_module: Any, rows: list) -> None:
+            if not rows:
+                raise MisconfigurationException(
+                    "Trainer.predict produced no analysis rows, so there is no AnalysisStore to write (check"
+                    " limit_predict_batches and the predict dataloader)."
+                )
+            from pathlib import Path
+
+            from datasets import Dataset
+            from datasets.fingerprint import generate_random_fingerprint
+
+            from interpretune.runners.analysis import dataset_features_and_format
+
+            features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
+            output_store = pl_module.it_cfg.analysis_cfg.output_store
+
+            def _rows():
+                yield from rows
+
+            # an explicit fingerprint, as the core loop passes, so datasets does not hash the rows to make one
+            dataset = Dataset.from_generator(
+                _rows,
+                features=features,  # pyright: ignore[reportArgumentType]  # datasets accepts a features mapping
+                cache_dir=str(output_store.cache_dir),
+                split="validation",  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
+                fingerprint=generate_random_fingerprint(),
+            ).with_format("interpretune", **it_format_kwargs)
+            dataset.save_to_disk(Path(output_store.save_dir))
+            output_store.dataset = dataset
+
 else:
     LightningDataModule = object
     LightningModule = object
     LightningAdapter = object  # pyright: ignore[reportAssignmentType]
+    AnalysisStoreCallback = object  # pyright: ignore[reportAssignmentType]
