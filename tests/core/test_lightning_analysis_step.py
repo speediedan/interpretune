@@ -148,3 +148,56 @@ def test_setup_without_a_log_directory_is_refused_by_name():
     module.analysis_cfg = _analysis_cfg()
     with pytest.raises(MisconfigurationException, match="no log directory to write analysis outputs"):
         module.on_predict_start()
+
+
+def test_analysis_store_callback_writes_the_store(tmp_path):
+    """With ``AnalysisStoreCallback``, Trainer.predict writes the rows its analysis steps yield as the
+    AnalysisStore.
+
+    The store has one row per row predict returned, the core loop's features for the op, and is saved to the
+    configured ``output_store.save_dir``, as ``AnalysisRunner.run_analysis`` leaves it.
+    """
+    from datasets import load_from_disk
+
+    from interpretune.adapters.lightning import AnalysisStoreCallback
+    from interpretune.runners.analysis import dataset_features_and_format
+
+    it_session = _lightning_cust_session()
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg(ignore_manual=True)
+    trainer = _trainer(tmp_path, limit=2)
+    trainer.callbacks.append(AnalysisStoreCallback())
+
+    out = trainer.predict(module, datamodule=it_session.datamodule)
+    rows = [row for batch_rows in out for row in batch_rows]
+    assert rows, "predict returned no analysis rows"
+
+    store = module.analysis_cfg.output_store
+    assert store.dataset is not None, "the callback did not set the store's dataset"
+    assert len(store.dataset) == len(rows)
+    features, _, _ = dataset_features_and_format(module, {})
+    assert set(store.dataset.column_names) == set(features)
+    assert len(load_from_disk(str(store.save_dir))) == len(rows)
+    assert getattr(module, "_it_analysis_rows", None) is None, "rows were kept after the store was written"
+
+
+def test_analysis_store_callback_without_an_analysis_op_is_refused(tmp_path):
+    import pytest
+
+    from interpretune.adapters.lightning import AnalysisStoreCallback
+    from interpretune.utils import MisconfigurationException
+
+    it_session = _lightning_cust_session()
+    trainer = _trainer(tmp_path)
+    trainer.callbacks.append(AnalysisStoreCallback())
+    with pytest.raises(MisconfigurationException, match="no analysis config with an op"):
+        trainer.predict(it_session.module, datamodule=it_session.datamodule)
+
+
+def test_predict_without_the_callback_writes_no_store(tmp_path):
+    """Without the callback, predict returns the step outputs and leaves the store alone, as before."""
+    it_session = _lightning_cust_session()
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg(ignore_manual=True)
+    _trainer(tmp_path).predict(module, datamodule=it_session.datamodule)
+    assert module.analysis_cfg.output_store.dataset is None
