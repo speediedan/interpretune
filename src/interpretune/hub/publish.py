@@ -113,6 +113,16 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
 
+    for name, rel in ((manifest.get("helpers") or {}).get("modules") or {}).items():
+        src = component_dir / rel
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"Manifest declares helper module {name!r} at {rel!r}, which is not present in {component_dir}."
+            )
+        dest = out_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
     # adapters entrypoints are SELF-CONTAINED for the same reason promptconfigs' are: the file must be
     # readable and runnable straight out of the snapshot, with no in-repo package to import from.
     adapters_entrypoint = (manifest.get("adapters") or {}).get("entrypoint")
