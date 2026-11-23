@@ -303,8 +303,9 @@ An intervention attached to the module trains on two ranks as on one (`ddp` and 
 unit's, so the hook that applies it inside a block sees the whole operand, and both ranks end with the same value.
 
 A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
-`fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model values. A
-phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+`fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
+values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
+the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
 
 ## Limits
 
