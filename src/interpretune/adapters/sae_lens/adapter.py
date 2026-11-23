@@ -247,6 +247,19 @@ class BaseSAELensModule(BaseITModule):
             raise AttributeError(f"No SAE is attached at hook {hook_name!r} (add_saes_on_init attaches them)")
         return attached[key].get_parameter(param_name)
 
+    def activation_splices(self) -> dict[str, tuple[torch.nn.Module, int | None]]:
+        """Every SAE spliced into the model, by the hook it reads, with the width of the activation it reads.
+
+        The module at the hook is what the model calls: the wrapper SAE Lens splices each SAE in with, whose ``sae``
+        is the SAE. An SAE that reshapes its input from attention heads (``hook_z``) reads an activation whose last
+        dimension is not its width, so its width is not given.
+        """
+        splices = super().activation_splices()
+        for hook_name, wrapper in getattr(self.model, "_acts_to_saes", {}).items():
+            reshapes = getattr(wrapper.sae, "hook_z_reshaping_mode", False)
+            splices[hook_name] = (wrapper, None if reshapes else wrapper.sae.cfg.d_in)
+        return splices
+
     def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
         """The model's parameters, then those of every attached SAE (each parameter once)."""
         seen: set[int] = set()
