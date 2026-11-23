@@ -4,7 +4,7 @@
 
 Contributors are **enthusiastically welcomed** — Interpretune is built to be a
 community effort, and the pre-MVP → alpha transition is an ideal moment to get involved. The
-[IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place to
+[IT-MVP milestone](https://github.com/interpretune/interpretune/milestone/1) is the best place to
 find priority items and good first issues. Thank you in advance for your contributions to the
 open-source interpretability ecosystem — every issue report, doc fix, and PR genuinely helps.
 

@@ -28,7 +28,7 @@ guides, notebook example rendering, and API-reference polish are in progress.
 
 ## Next: MVP milestone — shareable analysis artifacts
 
-The [MVP milestone](https://github.com/speediedan/interpretune/milestone/1) centers on making
+The [MVP milestone](https://github.com/interpretune/interpretune/milestone/1) centers on making
 Interpretune's artifacts **shareable on the Hugging Face Hub** — most importantly:
 
 - **AnalysisStore hub upload/download**: analyses as exchangeable datasets (the paradigm described
@@ -38,9 +38,9 @@ Interpretune's artifacts **shareable on the Hugging Face Hub** — most importan
 - **Adapter/session shareability**: uploadable session and adapter configurations so an analysis
   is runnable, not just readable.
 - **Cross-backend support hardening**: completing the dual-backend abstraction-layer validation
-  ([#201](https://github.com/speediedan/interpretune/issues/201) — latent-model handle lifecycle,
+  ([#201](https://github.com/interpretune/interpretune/issues/201) — latent-model handle lifecycle,
   backend compatibility matrix) and broadening cross-backend demo/e2e coverage
-  ([#224](https://github.com/speediedan/interpretune/issues/224)).
+  ([#224](https://github.com/interpretune/interpretune/issues/224)).
 
 ## Following: hub-resident, streamable dashboards
 
@@ -51,31 +51,31 @@ local dev stacks) — subject to the same upstream-ownership framing above.
 
 ### Standardized hub-based dashboard discovery
 
-Shipped ([#262](https://github.com/speediedan/interpretune/issues/262)): published corpora are discovered through
+Shipped ([#262](https://github.com/interpretune/interpretune/issues/262)): published corpora are discovered through
 Hub collections whose items are buckets, with each corpus's own `dashboards.json` as the only description of what it
 holds. A client's trust list is the collections it reads (the project's own by default), and a publisher registers a
 corpus by adding its bucket to a collection, with no client release. Trust is per publisher for now, and the
 permission model is still evolving (a finer, sub-publisher posture may follow); AnalysisStore discovery and trust are
-tracked in [#1008](https://github.com/speediedan/interpretune/issues/1008). The pipeline guide's
+tracked in [#1008](https://github.com/interpretune/interpretune/issues/1008). The pipeline guide's
 [dashboard-corpus collection](../neuronpedia_dashboard_pipeline.md#hub-dashboard-discovery) section has the API.
 
 ## Research directions
 
-- **RTE cross-backend research** ([#220](https://github.com/speediedan/interpretune/issues/220)):
+- **RTE cross-backend research** ([#220](https://github.com/interpretune/interpretune/issues/220)):
   the recognizing-textual-entailment research program that motivated the cross-backend demo
   infrastructure — resuming on the hardened dual-backend substrate.
 - **Jacobian-space (J-lens) analysis support**
-  ([#225](https://github.com/speediedan/interpretune/issues/225) in-tree,
-  [#273](https://github.com/speediedan/interpretune/issues/273) as a separately published op
+  ([#225](https://github.com/interpretune/interpretune/issues/225) in-tree,
+  [#273](https://github.com/interpretune/interpretune/issues/273) as a separately published op
   collection): the read/probe/steer ops, the `concept_basis="jlens_*"` selector for
   `concept_direction`, per-feature J-space signatures, and the `patch` / `clamp` /
   `reject` write ops have shipped, and the separately published collection is
   the first genuinely non-bundled proving ground for hub registration. Open research:
-  J-space attribution graphs ([#683](https://github.com/speediedan/interpretune/issues/683)),
+  J-space attribution graphs ([#683](https://github.com/interpretune/interpretune/issues/683)),
   RTE attribution graphs with a learned pruner and graph-guided fine-tuning
-  ([#667](https://github.com/speediedan/interpretune/issues/667)), and fine-tuning defined through the
-  lens ([#666](https://github.com/speediedan/interpretune/issues/666)). The demo and docs refresh
-  ([#426](https://github.com/speediedan/interpretune/issues/426)) is nearly done.
+  ([#667](https://github.com/interpretune/interpretune/issues/667)), and fine-tuning defined through the
+  lens ([#666](https://github.com/interpretune/interpretune/issues/666)). The demo and docs refresh
+  ([#426](https://github.com/interpretune/interpretune/issues/426)) is nearly done.
 - **Self-interpretability**: interpretability that accelerates model advancement via
   self-reflection — in addition to serving as the bridge for human access to AI world models.
   Internal model-reflection heuristics offered by Interpretune could enduringly improve RL
@@ -90,7 +90,7 @@ tracked in [#1008](https://github.com/speediedan/interpretune/issues/1008). The 
 
 ## Considered (not MVP-blocking)
 
-- **Core-protocol extraction** ([#6](https://github.com/speediedan/interpretune/issues/6)):
+- **Core-protocol extraction** ([#6](https://github.com/interpretune/interpretune/issues/6)):
   generalize/extract the interoperability protocol out of Interpretune into a standalone
   distribution once the MVP stabilizes the protocol surface. Represented here deliberately as
   *considered* — the MVP proceeds without it, while new public surfaces are designed

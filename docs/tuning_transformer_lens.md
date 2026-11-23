@@ -133,4 +133,4 @@ attention and MLP tensors and the fused `qkv` weight and bias, without the 12 no
 The Lightning callback and `FTSCoreCallback` both discover the view the module carries, so no strategy adapter is
 configured for either.
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/interpretune/interpretune/issues/812).

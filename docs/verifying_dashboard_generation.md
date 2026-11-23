@@ -22,7 +22,7 @@ flexible options if you're interested, but the defaults here should work.
 
 ```bash
 mkdir -p /tmp/it_eval_repos && cd /tmp/it_eval_repos
-git clone https://github.com/speediedan/interpretune.git && cd interpretune
+git clone https://github.com/interpretune/interpretune.git && cd interpretune
 
 # See the whole plan first, without running anything:
 # python scripts/setup_dashboard_benchmark_env.py --dry-run

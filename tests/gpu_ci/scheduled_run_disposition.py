@@ -352,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--build", type=int, required=True, help="the queued scheduled build")
     ap.add_argument("--org", required=True, help="https://dev.azure.com/<org>")
     ap.add_argument("--project", required=True, help="the build's Azure project")
-    ap.add_argument("--repo", default="speediedan/interpretune", help="the GitHub repository the pipeline builds")
+    ap.add_argument("--repo", default="interpretune/interpretune", help="the GitHub repository the pipeline builds")
     ap.add_argument(
         "--pool-project", action="append", default=[], help="another project whose builds share the pool (repeatable)"
     )

@@ -15,7 +15,7 @@ over which frameworks and methods compose, with Interpretune helping validate mo
 causal/mechanistic guarantees while working at those higher levels of abstraction with AI world
 models.
 
-A considered follow-on ([#6](https://github.com/speediedan/interpretune/issues/6)): extracting the
+A considered follow-on ([#6](https://github.com/interpretune/interpretune/issues/6)): extracting the
 core protocol out of Interpretune into a standalone, neutrally-named distribution once the MVP
 stabilizes the protocol surface — deliberately **not** an MVP blocker (renaming/extraction churn
 buys users nothing pre-alpha), but new public surfaces are designed with that extraction in mind.
