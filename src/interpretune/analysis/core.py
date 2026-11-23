@@ -37,6 +37,7 @@ from interpretune.protocol import (
     LatentModelFqn,
     AnalysisCfgProtocol,
     StrOrPath,
+    batch_protocol_fields,
 )
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
@@ -486,7 +487,9 @@ class AnalysisStore:
             column, and positional access is refused, since a stream has no positions to index.
         stack_batches: stack per-batch tensors into a single tensor on access rather than returning
             them per batch -- convenient for analysis, wrong when batches have ragged shapes.
-        protocol_cls: the batch protocol describing the columns, which fixes how rows decode.
+        protocol_cls: the batch protocol naming the columns that get attribute access (``store.<name>``), its bases'
+            fields included; a declared column the store does not hold reads as None. Rows decode through the op
+            schema (``it_format_kwargs['col_cfg']``), not the protocol.
     """
 
     # The loaded single-split dataset, or None while the store is built incrementally. A path or a
@@ -787,8 +790,8 @@ class AnalysisStore:
         if name in ("dataset", "stream", "_protocol_cls"):
             raise AttributeError(name)
         source = self.stream if self.stream is not None else self.dataset
-        # First check if it's a protocol-defined column
-        if name in self._protocol_cls.__annotations__:
+        # First check if it's a protocol-defined column (inherited fields included)
+        if name in batch_protocol_fields(self._protocol_cls):
             # Check if the column actually exists in the dataset
             if source is not None and name in (getattr(source, "column_names", None) or []):
                 return self[name]
