@@ -96,6 +96,9 @@ def _publish(store, tmp_path, monkeypatch):
     monkeypatch.setattr("huggingface_hub.snapshot_download", lambda *a, **k: str(data))
     real = artifacts._stream_parquet
     monkeypatch.setattr(artifacts, "_stream_parquet", lambda urls, split, **kw: real([str(parquet)], split, **kw))
+    # The streamed-read cost guard reads each listed file's Parquet footer from the Hub, which this fake does not
+    # serve; the guard has its own tests in test_hub_artifact_streaming.py, and these test what the read returns.
+    monkeypatch.setattr(artifacts, "_warn_on_streamed_read_cost", lambda *a: None)
 
 
 def _read_all(store, tmp_path, monkeypatch) -> dict[str, list[torch.Tensor]]:
