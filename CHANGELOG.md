@@ -418,6 +418,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The compiled op cache holds every operation its sources declare or is not used. A cache missing an operation, or holding one no source declares, is reported and the operations are compiled again; a compile that dropped an operation is not cached; and the file is replaced whole, so a concurrent reader never loads part of one. An environment without `venngram` used to lose, with nothing said, every operation after the first one with `required_ops` in its file, and saved the rest where every later session read it as the full set. An operation definition or file that fails to load is now reported (and raises under `IT_STRICT_OP_LOAD=1`) instead of logged at debug level, and one operation that fails no longer takes the rest of its file with it ([#1186](https://github.com/interpretune/interpretune/issues/1186))
+
 - A composition whose model is wrapped by PEFT gets a tunable view mounted at the model PEFT wraps, so `layers:` and `component:` addresses resolve on a model loaded from a checkpoint. Its config records `architectures`, which a `PeftModel` reports as its own, and venngram mounted the base map at the wrapper, where none of its paths are ([#1142](https://github.com/interpretune/interpretune/issues/1142))
 
 - `display_topk_token_predictions` printed a key token's negative probability change without its minus sign, so only the bar's colour showed the direction ([#1016](https://github.com/interpretune/interpretune/issues/1016))
