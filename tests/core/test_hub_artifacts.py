@@ -809,6 +809,137 @@ class TestProtocolClsThreading:
         assert _resolve_protocol_path(f"{name}.HubProto") is protocol
 
 
+class TestProtocolFieldsInheritance:
+    """A store's attribute surface is the protocol's fields over its MRO, not one class's ``__annotations__``."""
+
+    @staticmethod
+    def _store(protocol):
+        from datasets import Dataset
+
+        from interpretune.analysis import AnalysisStore
+
+        ds = Dataset.from_dict({"prompts": ["a b", "c d"], "preds": [1, 0], "input_string": ["a", "b"]})
+        return AnalysisStore(dataset=ds, split="validation", protocol_cls=protocol)
+
+    def test_a_subclass_of_the_default_keeps_the_inherited_fields(self):
+        from interpretune.protocol import CircuitAnalysisBatchProtocol
+
+        # the control: these names are inherited, so a reader of the class's own annotations drops them
+        assert {"prompts", "preds"}.isdisjoint(CircuitAnalysisBatchProtocol.__annotations__)
+        store = self._store(CircuitAnalysisBatchProtocol)
+        assert list(store.prompts) == ["a b", "c d"]
+        assert store.preds is not None and list(store.input_string) == ["a", "b"]
+        assert store.attribution_graphs is None  # declared, not held
+
+    def test_a_subclass_of_the_base_keeps_prompts_and_tokens(self):
+        """The base declares ``prompts`` and ``tokens`` so that families need not redeclare them."""
+        import torch
+
+        from interpretune.protocol import BaseAnalysisBatchProtocol
+
+        class OwnFields(BaseAnalysisBatchProtocol):
+            preds: torch.Tensor | None
+
+        store = self._store(OwnFields)
+        assert list(store.prompts) == ["a b", "c d"] and store.tokens is None
+        with pytest.raises(AttributeError):
+            store.input_string  # held, but not declared
+
+    def test_batch_protocol_fields_collects_over_the_mro(self):
+        from interpretune.protocol import (
+            CircuitAnalysisBatchProtocol,
+            DefaultAnalysisBatchProtocol,
+            batch_protocol_fields,
+        )
+
+        fields = batch_protocol_fields(CircuitAnalysisBatchProtocol)
+        assert set(batch_protocol_fields(DefaultAnalysisBatchProtocol)) < fields
+        assert set(CircuitAnalysisBatchProtocol.__annotations__) < fields
+
+
+class TestSchemaOnlyRead:
+    """``pull_analysis_store(..., protocol="schema")`` reads a store whose protocol the reader has not trusted."""
+
+    THIRD_PARTY = "someone_elses_ops.definitions.TheirBatchProtocol"
+
+    @staticmethod
+    def _custom_protocol():
+        from interpretune.protocol import CircuitAnalysisBatchProtocol
+
+        class TheirBatchProtocol(CircuitAnalysisBatchProtocol):
+            their_score: list | None
+
+        return TheirBatchProtocol
+
+    def _publish(self, store, tmp_path, monkeypatch, *, drop_fields: bool = False):
+        """Materialize ``store`` as a cached artifact whose envelope names a module this process cannot have
+        trusted, and point the hub downloads at it."""
+        store._protocol_cls = self._custom_protocol()
+        cache = tmp_path / "artifacts"
+        revision = TestLocalArtifactRoundTrip._materialize_local_artifact(store, "someone/store", cache)
+        snapshot = cache / "datasets--someone--store" / "snapshots" / revision
+        env_path = snapshot / IT_ARTIFACT_ENVELOPE
+        env = json.loads(env_path.read_text(encoding="utf-8"))
+        env["interpretune"]["protocol_cls"] = self.THIRD_PARTY
+        if drop_fields:
+            del env["interpretune"]["protocol_fields"]  # an envelope written before the field existed
+        env_path.write_text(json.dumps(env), encoding="utf-8")
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda *a, **k: str(env_path))
+        monkeypatch.setattr("huggingface_hub.snapshot_download", lambda *a, **k: str(snapshot / "data"))
+        return cache, env
+
+    def test_the_envelope_records_the_fields_inherited_ones_included(self, small_store):
+        small_store._protocol_cls = self._custom_protocol()
+        fields = build_analysis_store_envelope(small_store)["interpretune"]["protocol_fields"]
+        assert {"their_score", "attribution_graphs", "preds", "prompts"} <= set(fields)
+        assert fields == sorted(fields)
+
+    def test_the_default_mode_still_refuses_and_names_the_schema_read(self, small_store, tmp_path, monkeypatch):
+        from interpretune.hub.artifacts import ArtifactEnvelopeError, pull_analysis_store
+
+        cache, _ = self._publish(small_store, tmp_path, monkeypatch)
+        with pytest.raises(ArtifactEnvelopeError, match="protocol='schema'"):
+            pull_analysis_store("someone/store", cache_dir=cache)
+
+    def test_a_schema_read_imports_nothing_and_keeps_the_surface(self, small_store, tmp_path, monkeypatch):
+        import sys
+
+        import torch
+
+        from interpretune.hub.artifacts import pull_analysis_store
+
+        cache, env = self._publish(small_store, tmp_path, monkeypatch)
+        store = pull_analysis_store("someone/store", cache_dir=cache, protocol="schema")
+        assert "someone_elses_ops" not in sys.modules
+        proto = store._protocol_cls
+        assert proto.recorded_protocol == self.THIRD_PARTY and proto.fields_from == "envelope"
+        # the same attribute access a resolved pull gives, a declared column the store lacks included
+        assert list(store.input_string) == ["a premise", "b premise"]
+        assert store.their_score is None and store.attribution_graphs is None
+        # columns decode through col_cfg exactly as before
+        assert isinstance(store["active_features"][0], torch.Tensor)
+        # re-publishing records the original protocol, not the stand-in
+        republished = build_analysis_store_envelope(store)["interpretune"]
+        assert republished["protocol_cls"] == self.THIRD_PARTY
+        assert republished["protocol_fields"] == env["interpretune"]["protocol_fields"]
+
+    def test_an_envelope_without_fields_gets_the_stores_columns(self, small_store, tmp_path, monkeypatch):
+        from interpretune.hub.artifacts import pull_analysis_store
+
+        cache, _ = self._publish(small_store, tmp_path, monkeypatch, drop_fields=True)
+        store = pull_analysis_store("someone/store", cache_dir=cache, protocol="schema")
+        assert store._protocol_cls.fields_from == "columns"
+        assert list(store.input_string) == ["a premise", "b premise"]
+        with pytest.raises(AttributeError):
+            store.their_score  # declared by the protocol, but nothing recorded says so
+
+    def test_an_unknown_protocol_mode_is_refused(self):
+        from interpretune.hub.artifacts import pull_analysis_store
+
+        with pytest.raises(ValueError, match="not a protocol mode"):
+            pull_analysis_store("someone/store", protocol="trust")  # pyright: ignore[reportArgumentType]
+
+
 class TestPushPublishChecks:
     """``push_analysis_store`` against a mocked Hub: name validation, the skip record, and the post-upload read-
     back."""
