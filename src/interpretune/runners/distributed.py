@@ -39,7 +39,7 @@ import atexit
 import functools
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -826,7 +826,32 @@ def meta_built(module: torch.nn.Module) -> bool:
     return built
 
 
-def _checkpoint_renamer(model: torch.nn.Module) -> Any:
+def _hub_layout_keys(model: Any) -> set[str]:
+    """The checkpoint keys ``save_pretrained`` writes for ``model``: its state-dict keys through transformers'
+    conversion mapping, reversed (from shapes alone, so a model built on the meta device reads no data)."""
+    from transformers import core_model_loading
+
+    shapes = {name: torch.empty(tensor.shape, device="meta") for name, tensor in model.state_dict().items()}
+    return set(core_model_loading.revert_weight_conversion(model, shapes))
+
+
+def _is_model_layout(model: Any, keys: Sequence[str], ignored: Callable[[str], bool]) -> bool:
+    """Whether a checkpoint with ``keys`` is already in ``model``'s own layout, so its keys need no conversion.
+
+    Its keys must all be model keys, but that alone does not show it: a checkpoint whose layout differs from the model's
+    only by a converter that edits a tensor under its own key has the same key set. So the model's hub layout must have
+    a key of its own, which a hub-layout checkpoint would contain and this one does not.
+    """
+    from transformers import PreTrainedModel
+
+    if not isinstance(model, PreTrainedModel):  # only transformers' own models state a hub layout
+        return False
+    targets = set(model.state_dict())
+    checked = {key for key in keys if not ignored(key)}
+    return bool(checked) and checked <= targets and bool(_hub_layout_keys(model) - targets)
+
+
+def _checkpoint_renamer(model: torch.nn.Module, keys: Sequence[str]) -> Any:
     """``rename(checkpoint_key, model_keys)``: the model key transformers' own checkpoint conversion maps a key to.
 
     Raises:
@@ -844,11 +869,16 @@ def _checkpoint_renamer(model: torch.nn.Module) -> Any:
     renamings = [t for t in transforms if isinstance(t, core_model_loading.WeightRenaming)]
     converters = [t for t in transforms if isinstance(t, core_model_loading.WeightConverter)]
     if converters:
+        # the converters that match a key of this checkpoint name the tensors it needs merged or reshaped
+        matched = [
+            c for c in converters if any(core_model_loading.apply_converters(key, [c])[1] is not None for key in keys)
+        ]
+        shown = ", ".join(str(c.source_patterns) for c in (matched or converters)[:3])
         raise MisconfigurationException(
             "`meta_init_load: dcp` reads each rank's slices of the checkpoint as they are stored, but"
-            f" {type(model).__name__}'s checkpoint needs transformers' weight converters"
-            f" ({', '.join(str(c.source_patterns) for c in converters[:3])}), which merge or reshape tensors. Use"
-            " `meta_init_load: rank0`."
+            f" {type(model).__name__}'s checkpoint needs transformers' weight converters ({shown}"
+            f"{'' if matched else '; none matches a key of this checkpoint'}), which merge or reshape tensors, and"
+            " its keys are not the model's own. Use `meta_init_load: rank0`."
         )
     prefix = getattr(model, "base_model_prefix", None) or None
 
@@ -907,13 +937,16 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
             f"`meta_init_load: dcp` reads safetensors files, but {path} holds neither `model.safetensors` nor"
             " `model.safetensors.index.json`. Use `meta_init_load: rank0`."
         )
-    rename = _checkpoint_renamer(model)
     targets = model.state_dict()
     params = dict(model.named_parameters())
     # patterns a model declares for keys `from_pretrained` ignores (old checkpoints' attention-mask buffers, for one)
     ignore_unexpected = getattr(model, "_keys_to_ignore_on_load_unexpected", None) or []
     ignore_missing = getattr(model, "_keys_to_ignore_on_load_missing", None) or []
-    mapped = {key: rename(key, targets) for key in keys}
+    if _is_model_layout(model, keys, lambda key: any(re.search(p, key) for p in ignore_unexpected)):
+        mapped = {key: key for key in keys}  # converted keys would be read twice through a mapping not made for them
+    else:
+        rename = _checkpoint_renamer(model, keys)
+        mapped = {key: rename(key, targets) for key in keys}
     ignored = {k for k, v in mapped.items() if v not in targets and any(re.search(p, k) for p in ignore_unexpected)}
     mapped = {k: v for k, v in mapped.items() if k not in ignored}
     unknown = sorted(k for k, v in mapped.items() if v not in targets)
