@@ -16,7 +16,8 @@ from typing import Any
 import torch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import looped_lens_runtime as R  # noqa: E402
+# resolved from the component directory, which the line above puts on the path
+import looped_lens_runtime as R  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 _RUNTIMES: "weakref.WeakKeyDictionary[Any, dict]" = weakref.WeakKeyDictionary()
 
@@ -29,9 +30,13 @@ def _arg(analysis_batch: Any, kwargs: dict, name: str, default: Any = None) -> A
 
 
 def _hf_model(model: Any) -> Any:
-    """The torch model under an nnsight wrapper, or the model itself."""
-    inner = getattr(model, "_model", None)
-    return inner if inner is not None else model
+    """The torch model under an nnsight wrapper, or the model itself.
+
+    nnsight 0.8 keeps the wrapped module at ``_module``. It is read from the instance dict, because an envoy forwards
+    any attribute it lacks to that module, so ``getattr`` would answer for the wrong object.
+    """
+    inner = vars(model).get("_module") if hasattr(model, "__dict__") else None
+    return inner if isinstance(inner, torch.nn.Module) else model
 
 
 def _local_runtime(module: Any, table_path: str, map_path: str | None, translators_path: str | None):

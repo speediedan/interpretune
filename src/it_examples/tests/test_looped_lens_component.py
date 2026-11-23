@@ -28,6 +28,26 @@ def _runtime():
     return mod
 
 
+def _ops():
+    _runtime()
+    spec = importlib.util.spec_from_file_location("looped_lens_ops", COMPONENT / "looped_lens_ops.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_op_reads_the_model_under_an_nnsight_wrapper():
+    # an envoy forwards attributes it lacks to the wrapped module, so a wrong attribute name reads as "no wrapper"
+    # and the local runtime would hook the envoy rather than the model
+    import nnsight
+
+    ops = _ops()
+    lin = torch.nn.Linear(2, 2)
+    assert ops._hf_model(nnsight.NNsight(lin)) is lin
+    assert ops._hf_model(lin) is lin
+
+
 def test_manifest_routes_only_the_op_yaml():
     from interpretune.hub.opcollections import resolve_cached_op_files
 
@@ -120,3 +140,30 @@ def test_a_book_without_a_map_is_refused():
     R = _runtime()
     with pytest.raises(ValueError, match="needs venngram's Inkling 2 Mini map"):
         R.load_table(COMPONENT / "books" / "inkling2_mini_icv_nocoda_k10_n6.yaml")
+
+
+def test_a_venngram_without_execution_maps_is_refused(monkeypatch, tmp_path):
+    # a venngram that reads the book but predates execution maps loads the map without one; the book's visits must be
+    # refused by name rather than resolved against the weight-layer map (the pinned venngram refuses the book itself)
+    import venngram.book
+    import venngram.maps
+
+    class _Book:
+        @classmethod
+        def from_file(cls, path):
+            return cls()
+
+        def check_applies(self, **kwargs):
+            return None
+
+        def sets(self):
+            return {}
+
+    R = _runtime()
+    book = sorted((COMPONENT / "books").glob("*.yaml"))[0]
+    map_path = tmp_path / "inkling2_mini.yaml"
+    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n")
+    monkeypatch.setattr(venngram.book, "AddressBook", _Book)
+    monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: object())
+    with pytest.raises(ValueError, match="venngram read no execution map"):
+        R.resolve_book(book, map_path)

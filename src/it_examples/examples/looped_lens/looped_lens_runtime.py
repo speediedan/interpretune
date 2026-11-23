@@ -54,12 +54,21 @@ def resolve_book(book_path: str | pathlib.Path, map_path: str | pathlib.Path) ->
     """Resolve a lens book against venngram's Inkling 2 Mini map into the site table the runtime reads."""
     import yaml
 
-    # venngram is optional: only resolving a book needs it (a resolved site table does not)
-    from venngram.book import AddressBook  # pyright: ignore[reportMissingImports]
-    from venngram.maps import load_component_map  # pyright: ignore[reportMissingImports]
+    # imported here because only resolving a book needs venngram (a resolved site table does not)
+    from venngram.book import AddressBook
+    from venngram.maps import load_component_map
 
     book = AddressBook.from_file(str(book_path))
     cmap = load_component_map(str(map_path))
+    # A loop's visits are addressed through the map's execution section, which venngram before its Inkling map (main
+    # at c49e5f58) does not read; without it no visit can be told from another.
+    execution = getattr(cmap, "execution", None)
+    if execution is None:
+        raise ValueError(
+            f"{map_path}: venngram read no execution map, so a lens book's visits (layer and pass) cannot be resolved;"
+            " resolving a book needs a venngram with execution maps (main at c49e5f58 or later), or pass a resolved"
+            " site table (.json) instead"
+        )
     book.check_applies(architecture=yaml.safe_load(pathlib.Path(map_path).read_text())["architecture"])
     lens = yaml.safe_load(pathlib.Path(book_path).read_text()).get("lens")
     if not lens:
@@ -67,7 +76,7 @@ def resolve_book(book_path: str | pathlib.Path, map_path: str | pathlib.Path) ->
     sets = book.sets()
 
     def one(address: str, sets_=None):
-        ss = cmap.execution.resolve(address, sets=sets_)
+        ss = execution.resolve(address, sets=sets_)
         if len(ss) != 1:
             raise ValueError(f"{address!r} resolves to {len(ss)} sites; a lens readout reads exactly one visit")
         return ss[0]
