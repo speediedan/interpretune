@@ -283,6 +283,22 @@ else:
 - Ranks that logged different metric names in an epoch.
 - A data-parallel placement on the analysis runner, since attribution and analysis ops are not yet designed for it.
 
+## Compositions under `fsdp2`
+
+Which compositions place under `fsdp2` depends on whether their parameters are contiguous and on which module the
+backend calls. Each row is a test: placing must keep every parameter's values, and a refusal must name what it found.
+
+| Composition | Under `fsdp2` |
+| --- | --- |
+| Core (the model is called through the Interpretune module) | Places. The plan names the transformer block class. Training on two ranks matches one process on the combined batch. |
+| nnsight, and sae_lens over nnsight | Places, with the Hugging Face model as its own unit beside the blocks (`class:GPT2LMHeadModel` for GPT-2): nnsight calls that model directly, so FSDP2 would otherwise never gather it. A plan without it is refused, naming the unit to add. |
+| circuit-tracer over nnsight, with spliced transcoders | Places, with the blocks, each transcoder and its activation functions as their own units, the Hugging Face model among them, and their direct calls registered. On two ranks the logits, the nnsight trace, the transcoder activations and the sparse encode and decode equal one process's. |
+| TransformerLens built from a configuration (`ITLensCustomConfig`), sae_lens included | Places. Its blocks hold whole tensors. A schedule that thaws spliced SAEs by role (`role:latent:sae`) tunes on two ranks. |
+| TransformerLens bridge over a Hugging Face model, sae_lens included | Refused: the bridge splits the packed attention weight into non-contiguous views (`q`, `k`, `v`), which `fully_shard` cannot shard. The refusal names them. |
+
+The plan for a composition not listed is found the same way: give each block class its own unit, and place any module
+the backend calls directly as its own unit too.
+
 ## Limits
 
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
