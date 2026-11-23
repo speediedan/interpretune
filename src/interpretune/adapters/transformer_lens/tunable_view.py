@@ -195,6 +195,12 @@ class _WrappedModelStructure:
             return Refusal(f"`{name}` is no tensor of the model the bridge wraps")
         return unit_dim(wrapped, ndim)
 
+    def unit_block(self, name: str) -> int | None:
+        """The attention head block size the wrapped model's map row records for the same tensor, or None."""
+        unit_block = getattr(self._inner, "unit_block", None)
+        wrapped = self._tensors.get(name)
+        return unit_block(wrapped) if unit_block is not None and wrapped is not None else None
+
     def depth(self, stack: str | None = None) -> int | Refusal:
         return self._inner.depth(stack)
 
