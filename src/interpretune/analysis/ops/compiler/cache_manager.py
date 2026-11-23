@@ -3,6 +3,8 @@
 from __future__ import annotations
 import hashlib
 import importlib.util
+import os
+import uuid
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -601,8 +603,18 @@ class OpDefinitionsCacheManager:
         # Generate module content
         content = self._generate_module_content(op_definitions)
 
-        # Write to cache file
-        cache_path.write_text(content)
+        # Written beside the target and renamed over it, so a concurrent reader sees the old file or the new one and
+        # never part of one. UTF-8 because Python reads a source file as UTF-8 whatever the locale.
+        partial = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            partial.write_text(content, encoding="utf-8")
+            os.replace(partial, cache_path)
+        except PermissionError as denied:
+            # Windows refuses to replace a file another process has open; that process is reading a cache for the
+            # same fingerprint, so this write is redundant rather than lost.
+            rank_zero_warn(f"Could not write the compiled op cache {cache_path}: {denied}")
+        finally:
+            partial.unlink(missing_ok=True)
 
         return cache_path
 

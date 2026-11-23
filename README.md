@@ -6,10 +6,10 @@
 
 *Composable, shareable latent-space analysis mutually intelligible to humans and agents.*
 
-[![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
+[![CI](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.org/en/latest/)
 [![codecov](https://codecov.io/gh/speediedan/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/speediedan/interpretune)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/speediedan/interpretune/blob/main/pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/interpretune/interpretune/blob/main/pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 
 </div>
@@ -89,7 +89,7 @@ Interpretune uses [uv](https://github.com/astral-sh/uv) for fast, reliable depen
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone the repository
-git clone https://github.com/speediedan/interpretune.git && cd interpretune
+git clone https://github.com/interpretune/interpretune.git && cd interpretune
 
 # Set preferred venv base directory and name and create out-of-tree venv (recommended to enable multiple parallel envs)
 export VENV_BASE=${HOME}/.venvs
@@ -161,12 +161,12 @@ scalability, example-aligned customizability, and (soon) direct shareability/str
 
 ### Next: MVP milestone — shareable analysis artifacts
 
-The [MVP milestone](https://github.com/speediedan/interpretune/milestone/1) centers on making
+The [MVP milestone](https://github.com/interpretune/interpretune/milestone/1) centers on making
 Interpretune artifacts shareable on the Hub — most importantly **AnalysisStore upload/download**
 (analyses as exchangeable, reproducible, composable datasets), **adapter/session shareability**
 (an analysis is runnable, not just readable), and **cross-backend support hardening**
-([#201](https://github.com/speediedan/interpretune/issues/201),
-[#224](https://github.com/speediedan/interpretune/issues/224)). This is the same hub-artifact
+([#201](https://github.com/interpretune/interpretune/issues/201),
+[#224](https://github.com/interpretune/interpretune/issues/224)). This is the same hub-artifact
 pattern as the streamable-dashboards effort — one consistent story for dashboards, explanations,
 and analysis results.
 
@@ -179,9 +179,9 @@ above.
 
 ### Research directions
 
-RTE cross-backend research ([#220](https://github.com/speediedan/interpretune/issues/220)),
+RTE cross-backend research ([#220](https://github.com/interpretune/interpretune/issues/220)),
 Jacobian-space (J-lens) analysis support
-([#225](https://github.com/speediedan/interpretune/issues/225)), **self-interpretability**
+([#225](https://github.com/interpretune/interpretune/issues/225)), **self-interpretability**
 (interpretability that accelerates model advancement via self-reflection, including internal
 reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
 reflective cognition for counterfactuals via latent-state evaluation, meta-latent world-model
@@ -216,9 +216,9 @@ guide and `requirements/utils/lock_ci_requirements.sh` for CI-locked requirement
 
 Contributors are enthusiastically welcomed — Interpretune is built to be a
 community effort, and the transition from pre-MVP to alpha is the perfect moment to get involved.
-The [IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place
+The [IT-MVP milestone](https://github.com/interpretune/interpretune/milestone/1) is the best place
 to find priority items and good first issues, the
-[issue tracker](https://github.com/speediedan/interpretune/issues) tags documentation and
+[issue tracker](https://github.com/interpretune/interpretune/issues) tags documentation and
 `help wanted` items, and the [roadmap](#roadmap) above orients where things are headed. Thank you
 in advance for contributing to the open-source interpretability ecosystem — every issue, doc fix,
 and PR genuinely helps.

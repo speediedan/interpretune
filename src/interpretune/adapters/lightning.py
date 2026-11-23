@@ -134,18 +134,21 @@ if _LIGHTNING_AVAILABLE:
 
             result = step(batch, batch_idx, dataloader_idx)
             result = list(result) if isinstance(result, Iterator) else result
-            rows = getattr(self, "_it_analysis_rows", None)
-            if rows is not None:
-                # an AnalysisStoreCallback is collecting this predict run's rows: every item the step yields is a row,
+            writer = getattr(self, "_it_analysis_row_writer", None)
+            if writer is not None:
+                # an AnalysisStoreCallback is writing this predict run's rows: every item the step yields is a row,
                 # as in the core analysis loop, and a mapping returned whole is one row
+                yielded: Any = result
                 try:
-                    rows.extend([result] if isinstance(result, Mapping) else result)
+                    rows = [yielded] if isinstance(yielded, Mapping) else iter(yielded)
                 except TypeError as err:
                     raise MisconfigurationException(
                         f"the analysis step `{getattr(analysis_cfg, 'step_fn', 'analysis_step')}` returned a"
                         f" {type(result).__name__}, which is not an iterable of rows, so no AnalysisStore can be built"
                         " from it"
                     ) from err
+                for row in rows:
+                    writer.write(row)
             return True, result
 
         def on_predict_start(self) -> None:
@@ -200,16 +203,31 @@ if _LIGHTNING_AVAILABLE:
         ``Trainer.predict`` runs an analysis composition's configured step on each batch. With this callback in the
         Trainer's callbacks, the rows those steps yield are also written as the analysis config's ``AnalysisStore``,
         as ``AnalysisRunner.run_analysis`` writes them: the same features and format from the op's output schema, the
-        same ``output_store.save_dir``, ``output_store.dataset`` set to the result, and the ``on_analysis_start`` and
-        ``on_analysis_end`` hooks around the run.
+        same ``output_store.save_dir``, ``output_store.dataset`` set to the result, the ``on_analysis_start``,
+        ``on_analysis_epoch_end`` and ``on_analysis_end`` hooks around the run, and the same run-scoped op state.
 
-        Scope: predict in one process. The rows are held until the run ends, where the core analysis loop streams them
-        to the store, so a run's analysis outputs must fit in host memory. A module without an analysis config and op,
-        a multi-process predict, and a run that yields no rows are each refused by name.
+        Rows are streamed to disk as each batch's step yields them, so the run's host memory follows
+        ``writer_batch_size`` rather than its length. ``Trainer.predict`` still keeps every batch's outputs to return
+        them unless it is called with ``return_predictions=False``, which a long run should pass.
+
+        Scope: predict in one process. A module without an analysis config and op, a multi-process predict, and a run
+        that yields no rows are each refused by name. A run that raises leaves no partial store behind.
+
+        Args:
+            writer_batch_size: How many rows the writer buffers before each flush to disk. ``None`` (default) keeps the
+                ``datasets`` default, as ``AnalysisRunnerCfg.writer_batch_size`` does for the core loop.
         """
 
+        def __init__(self, writer_batch_size: int | None = None) -> None:
+            super().__init__()
+            if writer_batch_size is not None and writer_batch_size < 1:
+                raise MisconfigurationException(
+                    f"writer_batch_size must be a positive number of rows or None, got {writer_batch_size}"
+                )
+            self.writer_batch_size = writer_batch_size
+
         def on_predict_start(self, trainer: Any, pl_module: Any) -> None:
-            """Check the run can build a store, run the analysis start hooks and start collecting rows."""
+            """Check the run can build a store, run the analysis start hooks and open the row writer."""
             analysis_cfg = getattr(getattr(pl_module, "it_cfg", None), "analysis_cfg", None)
             if analysis_cfg is None or getattr(analysis_cfg, "op", None) is None:
                 raise MisconfigurationException(
@@ -223,52 +241,67 @@ if _LIGHTNING_AVAILABLE:
                     " one device."
                 )
             from interpretune.base.call import _call_itmodule_hook
+            from interpretune.runners.analysis import AnalysisRowWriter, dataset_features_and_format
 
             pl_module._ensure_analysis_setup()  # runs before the module's own predict-start hook
-            pl_module._it_analysis_rows = []
+            # the run boundary of declared op state, as `AnalysisRunner` owns it: a second predict starts clean
+            analysis_cfg.reset_op_state()
             _call_itmodule_hook(pl_module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
+            features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
+            pl_module._it_analysis_row_writer = AnalysisRowWriter(
+                features,
+                cache_dir=analysis_cfg.output_store.cache_dir,
+                it_format_kwargs=it_format_kwargs,
+                writer_batch_size=self.writer_batch_size,
+            )
 
-        def on_predict_end(self, trainer: Any, pl_module: Any) -> None:
-            """Write the collected rows as the store, then run the analysis end hooks."""
+        def on_predict_epoch_end(self, trainer: Any, pl_module: Any) -> None:
+            """Run the analysis epoch end hook, then clear the op state of ops that reset at an epoch boundary."""
             from interpretune.base.call import _call_itmodule_hook
 
-            rows = getattr(pl_module, "_it_analysis_rows", None)
-            pl_module._it_analysis_rows = None
-            try:
-                self._write(pl_module, rows or [])
-            finally:
-                _call_itmodule_hook(pl_module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
+            _call_itmodule_hook(
+                pl_module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks"
+            )
+            pl_module.it_cfg.analysis_cfg.reset_op_state(epoch_boundary=True)
 
-        @staticmethod
-        def _write(pl_module: Any, rows: list) -> None:
-            if not rows:
-                raise MisconfigurationException(
-                    "Trainer.predict produced no analysis rows, so there is no AnalysisStore to write (check"
-                    " limit_predict_batches and the predict dataloader)."
-                )
+        def on_predict_end(self, trainer: Any, pl_module: Any) -> None:
+            """Save the written rows as the store, then run the analysis end hooks."""
             from pathlib import Path
 
-            from datasets import Dataset
-            from datasets.fingerprint import generate_random_fingerprint
+            from interpretune.base.call import _call_itmodule_hook
 
-            from interpretune.runners.analysis import dataset_features_and_format
+            writer, pl_module._it_analysis_row_writer = pl_module._it_analysis_row_writer, None
+            try:
+                try:
+                    if len(writer) == 0:
+                        raise MisconfigurationException(
+                            "Trainer.predict produced no analysis rows, so there is no AnalysisStore to write (check"
+                            " limit_predict_batches and the predict dataloader)."
+                        )
+                    dataset = writer.finalize()
+                except BaseException:
+                    writer.abort()
+                    raise
+                output_store = pl_module.it_cfg.analysis_cfg.output_store
+                dataset.save_to_disk(Path(output_store.save_dir))
+                output_store.dataset = dataset
+            finally:
+                try:
+                    _call_itmodule_hook(pl_module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
+                finally:
+                    pl_module.it_cfg.analysis_cfg.finalize_op_state()
 
-            features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
-            output_store = pl_module.it_cfg.analysis_cfg.output_store
+        def on_exception(self, trainer: Any, pl_module: Any, exception: BaseException) -> None:
+            """Drop the partial rows of a predict run that raised, and release its op state.
 
-            def _rows():
-                yield from rows
-
-            # an explicit fingerprint, as the core loop passes, so datasets does not hash the rows to make one
-            dataset = Dataset.from_generator(
-                _rows,
-                features=features,  # pyright: ignore[reportArgumentType]  # datasets accepts a features mapping
-                cache_dir=str(output_store.cache_dir),
-                split="validation",  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
-                fingerprint=generate_random_fingerprint(),
-            ).with_format("interpretune", **it_format_kwargs)
-            dataset.save_to_disk(Path(output_store.save_dir))
-            output_store.dataset = dataset
+            The grad state the start hook set needs nothing here: Lightning's loop runs inside its own grad context,
+            which has already restored the caller's state by the time this is called.
+            """
+            writer = getattr(pl_module, "_it_analysis_row_writer", None)
+            if writer is not None:
+                pl_module._it_analysis_row_writer = None
+                writer.abort()
+                pl_module.it_cfg.analysis_cfg.finalize_op_state()
 
 else:
     LightningDataModule = object

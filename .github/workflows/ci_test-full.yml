@@ -220,9 +220,18 @@ jobs:
             ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
-      # Hosted runners come from more than one CPU generation, and an intermittent illegal-instruction crash on the
-      # Windows leg (#1113) points at a kernel selected for an instruction set the host lacks. Logging the CPU model and
-      # the capability torch's dispatcher selected lets a crashed leg be matched to its CPU.
+      # Some GitHub-hosted Windows hosts (seen on the Intel Xeon Platinum 8573C) advertise AMX inconsistently, so oneDNN
+      # selects its AMX kernels and the process dies on their first tile instruction (exit code 132). Capping oneDNN one
+      # level below AMX is the highest cap that does not crash there; torch's own kernels are unaffected. Remove this
+      # step when https://github.com/actions/runner-images/issues/14483 is fixed on the Windows images.
+      - name: Keep oneDNN off AMX (Windows only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "ONEDNN_MAX_CPU_ISA=AVX512_CORE_FP16" >> "$GITHUB_ENV"
+
+      # Hosted runners come from more than one CPU generation, and kernels selected for one can fail on another. Logging
+      # the CPU model, the capability torch's dispatcher selected and any oneDNN cap lets a crashed leg be matched to its
+      # CPU and shows whether the cap reached the job.
       - name: Report the runner's CPU
         continue-on-error: true
         shell: bash
@@ -233,6 +242,7 @@ jobs:
             macOS) sysctl -n machdep.cpu.brand_string ;;
           esac
           python -c "import platform, torch; print('processor:', platform.processor()); print('torch CPU capability:', torch.backends.cpu.get_cpu_capability())"
+          echo "ONEDNN_MAX_CPU_ISA: ${ONEDNN_MAX_CPU_ISA:-unset}"
 
       - name: Run pytest coverage w/ configured instrumentation
         id: run-pytest-coverage

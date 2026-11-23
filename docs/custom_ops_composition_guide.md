@@ -101,7 +101,7 @@ are held to exactly this rule by CI (`tests/core/test_bundled_op_publishability.
 family depends on Interpretune internals that a hub op collection could not import.
 
 Two mechanical gaps remain before a bundled family is literally publishable as-is, and both are
-tracked in [#266](https://github.com/speediedan/interpretune/issues/266): implementation paths must
+tracked in [#266](https://github.com/interpretune/interpretune/issues/266): implementation paths must
 be rewritten to the hub loader's `module.function` form, and `required_ops` that cross family
 boundaries need a declaration mechanism (today an unresolvable `required_ops` entry drops the op
 with a warning rather than failing loudly).

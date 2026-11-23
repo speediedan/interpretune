@@ -53,7 +53,7 @@ def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = N
     lines.append(summary or f"An interpretune {kind} artifact ({title}).")
     lines.append("")
     lines.append(
-        f"An [interpretune](https://github.com/speediedan/interpretune) artifact repo "
+        f"An [interpretune](https://github.com/interpretune/interpretune) artifact repo "
         f"(kind: {kind}; envelope schema v{envelope['schema']})."
     )
     lines += ["", "## Artifact", ""]
@@ -340,7 +340,7 @@ def generate_component_card(
     lines.append(summary or task.get("description") or f"An interpretune component collection ({title}).")
     lines.append("")
     lines.append(
-        f"An [interpretune](https://github.com/speediedan/interpretune) component repo (kinds: "
+        f"An [interpretune](https://github.com/interpretune/interpretune) component repo (kinds: "
         f"{', '.join(manifest['kinds'])}; manifest schema v{manifest['it_schema_version']})."
     )
     configs = (manifest.get("module") or {}).get("configs") or {}

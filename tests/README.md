@@ -382,7 +382,7 @@ Recommended triage flow:
 
 ```bash
 # Inspect the failed job summary first
-gh run view --repo speediedan/interpretune --job <job_id>
+gh run view --repo interpretune/interpretune --job <job_id>
 
 # Download the raw job log when artifacts are missing or upload steps were skipped
 gh api "repos/speediedan/interpretune/actions/jobs/<job_id>/logs" > /tmp/ci_job_<job_id>.log

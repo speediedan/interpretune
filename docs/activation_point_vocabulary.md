@@ -205,7 +205,7 @@ bundled map: a lookup refuses, listing what is known, and a map pulled as a `hoo
 the source for it with nothing to conflict against.
 
 **Pending: one source for the maps.** The bundled documents repeat facts venngram's registry also publishes, in a
-different schema, so the two can drift. [#1026](https://github.com/speediedan/interpretune/issues/1026) proposes
+different schema, so the two can drift. [#1026](https://github.com/interpretune/interpretune/issues/1026) proposes
 reading the maps from the registry and retiring the bundled set; until it lands, new architectures still enter here.
 
 **While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already

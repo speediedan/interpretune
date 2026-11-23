@@ -24,7 +24,7 @@ RAW = FULL_PHASE + [f"tests/test_cpu.py::test_{i}" for i in range(90)]
 
 def _manifest(selected, scope="full", selector=SELECTOR, revision=REV, phase="cuda") -> dict:
     return {
-        "repository": "speediedan/interpretune",
+        "repository": "interpretune/interpretune",
         "revision": revision,
         "phase": phase,
         "scope": scope,
@@ -58,7 +58,7 @@ def _report(manifest: dict, **override) -> dict:
 def _plan(mode="full", revision=REV) -> dict:
     return {
         "schema": "interpretune.gpu-ci.plan/1",
-        "identity": {"repository": "speediedan/interpretune", "build_id": "7", "merge_revision": revision},
+        "identity": {"repository": "interpretune/interpretune", "build_id": "7", "merge_revision": revision},
         "mode": mode,
         "why": "test",
         "extended": False,

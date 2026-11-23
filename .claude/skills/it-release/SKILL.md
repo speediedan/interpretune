@@ -10,7 +10,7 @@ metadata:
 # interpretune release: prepare, gate, publish, verify
 
 **No release has been cut yet.** The first is the alpha, `0.1.0a0`. Its three decisions are recorded on
-[#259](https://github.com/speediedan/interpretune/issues/259):
+[#259](https://github.com/interpretune/interpretune/issues/259):
 
 - **Release model (ruled 2026-11-22): tags on `main`.** A release is a tag on a gated `main` commit, and the tag is the
   version bump. A `release/X.Y.x` branch is cut from a tag only when a published release needs a fix that cannot wait

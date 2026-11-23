@@ -504,6 +504,11 @@ model_bwd_intervention:
       datasets_dtype: object
       required: false
       non_tensor: true
+    # Also store the activation at each captured site, from the same pass (grad_activation_values).
+    capture_activations:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
   output_schema:
     grad_point_names:
       datasets_dtype: string
@@ -530,6 +535,12 @@ model_bwd_intervention:
       dyn_dim: 1
       dyn_dim_ceil: max_seq_len
       array_shape: [null, batch_size]
+    # The activation at each captured site, laid out as the gradient values and described by grad_shape; written
+    # only with capture_activations.
+    grad_activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
 
 intervention_first_order_check:
   description: Check an applied intervention against its first-order prediction per basis
