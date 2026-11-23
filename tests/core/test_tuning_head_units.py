@@ -109,7 +109,7 @@ def _moved(model, handles):
 
 def test_the_measured_map_records_each_projections_head_block_and_passes_verification(model, measured):
     rows = measured["components"]
-    assert measured["schema_version"] == 6
+    assert measured["schema_version"] >= 6  # the schema that introduced `unit_block`; a later one may carry more
     assert {c: rows[f"blocks.{{i}}.attn.{c}"]["unit_block"] for c in "qkvo"} == dict.fromkeys("qkvo", D_HEAD)
     assert check_unit_blocks(from_document(measured), model).status == "passed"
 
