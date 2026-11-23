@@ -44,6 +44,7 @@ CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
 TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
 TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
+TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -1012,6 +1013,84 @@ def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_c
         )
         assert record["forward_diff"] < 1e-5
         assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
+
+
+@pytest.fixture(scope="module")
+def tiny_llama_nnsight_checkpoint(tmp_path_factory):
+    """A tiny Llama checkpoint with a word-level tokenizer saved beside it, built offline, since nnsight loads the
+    tokenizer from the model's path."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tiny_llama_nnsight")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+        pad_token_id=1,
+    )
+    LlamaForCausalLM(config).save_pretrained(path)
+    tokenizer = Tokenizer(WordLevel({f"t{i}": i for i in range(128)}, unk_token="t2"))
+    tokenizer.pre_tokenizer = Whitespace()
+    PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer, bos_token="t0", eos_token="t1", pad_token="t1", unk_token="t2"
+    ).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_nnsight_composition_default_plan_traces_like_one_process(tiny_llama_nnsight_checkpoint, tmp_path):
+    """An ``NNsightModule`` placed under ``tp`` with no ``tp_plan`` is split by its own default plan (the Hugging
+    Face model's declared plan, under ``hf_model``), and nnsight's trace on the split model reads, edits and back-
+    propagates as on the whole one.
+
+    One edit does not: PyTorch drops a slice assignment along a ``DTensor``'s sharded dimension without an error, so
+    slicing an activation inside a split layer (here a row-parallel ``down_proj``'s input) computes the unedited model.
+    The last assertion pins that. If it fails, PyTorch has fixed it: drop the caveat on ``SessionRunnerCfg.tp_plan``
+    and assert that the edit matches the reference instead.
+    """
+    out_dir = tmp_path / "nnsight"
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_NNSIGHT_WORKER), "--checkpoint", str(tiny_llama_nnsight_checkpoint), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp nnsight run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    for rank in range(2):
+        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        assert record["split_params"] == sorted(
+            f"hf_model.model.layers.{i}.{proj}.weight"
+            for i in range(2)
+            for proj in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        )
+        assert record["split_activation_type"] == "DTensor"
+        diff, effect = record["diff"], record["effect"]
+        for reading in ("attn0", "mlp0", "down1_in", "logits", "boundary_slice_edit", "split_scale_edit"):
+            assert diff[reading] < 1e-5, (reading, diff[reading])
+        assert diff["grad"] < 1e-4
+        # each edit moves the reference, so a dropped edit could not pass as a match
+        assert min(effect.values()) > 1e-3, effect
+        assert record["split_slice_edit_vs_unedited"] < 1e-5
 
 
 def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add: str | None = None) -> Path:
