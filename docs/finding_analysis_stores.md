@@ -138,6 +138,36 @@ a single row group, so its first row costs the whole file; the estimate covers t
 warns rather than refuses, since the read is correct, only slow. A file the envelope lists that is not in the
 repository at that commit is refused before any read, naming the commit and the files the envelope lists.
 
+## Reading a store against another model
+
+A store's columns can hold values that mean something only against the model, tokenizer or dictionaries they were
+computed on: a layer index, a token id, a latent's index. An op's output schema declares each of these as a `site` on
+the column's `ColCfg`, and the store publishes the declarations with its `col_cfg`. `resolve_on` checks them against
+another model, before reading any rows, and returns a view of the store read against it:
+
+```python
+view = store.resolve_on(it_session.module)     # or a StoreSubject
+view.subject                                    # still what the columns were computed on
+view.resolved_on                                # what they are read against
+```
+
+| `binds` | the column's values | carry over when |
+| --- | --- | --- |
+| `layer` | layer indices, whole or at one slot of a triple (with the point they index) | the two models have the same number of layers (depth is never rescaled), and the target's component map resolves the point |
+| `hook_key` | keys that are hook names | both component maps resolve each key, and the depths are the same |
+| `tokens` | token ids, or positions in a tokenized prompt | the two use the same tokenizer |
+| `latent_feature` | indices into a latent dictionary | the target has every dictionary the store records |
+| `frame` | values in the model's activation space (a concept direction, a latent state) | the target is the same model at the same revision |
+
+A column that does not carry over is refused, and a store with several refusals names them all, each with its column
+and reason; select the columns that do carry over with `select_columns` first. What cannot be established is refused
+too: an unrecorded layer count, tokenizer or dictionary, a model architecture with no component map, and a column with
+no configuration. A column that declares no site carries over to any target.
+
+Stores published before the declarations existed are refused by name, with the remedy (re-push with a current
+interpretune). Bindings are never inferred from a column's name or its values. Results recorded about the source model
+(logits, losses, probabilities) are data that carries over as it is: `resolve_on` does not re-express them.
+
 ## Dashboard corpora
 
 Dashboard corpora are discovered from the same publishers. `find_dashboard_corpora` and `resolve_bucket_for` (in

@@ -236,9 +236,11 @@ class TestReaderWindowMatrix:
     """
 
     def test_a_reader_one_version_behind_refuses_the_current_envelope_as_newer(self, monkeypatch):
-        monkeypatch.setattr("interpretune.hub.artifacts.ARTIFACT_SCHEMA_VERSION", 1)
+        monkeypatch.setattr("interpretune.hub.artifacts.ARTIFACT_SCHEMA_VERSION", ARTIFACT_SCHEMA_VERSION - 1)
         with pytest.raises(ArtifactEnvelopeError, match="written by a newer Interpretune"):
-            validate_artifact_envelope(_fixture(2), source="it_artifact_schema2.json")
+            validate_artifact_envelope(
+                _fixture(ARTIFACT_SCHEMA_VERSION), source=f"it_artifact_schema{ARTIFACT_SCHEMA_VERSION}.json"
+            )
 
     def test_an_older_envelope_inside_the_window_reads(self):
         assert ARTIFACT_SCHEMA_MIN_READABLE <= 1 < ARTIFACT_SCHEMA_VERSION
@@ -266,7 +268,7 @@ class TestWriterSideGuard:
         from interpretune.hub.subject import StoreSubject
 
         envelope = build_analysis_store_envelope(small_store, subject=StoreSubject(model_id="gpt2"))
-        assert envelope["subject"]["model"] == {"id": "gpt2", "revision": None}
+        assert envelope["subject"]["model"] == {"id": "gpt2", "revision": None, "n_layers": None}
 
     def test_malformed_preserved_identity_refused_before_upload(self, small_store):
         """The re-push path feeds an EXISTING envelope's identity back in; a bad one must not ship."""
