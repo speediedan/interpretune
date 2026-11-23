@@ -19,7 +19,7 @@ import importlib
 import json
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from interpretune.hub.cache import IT_ARTIFACTS_HUB_CACHE, IT_ARTIFACTS_HUB_CACHE_SETTING, ensure_writable_cache_root
 
@@ -152,7 +152,8 @@ def _resolve_protocol_path(path: str, source: str = "<envelope>"):
         raise ArtifactEnvelopeError(
             f"{source}: protocol_cls {path!r} names a module outside interpretune and the hub components this process"
             " has loaded through the remote-code gate, so it is not imported. Load the component that defines it"
-            " first (it.hub.load, under IT_TRUST_REMOTE_CODE), then pull the store again."
+            " first (it.hub.load, under IT_TRUST_REMOTE_CODE), then pull the store again; or pull it with"
+            " protocol='schema' to read its columns without importing that module."
         )
     protocol_cls = getattr(module, attr, None)
     # MRO rather than issubclass: the base is a non-runtime_checkable Protocol, so issubclass raises.
@@ -161,7 +162,7 @@ def _resolve_protocol_path(path: str, source: str = "<envelope>"):
     return protocol_cls
 
 
-def _protocol_cls_entry(store) -> dict[str, str]:
+def _protocol_cls_entry(store) -> dict[str, Any]:
     """The store's batch protocol as a PORTABLE import path, omitted when it is the default.
 
     Recorded at write time rather than reconstructed on pull, for the same reason op provenance is:
@@ -171,12 +172,41 @@ def _protocol_cls_entry(store) -> dict[str, str]:
     Omitted for the default, so an envelope only carries the key when it says something. A reader seeing
     no key gets the default, which is what they would have got anyway.
     """
-    from interpretune.protocol import DefaultAnalysisBatchProtocol
+    from interpretune.protocol import DefaultAnalysisBatchProtocol, batch_protocol_fields
 
     protocol_cls = getattr(store, "_protocol_cls", None)
     if protocol_cls is None or protocol_cls is DefaultAnalysisBatchProtocol:
         return {}
-    return {"protocol_cls": f"{protocol_cls.__module__}.{protocol_cls.__qualname__}"}
+    if (recorded := getattr(protocol_cls, "recorded_protocol", None)) is not None:
+        # a schema-only read re-published: carry the original path and fields forward rather than the stand-in's
+        return {"protocol_cls": recorded, "protocol_fields": sorted(batch_protocol_fields(protocol_cls))}
+    return {
+        "protocol_cls": f"{protocol_cls.__module__}.{protocol_cls.__qualname__}",
+        # the attribute surface as data, so a reader who does not import the protocol still gets the same names
+        "protocol_fields": sorted(batch_protocol_fields(protocol_cls)),
+    }
+
+
+def _schema_only_protocol(declared: str, fields: list[str], fields_from: str) -> type:
+    """A stand-in for an envelope's protocol, built from field names alone, so nothing the envelope names is
+    imported.
+
+    A store's protocol decides only which names get attribute access; rows decode through ``col_cfg``. The stand-in
+    declares ``fields`` and carries ``recorded_protocol`` (the path the envelope names) and ``fields_from``
+    (``"envelope"`` when the writer recorded the names, ``"columns"`` when an older envelope did not and the store's
+    own columns stand in, so a declared field the store does not hold raises rather than reading as None).
+    """
+    import types
+
+    from interpretune.protocol import BaseAnalysisBatchProtocol
+
+    def _body(ns: dict) -> None:
+        ns["__annotations__"] = dict.fromkeys(fields, "Any")
+        ns["__module__"] = __name__
+        ns["recorded_protocol"] = declared
+        ns["fields_from"] = fields_from
+
+    return types.new_class(f"SchemaOnly[{declared}]", (BaseAnalysisBatchProtocol,), {}, _body)
 
 
 def _analysis_backend_name(store) -> str | None:
@@ -498,6 +528,7 @@ def pull_analysis_store(
     streaming: bool = False,
     columns: list[str] | None = None,
     block_size: int = STREAMING_BLOCK_SIZE,
+    protocol: Literal["resolve", "schema"] = "resolve",
 ):
     """Fetch an analysis-store artifact and hydrate it: envelope-first, formatter re-attached.
 
@@ -510,6 +541,13 @@ def pull_analysis_store(
     envelope's commit, through range requests of ``block_size`` bytes, reading only ``columns`` when they are named.
     It can be iterated and read by column but not indexed by position (see ``AnalysisStore``). ``columns`` projects a
     streamed read, so it is refused without ``streaming=True``.
+
+    ``protocol`` says what to do with the batch protocol the envelope records. ``"resolve"`` (the default) uses the
+    class itself: interpretune's own, or one from a hub component this process loaded through the remote-code gate,
+    and refuses any other, since importing it runs its module. ``"schema"`` imports nothing: the store gets a stand-in
+    declaring the field names the envelope records (see ``_schema_only_protocol``), which gives the same attribute
+    access, and every column reads and decodes as in a resolved pull. The protocol's own methods, if it defines any,
+    are what a schema read gives up.
     """
     from datasets import load_dataset
     from huggingface_hub import hf_hub_download, snapshot_download
@@ -517,6 +555,8 @@ def pull_analysis_store(
     from interpretune.analysis import AnalysisStore
     from interpretune.hub.components import _TELEMETRY
 
+    if protocol not in ("resolve", "schema"):
+        raise ValueError(f"protocol={protocol!r} is not a protocol mode: pass 'resolve' (the default) or 'schema'.")
     if columns is not None and not streaming:
         raise ValueError(
             "columns= projects a streamed read, and a full pull downloads every column regardless. Pass"
@@ -553,7 +593,14 @@ def pull_analysis_store(
         format_kwargs["analysis_backend"] = resolve_analysis_backend(it_block["analysis_backend"])
     store_kwargs: dict[str, Any] = {}
     if (declared := it_block.get("protocol_cls")) is not None:
-        store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
+        if protocol == "schema":
+            recorded = it_block.get("protocol_fields")
+            fields = recorded if recorded is not None else list(dataset.column_names or [])
+            store_kwargs["protocol_cls"] = _schema_only_protocol(
+                declared, fields, "envelope" if recorded is not None else "columns"
+            )
+        else:
+            store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
     store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None, **store_kwargs)
     if (record := envelope.get("subject")) is not None:  # absent only from a version-1 envelope
         from interpretune.hub.subject import StoreSubject

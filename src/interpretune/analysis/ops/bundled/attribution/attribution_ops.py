@@ -270,9 +270,10 @@ def ablation_attribution_impl(
             base_diffs = base_diffs.cpu()
 
             # Attribution is difference between base and ablated performance
+            # the accumulator holds the column's declared precision; a latent model run in float64 computes in float64
             attribution_values[act_name][example_mask, latent_idx] = (
                 base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
-            )
+            ).to(attribution_values[act_name].dtype)
 
     # Update analysis batch with results
     for key in per_latent:

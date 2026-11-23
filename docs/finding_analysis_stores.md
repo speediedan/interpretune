@@ -32,7 +32,8 @@ with `UntrustedPublisherSpecError`, rather than matching nothing.
 
 **What trust means here.** Trusting a publisher lets discovery list its artifacts. It runs none of their code: a
 pulled store still resolves its `protocol_cls` only from interpretune or from a hub component already loaded through
-the remote-code gate, and that gate (`IT_TRUST_REMOTE_CODE`) is separate and default-deny. See
+the remote-code gate, and that gate (`IT_TRUST_REMOTE_CODE`) is separate and default-deny. A store whose protocol you
+have not loaded can still be read with `pull_analysis_store(..., protocol="schema")`, which imports nothing. See
 [Trusting hub components](hub_trust_posture.md).
 
 Trust is per publisher for now, which keeps the model simple. A finer, per-collection posture may follow if a use for
