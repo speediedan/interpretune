@@ -32,7 +32,8 @@ with `UntrustedPublisherSpecError`, rather than matching nothing.
 
 **What trust means here.** Trusting a publisher lets discovery list its artifacts. It runs none of their code: a
 pulled store still resolves its `protocol_cls` only from interpretune or from a hub component already loaded through
-the remote-code gate, and that gate (`IT_TRUST_REMOTE_CODE`) is separate and default-deny. See
+the remote-code gate, and that gate (`IT_TRUST_REMOTE_CODE`) is separate and default-deny. A store whose protocol you
+have not loaded can still be read with `pull_analysis_store(..., protocol="schema")`, which imports nothing. See
 [Trusting hub components](hub_trust_posture.md).
 
 Trust is per publisher for now, which keeps the model simple. A finer, per-collection posture may follow if a use for
@@ -127,6 +128,15 @@ only when a read reaches it. `push_analysis_store` writes row groups of about 16
 34 MB at 16 MB groups, against the whole file at the 100 MB `datasets` default, while a scan of two scalar columns took
 11 requests rather than the 38 that 4 MB groups need. A store whose rows are each larger than the target (one
 attribution graph per row, for example) gets one row per group.
+
+**A streamed pull says when the first row will be expensive.** Before it streams, the pull reads each listed file's
+footer (one request of one block) and estimates what reaching the first row fetches: the largest row group's bytes for
+the columns you project, twice over when the file has more than one group, since a scan reads one group ahead. Above
+64 MB (`STREAMED_FIRST_ROW_WARN_BYTES`) it warns, naming the estimate and the two remedies: project with `columns=`, or
+re-publish the store so it gets the row-group target. A store pushed before the target was recorded is, below 100 MB,
+a single row group, so its first row costs the whole file; the estimate covers that case from the footer alone. It
+warns rather than refuses, since the read is correct, only slow. A file the envelope lists that is not in the
+repository at that commit is refused before any read, naming the commit and the files the envelope lists.
 
 ## Dashboard corpora
 
