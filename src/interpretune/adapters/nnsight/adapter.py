@@ -261,14 +261,15 @@ class BaseNNsightModule(BaseITModule):
                     "Set NDIF_API_KEY environment variable or provide api_key in nnsight_cfg."
                 )
 
-        # Initialize the NNsight model. TransformersModel with the text-generation task
-        # is what the deprecated LanguageModel name pinned; it also constructs
-        # multimodal-registered repos (e.g. gemma-3-4b-it) that LanguageModel refused,
-        # so no vision fallback remains. tokenizer_kwargs are settings on the loaded
-        # tokenizer (padding_side being the usual one), applied after construction.
+        # Initialize the NNsight model. TransformersModel with the text-generation task (the
+        # default `nnsight_cfg.task`) is what the deprecated LanguageModel name pinned; it also
+        # constructs multimodal repos whose configuration is registered for causal LM (e.g.
+        # gemma-3-4b-it). One registered only under a multimodal task names it in the config.
+        # tokenizer_kwargs are settings on the loaded tokenizer (padding_side being the usual
+        # one), applied after construction.
         rank_zero_debug(f"NNsight kwargs: {nnsight_kwargs}")
         tokenizer_kwargs = nnsight_kwargs.pop("tokenizer_kwargs", None)
-        self.model = TransformersModel(model_name, task="text-generation", **nnsight_kwargs)
+        self.model = TransformersModel(model_name, task=nnsight_cfg.task, **nnsight_kwargs)
         for key, value in (tokenizer_kwargs or {}).items():
             setattr(self.model.tokenizer, key, value)
 
