@@ -63,9 +63,15 @@ gradient_attribution:
     attribution_values:
       datasets_dtype: float32
       per_latent_model_hook: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     correct_activations:
       datasets_dtype: float32
       per_latent_model_hook: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     prompts:
       datasets_dtype: string
       required: false
@@ -105,18 +111,33 @@ ablation_attribution:
     attribution_values:
       datasets_dtype: float32
       per_latent_model_hook: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     logit_diffs:
       datasets_dtype: float32
       per_latent: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     answer_logits:
       datasets_dtype: float32
       per_latent: true
       sequence_type: false
       array_shape: [batch_size, max_answer_tokens, num_classes]
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     loss:
       datasets_dtype: float32
       per_latent: true
       sequence_type: false
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
     preds:
       datasets_dtype: int64
       per_latent: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
