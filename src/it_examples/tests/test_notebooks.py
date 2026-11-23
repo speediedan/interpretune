@@ -1066,6 +1066,46 @@ def test_neuron_finder_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# fp32 gemma-3-1b-it, both featurizers and the J-lens, then two tuning sessions one at a time
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=16.0)
+def test_bsf_blocks_notebook(tmp_path: Path):
+    """The block-sparse featurizer blocks example (#866) on gemma-3-1b-it, shortened, against the local-publish
+    snapshot.
+
+    The notebook asserts its own controls (the native edit is the edit written by hand, the untuned splice leaves the
+    model unchanged, both tuning stages run); this checks it ran clean and reached the tuning comparison.
+    """
+    import json
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "bsf_blocks" / "bsf_blocks.ipynb",
+        parameters={
+            "N_SCREEN": 32,
+            "N_EVAL": 32,
+            "DOSES": [4.0],
+            "N_CONTROLS": 2,
+            "LIMIT_TRAIN_BATCHES": 2,
+            "LIMIT_VAL_BATCHES": 1,
+            "REVISION": rev,
+        },
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "edited natively at the answer position" in tables, "the native block edits did not run"
+    assert "Tuning two blocks of the frozen featurizer" in tables, "the tuning comparison did not run"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -1087,6 +1127,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
+        "bsf_blocks/bsf_blocks.ipynb",
         "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",

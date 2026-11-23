@@ -1860,7 +1860,7 @@ class ModelBackendConformance:
         """At a reported layer the heads' shares and the bypass share sum to 1, and a head carries something, since
         a report of zeros would also partition the edges.
 
-        A composition whose backend cannot split edges must refuse by name rather than report.
+        A composition whose backend cannot split edges must refuse the report.
         """
         import interpretune as it
         from interpretune.analysis.ops.base import AnalysisBatch
@@ -1878,8 +1878,10 @@ class ModelBackendConformance:
                 head_layers=[0],
             )
 
-        if suite.module.replacement_model.backend != "nnsight":
-            with pytest.raises(ValueError, match="nnsight backend only"):
+        from circuit_tracer.attribution.head_loadings import HEAD_LOADING_BACKENDS
+
+        if suite.module.replacement_model.backend not in HEAD_LOADING_BACKENDS:
+            with pytest.raises(ValueError, match="head loadings are implemented for .* backends only"):
                 report()
             return
         shares = report()
