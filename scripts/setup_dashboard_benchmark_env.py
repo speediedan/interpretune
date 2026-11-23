@@ -228,7 +228,7 @@ class RepoSpec:
 
 
 REPOS: tuple[RepoSpec, ...] = (
-    RepoSpec("interpretune", "interpretune", "https://github.com/speediedan/interpretune.git", INTERPRETUNE_BRANCH),
+    RepoSpec("interpretune", "interpretune", "https://github.com/interpretune/interpretune.git", INTERPRETUNE_BRANCH),
     RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", SAE_DASHBOARD_BRANCH),
     RepoSpec("sae_lens", "SAELens", "https://github.com/speediedan/SAELens.git", WAVE_BRANCH),
     RepoSpec("neuronpedia", "neuronpedia", "https://github.com/speediedan/neuronpedia.git", WAVE_BRANCH),

@@ -326,7 +326,7 @@ the phases: attach the latent model already trainable rather than `frozen=True`,
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
-  (tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
+  (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
-[interpretune#803](https://github.com/speediedan/interpretune/issues/803).
+[interpretune#803](https://github.com/interpretune/interpretune/issues/803).

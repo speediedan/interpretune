@@ -366,7 +366,7 @@ process per GPU, coarse layer-level partitioning, per-worker resume — via the 
 mode above. It is validated at that level and no further: there is no intra-layer sharding, no dynamic
 load balancing across heterogeneous GPUs, no cross-worker work stealing, and no multi-GPU-aware import
 overlap. Those are real optimization opportunities that have been deliberately deprioritized until the
-Scalable Dashboards coordination PR lands (link: [interpretune#231](https://github.com/speediedan/interpretune/issues/231));
+Scalable Dashboards coordination PR lands (link: [interpretune#231](https://github.com/interpretune/interpretune/issues/231));
 treat this section as the record of what *is* supported and how it was validated.
 
 Supported behaviors (all exercised on the example pair below):
@@ -1362,8 +1362,8 @@ source-set dashboards + explanations become easily shareable (stream-on-demand f
 repo) rather than dependent on central Neuronpedia database changes. The same hub-artifact
 direction is planned to carry **Jacobian-space (J-lens) artifacts** (readouts, sparse concept
 inventories, patched-run records) once J-lens support lands — scoped and tracked in
-[interpretune#225](https://github.com/speediedan/interpretune/issues/225), co-designed with
-AnalysisStore hub upload/download ([interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
+[interpretune#225](https://github.com/interpretune/interpretune/issues/225), co-designed with
+AnalysisStore hub upload/download ([interpretune#124](https://github.com/interpretune/interpretune/issues/124)).
 
 <a id="hub-dashboard-discovery"></a>
 ### Finding a published corpus: trusted publishers

@@ -23,9 +23,9 @@ tensor is refused unless `CircuitTracerConfig.tune_base` is set, and with no rep
 composition is refused. The replacement model is registered on the module once.
 
 Parity with the packaged adapters (views, conformance and examples) is tracked in
-[interpretune#815](https://github.com/speediedan/interpretune/issues/815).
+[interpretune#815](https://github.com/interpretune/interpretune/issues/815).
 
 The adapter ships an RTE tuning example as run configurations alone, in its
 [`examples/rte_ft/`](https://github.com/speediedan/it-interp-engine-adapter/tree/main/examples/rte_ft) (gpt2 and
 Qwen3-0.6B, on the core loop and on Lightning). Tuning examples for every adapter are tracked in
-[interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+[interpretune#812](https://github.com/interpretune/interpretune/issues/812).

@@ -240,7 +240,7 @@ def test_the_plan_record_carries_identity_selection_and_change_set(spec):
 
     env = {
         "BUILD_REASON": "PullRequest",
-        "BUILD_REPOSITORY_NAME": "speediedan/interpretune",
+        "BUILD_REPOSITORY_NAME": "interpretune/interpretune",
         "BUILD_BUILDID": "2150",
         "SYSTEM_PULLREQUEST_PULLREQUESTNUMBER": "1051",
         "SYSTEM_PULLREQUEST_SOURCECOMMITID": "f" * 40,

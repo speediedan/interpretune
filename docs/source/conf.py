@@ -198,7 +198,7 @@ html_css_files = ["custom.css"]
 html_logo = "_static/images/logos/logo_interpretune.svg"
 html_favicon = "_static/images/logos/icon_interpretune.svg"
 html_theme_options = {
-    "github_url": "https://github.com/speediedan/interpretune",
+    "github_url": "https://github.com/interpretune/interpretune",
     "navbar_align": "content",
     "show_toc_level": 2,
     # 0 => every caption group in the sidebar starts collapsed. The index page carries a quickstart
@@ -211,7 +211,7 @@ html_theme_options = {
 # so we render the full toctree from depth 0 via a custom template.
 html_sidebars = {"**": ["sidebar-nav-global.html"]}
 html_context = {
-    "github_user": "speediedan",
+    "github_user": "interpretune",
     "github_repo": "interpretune",
     "github_version": "main",
     "doc_path": "docs/source",
