@@ -27,6 +27,7 @@ from interpretune.analysis.backends import (
     track_gradient,
 )
 from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
+from interpretune.analysis.backends.prefix_cache import refuse_prefix_cache
 from interpretune.protocol import NamesFilter
 
 
@@ -386,6 +387,7 @@ class TLModelBackend:
 
     def fwd(self, model: Any, batch: dict[str, Any]) -> torch.Tensor:
         """Minimal forward pass via TransformerLens — returns logits directly."""
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         return model(**batch)
 
     def fwd_w_cache_and_latent_models(
@@ -396,6 +398,7 @@ class TLModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run forward pass with activation caching and latent model hooks via TransformerLens."""
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         names_filter, requested = _normalize_names_filter(model, names_filter, latent_model_handles)
         logits, cache = model.run_with_cache_with_saes(**batch, saes=latent_model_handles, names_filter=names_filter)
         return logits, _restore_requested_names(cache, requested)
@@ -407,6 +410,7 @@ class TLModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run forward pass with activation caching via TransformerLens."""
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         names_filter, requested = _normalize_names_filter(model, names_filter)
         logits, cache = model.run_with_cache(**batch, names_filter=names_filter)
         return logits, _restore_requested_names(cache, requested)
@@ -420,6 +424,7 @@ class TLModelBackend:
         clear_contexts: bool = True,
     ) -> torch.Tensor:
         """Run forward pass with custom hooks and latent model hooks via TransformerLens."""
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         return model.run_with_hooks_with_saes(
             **batch,
             saes=latent_model_handles,
@@ -452,6 +457,7 @@ class TLModelBackend:
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
         """
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         return [
             self.fwd_w_hooks_and_latent_models(
                 model=model,
@@ -492,6 +498,7 @@ class TLModelBackend:
         Returns:
             Raw model output logits.
         """
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         fwd_hooks = _normalize_hooks(model, fwd_hooks, latent_model_handles)
         bwd_hooks = _normalize_hooks(model, bwd_hooks, latent_model_handles)
         with torch.set_grad_enabled(True):
@@ -531,6 +538,7 @@ class TLModelBackend:
         1. **Baseline**: ``run_with_cache`` to capture pre-intervention logits.
         2. **Intervention**: ``run_with_hooks`` with forward hooks built from *interventions*.
         """
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         if isinstance(interventions, InterventionDict):
             expanded_matches = {hook_name: [hook_name] for hook_name in interventions.keys()}
             hook_names = list(interventions.keys())
@@ -604,6 +612,7 @@ class TLModelBackend:
         TransformerLens backward hook). With no interventions only the baseline pass runs, and the edited gradients
         are the baseline ones.
         """
+        refuse_prefix_cache(batch, "TransformerLens bridge")
         readout = as_readout(readout)
         available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
         if isinstance(interventions, InterventionDict):
