@@ -22,4 +22,4 @@ The address selects the same tensors on the [nnsight](tuning_nnsight.md) and
 [TransformerLens](tuning_transformer_lens.md) compositions of the model, whose names differ
 ([conformance](tuning.md#conformance) checks it).
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/interpretune/interpretune/issues/812).

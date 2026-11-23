@@ -15,7 +15,7 @@ are all interventions on a model's internal variables.
 - **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
   parameter tensor or its units ([parameter targets](#parameter-targets)). A subset of
   an attribution graph, distilled in one context and applied in another, is a planned target too
-  ([#966](https://github.com/speediedan/interpretune/issues/966),
+  ([#966](https://github.com/interpretune/interpretune/issues/966),
   [venngram#78](https://github.com/speediedan/venngram/issues/78)).
 - **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
   gradient target is a backward-pass intervention, applied by `model_bwd_intervention`
@@ -44,7 +44,7 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
 ### Parameter targets
 
 `interpretune.tuning.weights` materializes ops on parameters
-([#960](https://github.com/speediedan/interpretune/issues/960)):
+([#960](https://github.com/interpretune/interpretune/issues/960)):
 
 - `apply_weight_patch(module, patch)` applies a venngram weight patch (`kind: weight_patch`: a low-rank, sparse or dense
   delta, `add` or `replace`) to the one tensor its `target` addresses, after checking that the tensor hashes to the
@@ -60,7 +60,7 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   state would still move the other units. The target may also be a site, `point:mlp.out.hook_in & layers:12`: neuron
   $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
-  of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
+  of the target's address ([#868](https://github.com/interpretune/interpretune/issues/868)).
 
   With `rank=r`, each matrix's delta is low-rank over the selected slices only, LoRA's factorization restricted to the
   units: $\Delta_S = \tfrac{\alpha}{r} B A$, where $B$ has one row per selected unit and starts at zero, $A$ has one
@@ -70,6 +70,20 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   interpretune's weight edits and works on every composition; the TransformerLens composition's `peft` LoRA adapters
   are whole-matrix, roled by name, and the two do not interact. Use `rank=` to tune many units of wide tensors with
   few parameters, and the full delta when the selection is small.
+
+  At an attention site, `point:attn.hook_z & layers:12`, the units are heads. Head $h$ is a block of $d_{head}$
+  coordinates: columns $h d_{head}$ to $(h+1) d_{head} - 1$ of the output projection $W_O$, and the matching rows (and
+  bias entries) of the value projection $W_V$ for the value head it reads. The block size is the component map row's
+  `unit_block` (venngram component map schema 6, measured by `venngram.maps.verification.with_layouts`), never read
+  from the model's config; a map that records none is refused, naming the field. Under grouped-query attention one
+  value head serves a group of query heads, so tuning its rows for one head would move the others: the value side is
+  refused unless the selection covers whole groups, naming the group and the heads it lacks. `value_side=False` tunes
+  only the $W_O$ blocks, for any heads. A fused QKV projection records no value block, so it needs `value_side=False`.
+
+  Heads are a convenience over coordinates, not a replacement. On a tensor target, `units` may be coordinates, which
+  may cross head boundaries (`component:attn.o & layers:12 & leaf:weight` with `[4, 5, 6, 7]`), or whole heads
+  (`{"heads": [1]}`), expanded along the row's unit axis exactly as venngram resolves the address
+  `units: {heads: [1]}` ([#868](https://github.com/interpretune/interpretune/issues/868)).
 - `attach_feature_adapter(module, catalog, target, name=..., n_layers=...)` tunes only some feature blocks of an
   attached latent model. The target is a feature address (`features:bsf & layers:4 & units:[2, 5]`), resolved through
   a `LatentCatalog` to whole blocks, so a block-sparse featurizer's feature and an SAE's latent use one grammar. Block
@@ -78,7 +92,7 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   take `adapter:<name>`, and the rest of the latent model keeps its own role, so a frozen (`artifact`) featurizer can
   be tuned at a few blocks only. Each tensor's latent axis is found by its length; a featurizer as wide as its site
   names the tensors to adapt and their axes in `axes`
-  ([#868](https://github.com/speediedan/interpretune/issues/868)).
+  ([#868](https://github.com/interpretune/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
   token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
   weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
@@ -124,7 +138,7 @@ units, else through venngram's registry map for the model the module carries, an
 is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps but keeps
 the modules themselves, so its view resolves the wrapped model's map through them: each tensor takes the layer,
 component and unit axis of the same tensor in the wrapped model, and the op runs on a TransformerLens composition as on
-the others ([#1055](https://github.com/speediedan/interpretune/issues/1055)). An nnsight composition registers the
+the others ([#1055](https://github.com/interpretune/interpretune/issues/1055)). An nnsight composition registers the
 model's own modules and is described by its map directly. The model-backend conformance suite runs the same comparison for a per-neuron
 recipe on every target whose view places units, and for an output rejection on every target whose view resolves
 `mlp.out`, each together with a check that taking the weight form back restores the base logits exactly.
@@ -210,7 +224,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
     feature and position, so it is refused here. Block-sparse nodes (a vector value per node rather than one feature's
     scalar) are not yet supported on this path and are refused by name
-    ([#966](https://github.com/speediedan/interpretune/issues/966)). `export_graph_subset` writes such a document
+    ([#966](https://github.com/interpretune/interpretune/issues/966)). `export_graph_subset` writes such a document
     from a circuit-tracer attribution graph, pruned (`build_pruned_graph`) or whole: each selected feature is a node at
     its source layer, position and feature index with its activation, anchored `from_end` by default (or `absolute`,
     `token_match` with the source tokenizer, or `all`), the attributions between exported features are its edges, and
@@ -257,7 +271,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   venngram's conformance checker reads both without Interpretune installed. Interventions on sets of units named by
   address, composed with set algebra, are the next section's subject
   ([unit-set interventions](#unit-set-interventions-by-address)); applying attribution-graph subsets from one context
-  in another, on both surfaces, is tracked in [#966](https://github.com/speediedan/interpretune/issues/966).
+  in another, on both surfaces, is tracked in [#966](https://github.com/interpretune/interpretune/issues/966).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
@@ -418,7 +432,7 @@ A gradient target is translated with `flow="grad"` for the backward surface
 - **Registered address books with evidence**, so an experiment cites a model's sets, their compositions and the
   evidence behind them by reference rather than re-deriving indices, with registered examples for supported models.
 
-Both are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
+Both are tracked in [#905](https://github.com/interpretune/interpretune/issues/905).
 
 ## Latent addresses: blocks, frames, charts and linear spaces
 

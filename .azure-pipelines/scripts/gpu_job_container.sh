@@ -202,7 +202,7 @@ PY
         if [[ "${IT_GPU_SELECTION_MODE:-}" == selected ]]; then
             flags=(-F gpu-selected); name="GPU-selected-coverage-${IT_GPU_VENDOR:-unknown}"
         fi
-        ./codecov upload-process --slug 'speediedan/interpretune' -t "$CODECOV_TOK" --commit-sha "${BUILD_SOURCEVERSION:?}" \
+        ./codecov upload-process --slug 'interpretune/interpretune' -t "$CODECOV_TOK" --commit-sha "${BUILD_SOURCEVERSION:?}" \
             --git-service 'github' -n "$name" "${flags[@]}" --env 'linux,azure' -f 'coverage.xml'
         ;;
     hf-cache-fix)

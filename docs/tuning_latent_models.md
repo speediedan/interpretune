@@ -8,7 +8,7 @@ A *latent model* models a site's activations through latents. Examples:
 - a transcoder reads one site (an MLP's input) and rewrites another (that MLP's output);
 - a block-sparse featurizer, or any other dictionary, does either.
 
-`interpretune.tuning.latents` fixes only the seam these models share. Any of them can then be attached at a site, on any backend but circuit-tracer, and scheduled by role. It provides the seam, not a recipe: which latent models tune well, and how, is still being measured, so concrete latent tuning examples will follow that work ([interpretune#812](https://github.com/speediedan/interpretune/issues/812)).
+`interpretune.tuning.latents` fixes only the seam these models share. Any of them can then be attached at a site, on any backend but circuit-tracer, and scheduled by role. It provides the seam, not a recipe: which latent models tune well, and how, is still being measured, so concrete latent tuning examples will follow that work ([interpretune#812](https://github.com/interpretune/interpretune/issues/812)).
 
 ## The seam
 

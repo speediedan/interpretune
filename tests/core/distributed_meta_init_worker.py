@@ -59,12 +59,13 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--drop", default=None, help="a submodule to delete from rank 0's copy (a planted defect)")
     parser.add_argument("--loader", default="rank0", choices=("rank0", "dcp"))
-    parser.add_argument("--arch", default="gpt2", choices=("gpt2", "llama"))
+    parser.add_argument("--arch", default="gpt2", choices=("gpt2", "llama", "mixtral"))
+    parser.add_argument("--reference", default=None, help="a hub-layout checkpoint of the model, to compare with")
     parser.add_argument("--lora", action="store_true", help="LoRA on the model and on rank 0's copy (GPT-2, rank0)")
     parser.add_argument("--train-step", action="store_true", help="one SGD step after loading, against one process")
     args = parser.parse_args()
 
-    from transformers import GPT2LMHeadModel, LlamaForCausalLM
+    from transformers import GPT2LMHeadModel, LlamaForCausalLM, MixtralForCausalLM
 
     from interpretune.runners.distributed import (
         META_INIT_CHECKPOINT,
@@ -79,9 +80,13 @@ def main() -> None:
     run = resolve_placement("fsdp2")
     assert run is not None
     init_process_group(run)
-    archs = {"gpt2": (GPT2LMHeadModel, "GPT2Block"), "llama": (LlamaForCausalLM, "LlamaDecoderLayer")}
+    archs = {
+        "gpt2": (GPT2LMHeadModel, "GPT2Block"),
+        "llama": (LlamaForCausalLM, "LlamaDecoderLayer"),
+        "mixtral": (MixtralForCausalLM, "MixtralDecoderLayer"),
+    }
     model_class, block = archs[args.arch]
-    reference = model_class.from_pretrained(args.checkpoint)
+    reference = model_class.from_pretrained(args.reference or args.checkpoint)
     base_logits = None
     if args.lora:
         with torch.no_grad():

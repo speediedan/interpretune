@@ -45,14 +45,18 @@ def test_a_local_path_reads_the_file(tmp_path):
 
 
 def test_a_store_reference_fetches_and_pins(tmp_path):
+    """A store publishes a recipe as a treatment of its address book (venngram retired the standalone recipe
+    kind)."""
     from venngram import store
 
     root = tmp_path / "published"
     root.mkdir()
-    (root / "recipe.yaml").write_text(yaml.safe_dump(RECIPE))
-    store.publish("local", str(root), root, documents=[("recipe", "recipe.yaml")])
+    treatment = {"model": RECIPE["model"], "stages": RECIPE["stages"]}
+    book = {**RECIPE["book"], "treatments": {RECIPE["name"]: treatment}}
+    (root / "book.yaml").write_text(yaml.safe_dump(book))
+    store.publish("local", str(root), root, documents=[("address_book", "book.yaml")])
 
-    fetched = load_recipe(f"local:{root}:recipe.yaml")
+    fetched = load_recipe(f"local:{root}:book.yaml")
     assert fetched.recipe.name == "dose-the-units"
     assert fetched.reference is not None and "#" in fetched.reference  # pinned by content
     assert store.pin(fetched.reference).__str__() == fetched.reference  # already exact

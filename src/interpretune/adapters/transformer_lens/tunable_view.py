@@ -207,6 +207,17 @@ class _WrappedModelStructure:
             return Refusal(f"`{name}` is a view the bridge makes of `{wrapped}`: unit ops address the fused tensor")
         return unit_dim(wrapped, ndim)
 
+    def unit_block(self, name: str) -> int | None:
+        """The attention head block size the wrapped model's map row records for the same tensor, or None.
+
+        None for a view too: the row describes the fused tensor's axes, and ``unit_dim`` refuses a view.
+        """
+        if name in self._views:
+            return None
+        unit_block = getattr(self._inner, "unit_block", None)
+        wrapped = self._tensors.get(name)
+        return unit_block(wrapped) if unit_block is not None and wrapped is not None else None
+
     def depth(self, stack: str | None = None) -> int | Refusal:
         return self._inner.depth(stack)
 
