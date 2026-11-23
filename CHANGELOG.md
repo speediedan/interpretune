@@ -318,6 +318,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- `regen-ci-req-report` writes its report to the job summary instead of commenting on the pull request. The regeneration nearly always finds upstream drift, so the comment landed on almost every pull request and mailed every subscriber about something nobody acts on; the job now needs only `contents: read` ([#1197](https://github.com/interpretune/interpretune/issues/1197))
+
 - The nnsight pin moves from 0.8.2 to 0.8.3, the release NDIF's hosted service runs. It lets NDIF accept requests over 1 MB, keeps an attached PEFT adapter from freezing the base model, and passes a `cache_dir`, `token` or `revision` through to the tokenizer. Two of its changes reach callers: `local_files_only=True` passed to an nnsight model constructor now raises a `TypeError` (set `HF_HUB_OFFLINE=1` instead), and a Gemma tokenizer that leaves `<bos>` off a plain string now adds it, so a string that already starts with `<bos>` gets a second ([#1169](https://github.com/interpretune/interpretune/issues/1169))
 
 - The `knowing_using` gated and mid-only schedules name their band by a venngram depth-fraction address (`role:adapter & layers:0.25d:0.75d`) in place of a regex per model, so one schedule serves Qwen2.5-1.5B and Llama-3.2-1B, and the per-model Llama schedule copies are gone; a test checks the address selects exactly the tensors the reported runs trained at both depths. The tuning page also counts the three extension arms correctly and says which use phases ([#1142](https://github.com/interpretune/interpretune/issues/1142), [#1134](https://github.com/interpretune/interpretune/issues/1134))
