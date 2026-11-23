@@ -302,13 +302,18 @@ the backend calls directly as its own unit too.
 An intervention attached to the module trains on two ranks as on one (`ddp` and `fsdp2`): its parameters are the root
 unit's, so the hook that applies it inside a block sees the whole operand, and both ranks end with the same value.
 
+A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
+`fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model values. A
+phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+
 ## Limits
 
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
-  process on the combined batch step for step), not yet under `ddp` or on accelerators.
+  process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
+  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole

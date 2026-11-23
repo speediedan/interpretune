@@ -680,6 +680,56 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert len(record["fsdp_units"]) == 3
 
 
+@pytest.fixture(scope="module")
+def addressed_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("dist_addressed_reference")
+    _launch("single", out_dir, "--addressed")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+# the last block's MLP, then the latent model too, then the first block's attention too: what the worker's addresses
+# (`layers:-1: & component:mlp.*`, `role:latent:probe`, `layers:0 & component:attn.*`) must select
+_PROBE = {f"latent_models.probe.{n}" for n in ("enc.weight", "enc.bias", "dec.weight", "dec.bias")}
+_MLP = {f"model.layers.1.feed_forward.{n}.{leaf}" for n in ("w1", "w2") for leaf in ("weight", "bias")}
+ADDRESSED_EPOCHS = [_MLP, _MLP | _PROBE, _MLP | _PROBE | {f"model.layers.0.attention.w{n}.weight" for n in "qkvo"}]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the schedule's addresses are finetuning-scheduler's")
+@pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
+def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extra, addressed_reference, tmp_path):
+    """A schedule naming what to tune by layer and component and by role (never by parameter name) thaws the same
+    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values."""
+    _launch(placement, tmp_path, *extra, "--addressed")
+    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
+    reference = addressed_reference
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
+    for record in (reference, *records):
+        assert [set(names) for names in record["trainable_by_epoch"]] == ADDRESSED_EPOCHS
+        assert record["depth"] == 2
+        # the latent model trained: an untrained one would match the reference too, up to its small steps
+        assert record["probe_init"] == reference["probe_init"] and record["probe_params"] != record["probe_init"]
+        for name, values in reference["probe_params"].items():
+            assert record["probe_params"][name] == pytest.approx(values, rel=0, abs=1e-6), name
+    assert "" in records[0]["fsdp_units"] and (placement == "ddp" or len(records[0]["fsdp_units"]) == 3)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="promotion is finetuning-scheduler's")
+@pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
+def test_promoting_a_frozen_latent_model_is_refused_by_name_when_sharded(placement, extra, tmp_path):
+    """Finetuning-scheduler cannot promote an ``artifact`` tensor of a sharded model, and says so on every rank
+    before training; one process promotes it (``test_tuning_latents.py``), so the same schedule is not silently
+    different."""
+    _launch(placement, tmp_path, *extra, "--addressed", "promote")
+    for rank in range(2):
+        record = json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text())
+        assert "`promote` tensors of a sharded model" in record["refused"]
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the memory profiler and phased tuning are finetuning-scheduler's")
