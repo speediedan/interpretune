@@ -19,7 +19,7 @@ import importlib
 import json
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from interpretune.hub.cache import IT_ARTIFACTS_HUB_CACHE, IT_ARTIFACTS_HUB_CACHE_SETTING, ensure_writable_cache_root
 
@@ -50,6 +50,11 @@ ANALYSIS_STORE_ROW_GROUP_SIZE = "16MB"
 #: ``HfFileSystem``'s read-ahead block for a streamed pull. Its 5 MiB default is fetched on every range request, so a
 #: projected read of two small columns cost 5.4 MB of transfer where 64 KiB blocks cost 197 KB.
 STREAMING_BLOCK_SIZE = 64 * 1024
+
+#: The estimated first-row cost above which a streamed pull warns. A scan reads one row group ahead, so reaching the
+#: first row fetches about two row groups of the projected columns, and a store pushed before the row-group target
+#: (a file under 100 MB is then one group) costs its whole file. 64 MB is about two groups at the 16 MB target.
+STREAMED_FIRST_ROW_WARN_BYTES = 64 * 1024 * 1024
 
 #: The first schema whose envelopes must carry a ``subject`` block. Version 2 made it mandatory, since a store says
 #: nothing usable about what it was computed on without it; a version-1 envelope is still read, with no subject.
@@ -152,7 +157,8 @@ def _resolve_protocol_path(path: str, source: str = "<envelope>"):
         raise ArtifactEnvelopeError(
             f"{source}: protocol_cls {path!r} names a module outside interpretune and the hub components this process"
             " has loaded through the remote-code gate, so it is not imported. Load the component that defines it"
-            " first (it.hub.load, under IT_TRUST_REMOTE_CODE), then pull the store again."
+            " first (it.hub.load, under IT_TRUST_REMOTE_CODE), then pull the store again; or pull it with"
+            " protocol='schema' to read its columns without importing that module."
         )
     protocol_cls = getattr(module, attr, None)
     # MRO rather than issubclass: the base is a non-runtime_checkable Protocol, so issubclass raises.
@@ -161,7 +167,7 @@ def _resolve_protocol_path(path: str, source: str = "<envelope>"):
     return protocol_cls
 
 
-def _protocol_cls_entry(store) -> dict[str, str]:
+def _protocol_cls_entry(store) -> dict[str, Any]:
     """The store's batch protocol as a PORTABLE import path, omitted when it is the default.
 
     Recorded at write time rather than reconstructed on pull, for the same reason op provenance is:
@@ -171,12 +177,41 @@ def _protocol_cls_entry(store) -> dict[str, str]:
     Omitted for the default, so an envelope only carries the key when it says something. A reader seeing
     no key gets the default, which is what they would have got anyway.
     """
-    from interpretune.protocol import DefaultAnalysisBatchProtocol
+    from interpretune.protocol import DefaultAnalysisBatchProtocol, batch_protocol_fields
 
     protocol_cls = getattr(store, "_protocol_cls", None)
     if protocol_cls is None or protocol_cls is DefaultAnalysisBatchProtocol:
         return {}
-    return {"protocol_cls": f"{protocol_cls.__module__}.{protocol_cls.__qualname__}"}
+    if (recorded := getattr(protocol_cls, "recorded_protocol", None)) is not None:
+        # a schema-only read re-published: carry the original path and fields forward rather than the stand-in's
+        return {"protocol_cls": recorded, "protocol_fields": sorted(batch_protocol_fields(protocol_cls))}
+    return {
+        "protocol_cls": f"{protocol_cls.__module__}.{protocol_cls.__qualname__}",
+        # the attribute surface as data, so a reader who does not import the protocol still gets the same names
+        "protocol_fields": sorted(batch_protocol_fields(protocol_cls)),
+    }
+
+
+def _schema_only_protocol(declared: str, fields: list[str], fields_from: str) -> type:
+    """A stand-in for an envelope's protocol, built from field names alone, so nothing the envelope names is
+    imported.
+
+    A store's protocol decides only which names get attribute access; rows decode through ``col_cfg``. The stand-in
+    declares ``fields`` and carries ``recorded_protocol`` (the path the envelope names) and ``fields_from``
+    (``"envelope"`` when the writer recorded the names, ``"columns"`` when an older envelope did not and the store's
+    own columns stand in, so a declared field the store does not hold raises rather than reading as None).
+    """
+    import types
+
+    from interpretune.protocol import BaseAnalysisBatchProtocol
+
+    def _body(ns: dict) -> None:
+        ns["__annotations__"] = dict.fromkeys(fields, "Any")
+        ns["__module__"] = __name__
+        ns["recorded_protocol"] = declared
+        ns["fields_from"] = fields_from
+
+    return types.new_class(f"SchemaOnly[{declared}]", (BaseAnalysisBatchProtocol,), {}, _body)
 
 
 def _analysis_backend_name(store) -> str | None:
@@ -463,6 +498,67 @@ def _published_parquet_urls(repo_id: str, commit: str, envelope: dict) -> list[s
     return [f"hf://datasets/{repo_id}@{commit}/{name}" for name in files]
 
 
+def _streamed_first_row_bytes(url: str, columns: list[str] | None, storage_options: dict) -> tuple[int, int]:
+    """Estimate what reaching the first row of ``url`` fetches, from its footer alone: ``(bytes, row groups)``.
+
+    One footer read (a single block of :data:`STREAMING_BLOCK_SIZE` for a footer that fits it) gives each row group's
+    compressed chunk sizes for the projected ``columns``. The scan reads one group ahead, so the estimate is the
+    largest group's projected bytes, twice when the file has more than one group.
+    """
+    import fsspec
+    import pyarrow.parquet as pq
+
+    protocol = url.split("://", 1)[0] if "://" in url else "file"
+    options = {**storage_options.get(protocol, {}), "block_size": STREAMING_BLOCK_SIZE}
+    fs, path = fsspec.core.url_to_fs(url, **options)
+    with fs.open(path, "rb", block_size=STREAMING_BLOCK_SIZE) as handle:
+        metadata = pq.ParquetFile(handle).metadata
+    wanted = None if columns is None else set(columns)
+    largest = 0
+    for g in range(metadata.num_row_groups):
+        group = metadata.row_group(g)
+        chunks = (group.column(c) for c in range(group.num_columns))
+        projected = sum(
+            chunk.total_compressed_size
+            for chunk in chunks
+            if wanted is None or chunk.path_in_schema.split(".", 1)[0] in wanted
+        )
+        largest = max(largest, projected)
+    return largest * min(2, metadata.num_row_groups), metadata.num_row_groups
+
+
+def _warn_on_streamed_read_cost(
+    source: str, files: list[str], urls: list[str], columns: list[str] | None, storage_options: dict
+) -> None:
+    """Warn when reaching a streamed store's first row is estimated to fetch more than
+    :data:`STREAMED_FIRST_ROW_WARN_BYTES`.
+
+    The read is correct, only slow, so this warns rather than refuses. A listed file that cannot be found is refused,
+    naming the envelope's commit and file list, which the raw ``FileNotFoundError`` does not.
+    """
+    worst = (0, 0, "")
+    for name, url in zip(files, urls):
+        try:
+            estimate, groups = _streamed_first_row_bytes(url, columns, storage_options)
+        except FileNotFoundError as e:
+            raise ArtifactEnvelopeError(
+                f"{source}: the envelope lists {name!r}, which is not in the repository at that commit (it lists"
+                f" {files}). Re-publish the store, or pull the commit that holds those files."
+            ) from e
+        worst = max(worst, (estimate, groups, name))
+    estimate, groups, name = worst
+    if estimate > STREAMED_FIRST_ROW_WARN_BYTES:
+        from interpretune.utils import rank_zero_warn
+
+        projected = f"columns {columns}" if columns is not None else "every column"
+        rank_zero_warn(
+            f"{source}: reaching the first row of this streamed store is estimated to fetch about"
+            f" {estimate / 1e6:.0f} MB ({projected}; {name} has {groups} row group(s), and a scan reads one ahead)."
+            " Pass `columns=` to read only what you need, or re-publish it with push_analysis_store, which writes"
+            f" row groups of {ANALYSIS_STORE_ROW_GROUP_SIZE}."
+        )
+
+
 def _stream_parquet(
     urls: list[str], split: str, *, columns: list[str] | None, storage_options: dict, token: str | None
 ):
@@ -498,6 +594,7 @@ def pull_analysis_store(
     streaming: bool = False,
     columns: list[str] | None = None,
     block_size: int = STREAMING_BLOCK_SIZE,
+    protocol: Literal["resolve", "schema"] = "resolve",
 ):
     """Fetch an analysis-store artifact and hydrate it: envelope-first, formatter re-attached.
 
@@ -509,7 +606,15 @@ def pull_analysis_store(
     ``streaming=True`` downloads nothing up front: the store streams the Parquet files the envelope lists, at the
     envelope's commit, through range requests of ``block_size`` bytes, reading only ``columns`` when they are named.
     It can be iterated and read by column but not indexed by position (see ``AnalysisStore``). ``columns`` projects a
-    streamed read, so it is refused without ``streaming=True``.
+    streamed read, so it is refused without ``streaming=True``. A streamed pull first reads each listed file's footer
+    and warns when reaching the first row is estimated to cost more than :data:`STREAMED_FIRST_ROW_WARN_BYTES`.
+
+    ``protocol`` says what to do with the batch protocol the envelope records. ``"resolve"`` (the default) uses the
+    class itself: interpretune's own, or one from a hub component this process loaded through the remote-code gate,
+    and refuses any other, since importing it runs its module. ``"schema"`` imports nothing: the store gets a stand-in
+    declaring the field names the envelope records (see ``_schema_only_protocol``), which gives the same attribute
+    access, and every column reads and decodes as in a resolved pull. The protocol's own methods, if it defines any,
+    are what a schema read gives up.
     """
     from datasets import load_dataset
     from huggingface_hub import hf_hub_download, snapshot_download
@@ -517,6 +622,8 @@ def pull_analysis_store(
     from interpretune.analysis import AnalysisStore
     from interpretune.hub.components import _TELEMETRY
 
+    if protocol not in ("resolve", "schema"):
+        raise ValueError(f"protocol={protocol!r} is not a protocol mode: pass 'resolve' (the default) or 'schema'.")
     if columns is not None and not streaming:
         raise ValueError(
             "columns= projects a streamed read, and a full pull downloads every column regardless. Pass"
@@ -534,6 +641,8 @@ def pull_analysis_store(
     if streaming:
         urls = _published_parquet_urls(repo_id, commit, envelope)
         hf_options = {"hf": {"block_size": block_size, "token": token}}
+        files = list(envelope["artifacts"]["interchange"]["files"])
+        _warn_on_streamed_read_cost(f"{repo_id}@{commit}", files, urls, columns, hf_options)
         dataset = _stream_parquet(urls, split, columns=columns, storage_options=hf_options, token=token)
     else:
         snapshot = snapshot_download(
@@ -553,7 +662,14 @@ def pull_analysis_store(
         format_kwargs["analysis_backend"] = resolve_analysis_backend(it_block["analysis_backend"])
     store_kwargs: dict[str, Any] = {}
     if (declared := it_block.get("protocol_cls")) is not None:
-        store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
+        if protocol == "schema":
+            recorded = it_block.get("protocol_fields")
+            fields = recorded if recorded is not None else list(dataset.column_names or [])
+            store_kwargs["protocol_cls"] = _schema_only_protocol(
+                declared, fields, "envelope" if recorded is not None else "columns"
+            )
+        else:
+            store_kwargs["protocol_cls"] = _resolve_protocol_path(declared, source=repo_id)
     store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None, **store_kwargs)
     if (record := envelope.get("subject")) is not None:  # absent only from a version-1 envelope
         from interpretune.hub.subject import StoreSubject

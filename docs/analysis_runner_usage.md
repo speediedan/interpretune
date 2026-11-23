@@ -200,9 +200,9 @@ This is the pattern the planned circuit-tracer cross-backend composition demo wi
 
 ## Current Limitations
 
-- **Lightning integration** — `AnalysisRunner` extends `SessionRunner` (core framework). Running analysis workflows through a Lightning `Trainer` is not yet supported.
+- **Lightning integration is partial:** `AnalysisRunner` extends `SessionRunner` (core framework). A Lightning-composed module with an `analysis_cfg` runs its analysis step under a `Trainer`: `Trainer.predict` routes each batch through the configured step (manual, or generated from the op) and returns its per-batch outputs, and `Trainer.test` runs the same setup while its batches still go through the module's own `test_step`. With `interpretune.adapters.lightning.AnalysisStoreCallback` in the `Trainer`'s callbacks, `Trainer.predict` also writes those rows as the analysis config's `AnalysisStore`, as `AnalysisRunner.run_analysis` does: the op's output features and format, `output_store.save_dir`, `output_store.dataset`, the `on_analysis_start`, `on_analysis_epoch_end` and `on_analysis_end` hooks, and the same run-scoped op state. Rows are streamed to disk as each batch yields them (`AnalysisStoreCallback(writer_batch_size=...)` sets how many are buffered, as `AnalysisRunnerCfg.writer_batch_size` does for the core loop). `Trainer.predict` also keeps every batch's outputs to return them, so pass `return_predictions=False` on a long run. It runs in one process. A module with no analysis op, a multi-process predict and a run that yields no rows are refused, and a run that raises leaves no partial store. Distributed runs, analysis checkpointing and Lightning logging backends under a `Trainer` are tracked in [#211](https://github.com/speediedan/interpretune/issues/211).
 - **Single-process only** — Analysis loops do not support distributed execution.
-- **Core-only hooks** — Analysis hooks (`on_analysis_start`, etc.) are only fired by the core runner, not by Lightning callbacks.
+- **Analysis hooks under Lightning:** the analysis hooks fire under a `Trainer` only with `AnalysisStoreCallback`, and a predict run is one epoch, so `on_analysis_epoch_end` fires once.
 
 ## Related Documents
 

@@ -133,8 +133,11 @@ paper scores every evaluation row, which may account for its small differences.
 
 ## Extensions: phases as stages, and placement in place of a loss
 
-Two arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed by
-seed with them. Both use finetuning-scheduler's phases as experimental stages.
+Three arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed by
+seed with them. The two gated arms use finetuning-scheduler's phases as experimental stages: a transition on a measured
+metric opens the second phase. The mid-only arm is a single phase, whose schedule only chooses which adapters train.
+The band the gated and mid-only arms confine training to, from $0.25L$ to $0.75L$, is a venngram address over fractions
+of the depth (`role:adapter & layers:0.25d:0.75d`), so the same schedules serve every model this example runs.
 
 - **Gated** (`runs/kug_gated.qwen2_5_1_5b.core.yaml`). The paper applies LRSD from the first step, while its own
   diagnosis is that plain fine-tuning stops moving knowledge once memorization saturates. Phase 0 trains every block's
@@ -177,10 +180,10 @@ The paper's Table 9 also covers Llama-3.2-1B, and every arm above was repeated o
 `configs/kug_lrsd.llama3_2_1b.core.yaml`. It keeps the recipe and changes what the model fixes: the paper's Llama fact
 seed (1340: 794 unique single-hop questions and 427 two-hop questions), and, since the model has 16 decoder blocks
 rather than 28, the layer pair 12 to 8 (block 8's state is trained toward block 12's, at $0.5L$ and $0.75L$ as on
-Qwen) and the band of blocks 4 to 11 ($0.25L$ to $0.75L$) for the gated and mid-only arms. Their schedules,
-`ft_schedules/kug_gated.llama3_2_1b.yaml` and `ft_schedules/kug_mid_only.llama3_2_1b.yaml`, name that band by regex. The
-no-refreeze arm's schedule refreezes nothing, so it runs unchanged. Llama-3.2's chat template stamps the current date
-into its system prompt, and the configuration pins it to the authors' date so that every run sees the same prompt.
+Qwen). Every arm runs the schedule it runs on Qwen: the band's depth-fraction address resolves to blocks 4 to 11 here
+and 7 to 20 there. The runs reported below named the band by a regex per model, and a test checks that the address
+selects exactly those tensors at both depths. Llama-3.2's chat template stamps the current date into its system prompt,
+and the configuration pins it to the authors' date so that every run sees the same prompt.
 
 Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
 

@@ -25,12 +25,25 @@ config's `model_name_or_path` can be set to an arbitrary identifier — the TL p
 resolution is driven by the TL config's own model selection, so `model_name_or_path` functions as
 a label rather than a required HF-hub pointer in that mode.
 
-## CLI: `auto_comp_cfg` is not supported via jsonargparse
+## CLI: setting nested session values such as `auto_comp_cfg`
 
-The `auto_comp_cfg` mechanism (automatic composition-config resolution,
-`interpretune.config.shared.AutoCompConfig`) is **not supported through the CLI**: jsonargparse's
-signature-driven parsing cannot represent its dynamic target-class rebinding. Configure
-`auto_comp_cfg` programmatically (or via YAML consumed by the session API) instead of CLI flags.
+The CLI reads the session subtree (`session_cfg`, or `registered_cfg` and `shared_config` in the flattened form) as a
+plain mapping and builds the session from it through the same loader as the programmatic path. So every module config
+field, `auto_comp_cfg` (`interpretune.config.shared.AutoCompConfig`) included, can be set in a configuration file passed
+with `--config`, or on the command line in either of two forms:
+
+```bash
+# a nested path: the value is read as YAML and merged over the configuration files
+interpretune --config run.yaml \
+  --registered_cfg.module_cfg.init_args.auto_comp_cfg.init_args.module_cfg_name RTEBoolqConfig
+
+# a mapping as JSON, merged over the configuration files the same way
+interpretune --config run.yaml --registered_cfg '{"module_cfg": {...}}'
+```
+
+Either form keeps the fields of the files' mapping that it does not name. Mappings merge key by key, while a list or a
+scalar replaces the files' value. `--print_config` shows the parsed arguments only, so a nested path is not in its
+output, although the session is built with it.
 
 ## Lightning precision plugins only convert floating-point tensors
 

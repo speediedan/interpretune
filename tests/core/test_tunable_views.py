@@ -515,14 +515,21 @@ class _Holder(nn.Module):
         self.model = model
 
 
-def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter():
+@pytest.mark.parametrize("architectures", [None, ["GPT2LMHeadModel"]], ids=["unrecorded", "recorded"])
+def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter(architectures):
     """GPT-2 with LoRA under a module of its own: the base map mounts through PEFT's wrappers, and each adapter tensor
-    takes its adapter's name from venngram's overlay (#900)."""
+    takes its adapter's name from venngram's overlay (#900).
+
+    A checkpoint's config records its ``architectures``, and a ``PeftModel`` reports its base model's config, so the
+    wrapper itself names the mapped architecture; the map still mounts at the model it wraps (#1142).
+    """
     peft = pytest.importorskip("peft")
     transformers = pytest.importorskip("transformers")
     from venngram.maps import MappedView
 
-    config = transformers.GPT2Config(vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32)
+    config = transformers.GPT2Config(
+        vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32, architectures=architectures
+    )
     model = peft.get_peft_model(transformers.GPT2LMHeadModel(config), peft.LoraConfig(r=2, target_modules=["c_attn"]))
     model.add_adapter("probe", peft.LoraConfig(r=2, target_modules=["c_attn"]))
     holder = _Holder(model)

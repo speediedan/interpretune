@@ -8,6 +8,7 @@ ranks `torchrun` launches:
 | `single` (default) | the whole model, one process | local |
 | `ddp` | the whole model | averaged across ranks |
 | `fsdp2` | a shard of each parameter, its gradient and its optimizer state | reduce-scattered across ranks |
+| `tp` | a slice of each layer `tp_plan` selects; every rank sees the same batch | computed together |
 
 Both data-parallel placements use FSDP2's `fully_shard`. For `ddp` it runs over a `(replicate, shard)` mesh whose shard
 dimension has size one, so every rank keeps whole, replicated parameters. Either way the module is modified in place
@@ -95,6 +96,16 @@ run_cfg:
 
 A plan that leaves a called module to the root unit is refused, naming the `class:` keys to add. FSDP2 cannot shard a
 0-d parameter, which it refuses too.
+
+## Tensor parallelism
+
+`tp` splits layers across ranks instead of data: the layers `tp_plan` selects are split with `parallelize_module`
+(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned. Every
+rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
+as `fsdp_plan`, each mapped to a parallel style (`{style: colwise}`, `rowwise`, `sequence`, `prepare_input`, ...) and
+its layouts. Without one, the module's own default is used: a Hugging Face model's declared plan on the core and nnsight
+paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
+`fsdp_default_kwargs` under `tp`.
 
 ## Models larger than one rank's accelerator
 

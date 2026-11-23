@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 import torch
 from plotly.subplots import make_subplots
 
-from it_examples.utils.nb_ui_utils import (
+from interpretune.harness.notebook_ui import (
     NotebookLink,
     display_notebook_table,
     display_plotly_figure,

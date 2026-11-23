@@ -436,7 +436,7 @@ class KUGRunRecorder:
         Path(self.out).write_text(json.dumps(record))
 
 
-def _run_config(revision: str, work: Path, run_key: str = RUN_KEY, fts_init_args: dict | None = None) -> Path:
+def _run_config(revision: str, work: Path, run_key: str = RUN_KEY) -> Path:
     from interpretune.hub.components import resolve_component_file
 
     shipped = resolve_component_file(f"hub://{KUG_REPO}@{revision}/runs/{run_key}.yaml")
@@ -446,7 +446,6 @@ def _run_config(revision: str, work: Path, run_key: str = RUN_KEY, fts_init_args
     callbacks = cfg["run_cfg"]["callbacks"]
     by_name = {cb["class_path"].rsplit(".", 1)[-1]: cb for cb in callbacks}
     by_name["ExactMatchReport"]["init_args"]["log_path"] = str(work / "exact_match.json")
-    by_name["FTSCoreCallback"]["init_args"].update(fts_init_args or {})
     callbacks.append({"class_path": f"{__name__}.KUGRunRecorder", "init_args": {"out": str(work / "record.json")}})
     path = work / "run.yaml"
     path.write_text(yaml.safe_dump(cfg))
@@ -525,29 +524,18 @@ def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, c
 def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
     kug, kug_revision, clean_cli_env, tmp_path, monkeypatch
 ):
-    """The gated arm's run configuration, with a threshold of 0 (so phase 1 opens after the first epoch) and the
-    shipped schedule's structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    """The gated arm's run configuration and shipped schedule, with a threshold of 0 (so phase 1 opens after the
+    first epoch).
+
+    The schedule names its band by depth fraction, so on the tiny model's 4 blocks the mid band is blocks 1 and
+    2.
+    """
     from interpretune.base.components.cli import core_cli_main
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.chdir(tmp_path)
-    schedule = {
-        0: {"params": [r"model\..*\.lora_[AB]\..*"], "phase_config": {"lrsd_lambda": 0.0}},
-        1: {
-            "params": [],
-            "refreeze": [r"model\..*\.layers\.(?:0|3)\..*\.lora_[AB]\..*"],
-            "phase_config": {"lrsd_lambda": 1.0},
-        },
-    }
-    schedule_path = tmp_path / "gated_schedule.yaml"
-    schedule_path.write_text(yaml.safe_dump(schedule))
     transition = {"class_path": "knowing_using.MetricThresholdTransition", "init_args": {"threshold": 0.0}}
-    run_config = _run_config(
-        kug_revision,
-        tmp_path,
-        run_key="kug_gated.qwen2_5_1_5b.core",
-        fts_init_args={"schedule": str(schedule_path)},
-    )
+    run_config = _run_config(kug_revision, tmp_path, run_key="kug_gated.qwen2_5_1_5b.core")
     cfg = yaml.safe_load(run_config.read_text())
     cfg["run_cfg"]["callbacks"][1]["init_args"]["tuning_scheduler_kwargs"]["transition"] = transition
     run_config.write_text(yaml.safe_dump(cfg))
@@ -563,17 +551,13 @@ def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
 
 
 def test_the_mid_only_run_trains_the_mid_band_on_cross_entropy(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
-    """The mid-only arm's run configuration (its ``lrsd_lambda: 0.0`` included), with the shipped schedule's
-    structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    """The mid-only arm's run configuration (its ``lrsd_lambda: 0.0`` included) and shipped schedule, whose depth-
+    fraction band is blocks 1 and 2 of the tiny model's 4."""
     from interpretune.base.components.cli import core_cli_main
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.chdir(tmp_path)
-    schedule_path = tmp_path / "mid_only_schedule.yaml"
-    schedule_path.write_text(yaml.safe_dump({0: {"params": [r"model\..*\.layers\.(?:1|2)\..*\.lora_[AB]\..*"]}}))
-    run_config = _run_config(
-        kug_revision, tmp_path, run_key="kug_mid_only.qwen2_5_1_5b.core", fts_init_args={"schedule": str(schedule_path)}
-    )
+    run_config = _run_config(kug_revision, tmp_path, run_key="kug_mid_only.qwen2_5_1_5b.core")
     args, _, _ = _tiny_run_args(kug, tmp_path, run_config)
     core_cli_main(run_mode="train", args=args + ["--run_cfg.max_epochs=2"])
 
@@ -601,3 +585,57 @@ def test_the_gated_all_run_turns_lrsd_on_without_refreezing(kug, kug_revision, c
     record = json.loads((tmp_path / "record.json").read_text())
     assert ["train_lrsd" in epoch for epoch in record["epochs"]] == [False, True, True]
     assert len(record["thawed"]) == N_LAYERS * 7 * 2  # every adapter still trains
+
+
+# The bands as the Part 2 runs named them, by regex per model, before the schedules moved to depth fractions (#1142).
+_RUN_BANDS = {
+    "qwen2": (28, r"(?:[7-9]|1[0-9]|20)"),
+    "llama": (16, r"(?:[4-9]|1[01])"),
+}
+
+
+@pytest.mark.parametrize("family", sorted(_RUN_BANDS))
+def test_the_depth_fraction_band_selects_what_the_runs_trained(family):
+    """At each model's own depth, the shipped schedules' depth-fraction band selects exactly the adapters the Part 2
+    runs named by regex: blocks 7 to 20 of Qwen2.5-1.5B's 28 and 4 to 11 of Llama-3.2-1B's 16. The models record
+    their ``architectures`` as a loaded checkpoint does, so the view mounts through PEFT's wrapper (#1142)."""
+    import re
+
+    import transformers
+    from finetuning_scheduler.core.compile import compile_schedule
+    from peft import LoraConfig, get_peft_model
+
+    from interpretune.tuning.views import default_view
+
+    depth, band = _RUN_BANDS[family]
+    dims = dict(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=depth,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+    )
+    if family == "qwen2":
+        config = transformers.Qwen2Config(**dims, architectures=["Qwen2ForCausalLM"])
+        model = transformers.Qwen2ForCausalLM(config)
+    else:
+        config = transformers.LlamaConfig(**dims, architectures=["LlamaForCausalLM"])
+        model = transformers.LlamaForCausalLM(config)
+    targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    holder = torch.nn.Module()
+    holder.model = get_peft_model(model, LoraConfig(r=2, target_modules=targets, task_type="CAUSAL_LM"))
+    view = default_view(holder)
+
+    lora = [n for n, _ in holder.named_parameters() if re.fullmatch(r"model\..*\.lora_[AB]\..*", n)]
+    in_band = {n for n in lora if re.fullmatch(rf"model\..*\.layers\.{band}\..*\.lora_[AB]\..*", n)}
+    assert len(in_band) == (depth // 2) * len(targets) * 2
+
+    def shipped(name):
+        return yaml.safe_load((KUG_DIR / "ft_schedules" / f"{name}.yaml").read_text(encoding="utf-8"))
+
+    gated = compile_schedule(shipped("kug_gated.qwen2_5_1_5b"), view)
+    assert set(gated.trainable_at(0)) == set(lora)
+    assert set(gated.trainable_at(1)) == in_band
+    mid_only = compile_schedule(shipped("kug_mid_only.qwen2_5_1_5b"), view)
+    assert set(mid_only.trainable_at(0)) == in_band

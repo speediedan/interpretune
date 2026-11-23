@@ -336,12 +336,12 @@ override-dependencies = [
     # sae-dashboard imports only the annotation types (`Float`, `Int`, `Bool`) and never type-checks at
     # runtime, and every one of its modules imports under jaxtyping 0.3.
     "jaxtyping>=0.3",
-    # keep transitive nnsight (pulled in by circuit-tracer) at the validated release. 0.8.1 is the
-    # oldest client the NDIF server accepts (it refuses older clients by name; 0.7.0 cannot
-    # even complete the websocket handshake), and 0.8 moved Barrier to
-    # nnsight.intervention.barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches, which
-    # is why the circuit-tracer git pin carries its 0.8 compat commit.
-    "nnsight==0.8.2",
+    # keep transitive nnsight (pulled in by circuit-tracer) at the validated release. 0.8.3 is the release
+    # NDIF's hosted service runs, and it lets NDIF accept requests over 1 MB. 0.8.1 is the oldest client the
+    # NDIF server accepts (it refuses older clients by name; 0.7.0 cannot even complete the websocket
+    # handshake), and 0.8 moved Barrier to nnsight.intervention.barrier and dropped the
+    # CROSS_INVOKER/TRACE_CACHING switches, which is why the circuit-tracer git pin carries its 0.8 compat commit.
+    "nnsight==0.8.3",
     # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
     # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
