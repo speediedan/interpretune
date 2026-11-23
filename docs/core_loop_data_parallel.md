@@ -299,6 +299,9 @@ backend calls. Each row is a test: placing must keep every parameter's values, a
 The plan for a composition not listed is found the same way: give each block class its own unit, and place any module
 the backend calls directly as its own unit too.
 
+An intervention attached to the module trains on two ranks as on one (`ddp` and `fsdp2`): its parameters are the root
+unit's, so the hook that applies it inside a block sees the whole operand, and both ranks end with the same value.
+
 ## Limits
 
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same

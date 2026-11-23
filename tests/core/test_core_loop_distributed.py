@@ -535,6 +535,47 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
     assert global_batch_reference["param_types"] == ["Parameter"]
 
 
+# a trainable intervention adds a learned vector to the first block's output; a block is its own FSDP2 unit and the
+# intervention's parameters are the root unit's, so its operand is whole where the block's hooks apply it
+INTERVENTION = ("--intervention-site", "model.layers.0")
+
+
+@pytest.fixture(scope="module")
+def intervention_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("dist_intervention_reference")
+    _launch("single", out_dir, *INTERVENTION)
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.parametrize(
+    "placement, extra",
+    [("ddp", ()), ("fsdp2", BLOCK_PLAN)],
+    ids=["ddp", "fsdp2"],
+)
+def test_two_rank_training_applies_an_intervention_with_its_whole_operand(
+    placement, extra, global_batch_reference, intervention_reference, tmp_path
+):
+    """Two ranks training a trainable intervention match one process on their combined batch, step for step, and
+    end with the same operand on both ranks.
+
+    The operand is a vector of the model's width, so a rank that applied only its shard of it would fail on the shape or
+    train another value; and the operand must move, or the comparison would pass with it never applied.
+    """
+    _launch(placement, tmp_path, *extra, *INTERVENTION)
+    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(intervention_reference["losses"], rel=1e-5)
+    assert rank_mean != pytest.approx(global_batch_reference["losses"], rel=1e-5)  # the intervention has an effect
+    assert len(records[0]["intervention_params"]) == 1
+    for record in records:
+        assert record["intervention_params"] == records[0]["intervention_params"]
+        (operand,) = record["intervention_params"].values()
+        (expected,) = intervention_reference["intervention_params"].values()
+        assert any(expected) and operand == pytest.approx(expected, rel=1e-4, abs=1e-6)
+
+
 # each block's feed-forward split across the ranks: the first projection by output features, the second by input
 # features, so the pair needs one all-reduce and the block's output is whole again on every rank
 FFN_TP_PLAN = (

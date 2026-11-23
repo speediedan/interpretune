@@ -10,7 +10,9 @@ With ``--phased``, finetuning-scheduler's ``TuningScheduler`` drives two phases 
 last block first, then everything before it. With ``--latent-site``, a small latent model replaces the output of the
 module at that path (``tuning.latents``), so it is trained, and its splice is exercised, with the model. With
 ``--transcoder-site``, it reads that module's input and replaces its output instead (a transcoder), and a phased run
-tunes it alone first, then everything else. ``--device-type cuda`` places each rank (and the reference) on its own GPU.
+tunes it alone first, then everything else. With ``--intervention-site``, a trainable intervention adds a learned vector
+to the output of the block at that path (``tuning.interventions``), so its operand is trained with the model.
+``--device-type cuda`` places each rank (and the reference) on its own GPU.
 ``--memprof-fsdp`` profiles every training iteration with the memory profiler's ``FSDP2MemTracker``.
 
 Writes ``<out_dir>/<placement>_rank<rank>.json`` with the per-step training losses, the epoch metrics the callbacks saw,
@@ -86,6 +88,7 @@ def main() -> None:
     parser.add_argument("--out-name", default=None, help="output record stem (default: <placement>)")
     parser.add_argument("--latent-site", default=None, help="splice a latent model at this module path")
     parser.add_argument("--transcoder-site", default=None, help="splice a transcoder over this module")
+    parser.add_argument("--intervention-site", default=None, help="add a learned vector to this block's output")
     parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
     parser.add_argument("--memprof-fsdp", action="store_true", help="profile every training step with FSDP2MemTracker")
     parser.add_argument(
@@ -162,6 +165,13 @@ def main() -> None:
         width = it_session.module.get_submodule(args.transcoder_site).w1.in_features
         site = LatentSite(args.transcoder_site, read_from="input", op="replace")
         latent = attach_latent_model(it_session.module, "transcoder", TinyLatent(width).to(args.device_type), site)
+    intervention = None
+    if args.intervention_site:
+        from interpretune.tuning.interventions import OpIntervention, attach_intervention
+
+        width = it_session.module.get_submodule(f"{args.intervention_site}.feed_forward.w1").in_features
+        intervention = OpIntervention("add", width).to(args.device_type)
+        attach_intervention(it_session.module, "steer", intervention, args.intervention_site)
     runner_cfg = SessionRunnerCfg(
         it_session=it_session,
         max_epochs=test_cfg.max_epochs,
@@ -214,6 +224,11 @@ def main() -> None:
     if latent is not None:  # whole on every rank: a latent model is never split
         record["latent_params"] = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()}
         record["latent_init"] = latent_init
+    if intervention is not None:  # gathered: each rank holds a shard of a split operand
+        record["intervention_params"] = {
+            n: (p.full_tensor() if hasattr(p, "full_tensor") else p).detach().flatten().tolist()
+            for n, p in intervention.named_parameters()
+        }
     if args.memprof_fsdp:
         # this rank's FSDP2 memory report, written when the session ended
         log_dir = module.memprofiler.memprof_log_dir
