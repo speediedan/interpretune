@@ -80,8 +80,9 @@ the checkpoint's final norm and unembedding (`looped_lens_head`). Locally, drop 
 `looped_lens_head`. Resolving a book needs venngram's execution map (main at c49e5f58 or later); a resolved site table
 (`.json`) needs no venngram at all.
 
-Read through such a session on NDIF, the first book scores exactly what its runtime scores on the 33 held-out items
-(majority 0.852, 30 of 33).
+Read through such a session, the first book scores what its runtime scores on the 33 held-out items: on NDIF majority
+0.852 (30 of 33), locally 0.875 (31 of 33; the third NDIF miss is a near-tie). Local and NDIF reads agree at top-1 on
+193 of 198 site readouts.
 
 ## Limits
 
