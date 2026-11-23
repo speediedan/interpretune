@@ -172,7 +172,7 @@ and notebook usage patterns.
 
 ## Current Limitations
 
-- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, and `interpretune.adapters.lightning.AnalysisStoreCallback` writes an `AnalysisStore` from a single-process `predict`. Streaming the rows to the store, distributed analysis runs, analysis checkpointing and the per-epoch analysis hook under a `Trainer` remain to be implemented, tracked in [#211](https://github.com/speediedan/interpretune/issues/211) (see [Analysis Runner Usage](analysis_runner_usage.md)).
+- **The analysis runner is core-only.** `AnalysisRunner` extends `SessionRunner`. Under a Lightning `Trainer`, `predict` and `test` run a composition's analysis step and return its per-batch outputs, and `interpretune.adapters.lightning.AnalysisStoreCallback` writes an `AnalysisStore` from a single-process `predict`. It streams the rows to the store and runs the analysis hooks. Distributed analysis runs, analysis checkpointing and Lightning logging backends under a `Trainer` remain to be implemented, tracked in [#211](https://github.com/speediedan/interpretune/issues/211) (see [Analysis Runner Usage](analysis_runner_usage.md)).
 - **Analysis loops run in one process.** The core training and test loops take a distributed placement (`ddp`, `fsdp2` or `tp`; see [Data-parallel training on the core loop](core_loop_data_parallel.md)), but the analysis loop does not.
 - **Core callbacks are minimal**: The core loop exposes step, validation-end and epoch boundaries and checkpoint state, but ships no ready-made early-stopping or checkpointing callbacks; Lightning provides those.
 

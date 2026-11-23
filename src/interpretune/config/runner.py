@@ -214,7 +214,9 @@ class SessionRunnerCfg:
     # parallel style (`{'style': 'colwise'}`, `'rowwise'`, `'sequence'`, `'prepare_input'`, ...) and its layouts.
     # Refused under any other placement. Under 'tp' without one, the module's own default is used: a Hugging Face
     # model's declared plan (its decoder layers split the Megatron way) on the core and nnsight paths; TransformerLens
-    # has none
+    # has none. Activations inside a split layer are `DTensor`s: edit them elementwise, since PyTorch drops a slice
+    # assignment along a `DTensor`'s sharded dimension without an error (an nnsight edit like `x[..., :8] = 0` inside a
+    # split MLP computes the unedited model). Activations between layers are whole tensors and edit as usual
     tp_plan: Mapping[str, Mapping[str, Any]] | None = None
     # resume training from a core-loop checkpoint taken at the end of an epoch (training continues at the next
     # epoch): under 'single', a `interpretune.runners.core.checkpoint_state` or a path to one saved with

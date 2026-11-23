@@ -44,6 +44,7 @@ CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
 TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
 TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
+TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -1105,6 +1106,84 @@ def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_c
         assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
 
 
+@pytest.fixture(scope="module")
+def tiny_llama_nnsight_checkpoint(tmp_path_factory):
+    """A tiny Llama checkpoint with a word-level tokenizer saved beside it, built offline, since nnsight loads the
+    tokenizer from the model's path."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tiny_llama_nnsight")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+        pad_token_id=1,
+    )
+    LlamaForCausalLM(config).save_pretrained(path)
+    tokenizer = Tokenizer(WordLevel({f"t{i}": i for i in range(128)}, unk_token="t2"))
+    tokenizer.pre_tokenizer = Whitespace()
+    PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer, bos_token="t0", eos_token="t1", pad_token="t1", unk_token="t2"
+    ).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_nnsight_composition_default_plan_traces_like_one_process(tiny_llama_nnsight_checkpoint, tmp_path):
+    """An ``NNsightModule`` placed under ``tp`` with no ``tp_plan`` is split by its own default plan (the Hugging
+    Face model's declared plan, under ``hf_model``), and nnsight's trace on the split model reads, edits and back-
+    propagates as on the whole one.
+
+    One edit does not: PyTorch drops a slice assignment along a ``DTensor``'s sharded dimension without an error, so
+    slicing an activation inside a split layer (here a row-parallel ``down_proj``'s input) computes the unedited model.
+    The last assertion pins that. If it fails, PyTorch has fixed it: drop the caveat on ``SessionRunnerCfg.tp_plan``
+    and assert that the edit matches the reference instead.
+    """
+    out_dir = tmp_path / "nnsight"
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_NNSIGHT_WORKER), "--checkpoint", str(tiny_llama_nnsight_checkpoint), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp nnsight run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    for rank in range(2):
+        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        assert record["split_params"] == sorted(
+            f"hf_model.model.layers.{i}.{proj}.weight"
+            for i in range(2)
+            for proj in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        )
+        assert record["split_activation_type"] == "DTensor"
+        diff, effect = record["diff"], record["effect"]
+        for reading in ("attn0", "mlp0", "down1_in", "logits", "boundary_slice_edit", "split_scale_edit"):
+            assert diff[reading] < 1e-5, (reading, diff[reading])
+        assert diff["grad"] < 1e-4
+        # each edit moves the reference, so a dropped edit could not pass as a match
+        assert min(effect.values()) > 1e-3, effect
+        assert record["split_slice_edit_vs_unedited"] < 1e-5
+
+
 def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add: str | None = None) -> Path:
     """A copy of a single-file checkpoint with key ``drop`` removed and a key ``add`` added (planted defects)."""
     import shutil
@@ -1212,6 +1291,108 @@ def _launch_ct(plan: dict, out_dir: Path, meta: bool = False) -> list[dict]:
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"circuit-tracer run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
     return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.fixture(scope="module")
+def tiny_mixtral_checkpoints(tmp_path_factory):
+    """A tiny Mixtral saved twice: as ``save_pretrained`` writes it (its hub layout, whose expert weights the model's
+    conversion mapping merges) and from its own state dict (the model's layout)."""
+    from safetensors.torch import save_file
+    from transformers import MixtralConfig, MixtralForCausalLM
+
+    torch.manual_seed(0)
+    model = MixtralForCausalLM(
+        MixtralConfig(
+            vocab_size=128,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            num_local_experts=2,
+            num_experts_per_tok=2,
+            max_position_embeddings=64,
+        )
+    )
+    hub, own = tmp_path_factory.mktemp("mixtral_hub"), tmp_path_factory.mktemp("mixtral_own")
+    model.save_pretrained(hub)
+    model.config.save_pretrained(own)
+    save_file(
+        {k: v.contiguous().clone() for k, v in model.state_dict().items()},
+        own / "model.safetensors",
+        metadata={"format": "pt"},
+    )
+    return hub, own
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_dcp_loads_a_checkpoint_in_the_models_own_layout(tiny_mixtral_checkpoints, tmp_path):
+    """A checkpoint written from ``model.state_dict()`` loads with its own keys, although the model's conversion
+    mapping has converters, and computes exactly what ``from_pretrained`` computes from the hub-layout checkpoint.
+
+    The hub-layout checkpoint needs the converters, so it is refused, naming the ones that match a key of it.
+    """
+    hub, own = tiny_mixtral_checkpoints
+    extra = ("--arch", "mixtral", "--reference", str(hub), "--loader", "dcp")
+    for record in _launch_meta(own, tmp_path / "own", *extra):
+        assert record["max_abs_diff"] == 0.0 and record["param_types"] == ["DTensor"]
+    for record in _launch_meta(hub, tmp_path / "hub", *extra):
+        assert "needs transformers' weight converters" in record["refused"]
+        assert "experts.*.w1.weight" in record["refused"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_a_model_layout_checkpoint_missing_a_key_is_refused_by_name(tiny_mixtral_checkpoints, tmp_path):
+    hub, own = tiny_mixtral_checkpoints
+    partial = _edited_checkpoint(own, tmp_path / "partial", drop="model.layers.1.mlp.gate.weight")
+    for record in _launch_meta(
+        partial, tmp_path / "out", "--arch", "mixtral", "--reference", str(hub), "--loader", "dcp"
+    ):
+        assert "model.layers.1.mlp.gate.weight" in record["refused"]
+
+
+class TestModelLayoutDecision:
+    """Whether a checkpoint's keys are already the model's own, which its key names alone do not show."""
+
+    @staticmethod
+    def _models():
+        from transformers import GPT2Config, GPT2LMHeadModel, MixtralConfig, MixtralForCausalLM
+
+        sizes = {"num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 2, "num_local_experts": 2}
+        with torch.device("meta"):
+            mixtral = MixtralForCausalLM(MixtralConfig(vocab_size=64, hidden_size=16, intermediate_size=32, **sizes))
+            gpt2 = GPT2LMHeadModel(GPT2Config(vocab_size=64, n_embd=16, n_layer=2, n_head=2))
+        return mixtral, gpt2
+
+    def test_the_hub_layouts_own_keys_settle_it(self):
+        from interpretune.runners.distributed import _hub_layout_keys, _is_model_layout
+
+        mixtral, _ = self._models()
+        own, hub = list(mixtral.state_dict()), sorted(_hub_layout_keys(mixtral))
+        assert _is_model_layout(mixtral, own, lambda key: False)
+        assert not _is_model_layout(mixtral, hub, lambda key: False)
+        assert not _is_model_layout(mixtral, [*own, "extra.weight"], lambda key: False)
+        assert _is_model_layout(mixtral, [*own, "extra.weight"], lambda key: key == "extra.weight")  # ignorable
+
+    def test_a_model_whose_hub_layout_has_no_key_of_its_own_is_not_shown_to_be_in_it(self, monkeypatch):
+        """Equal key sets cannot tell a model-layout checkpoint from a hub one whose tensors a converter edits in
+        place, so such a checkpoint keeps the conversion path (and its refusal), rather than being loaded as it
+        is."""
+        from interpretune.runners import distributed
+
+        mixtral, gpt2 = self._models()
+        assert not distributed._is_model_layout(gpt2, list(gpt2.state_dict()), lambda key: False)
+        monkeypatch.setattr(distributed, "_hub_layout_keys", lambda model: set(model.state_dict()))
+        assert not distributed._is_model_layout(mixtral, list(mixtral.state_dict()), lambda key: False)
+
+    def test_only_a_transformers_model_states_a_hub_layout(self):
+        from interpretune.runners.distributed import _is_model_layout
+
+        assert not _is_model_layout(torch.nn.Linear(2, 2), ["weight", "bias"], lambda key: False)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
