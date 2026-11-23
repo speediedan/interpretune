@@ -162,12 +162,6 @@ class TestCircuitTracerBackendTypes:
 # =============================================================================
 
 
-_CT_TL_GPU_VALIDATION_PENDING = pytest.mark.skip(
-    reason="circuit-tracer TransformerBridge GPU integration awaits pretrained-model validation and VRAM calibration"
-)
-
-
-@_CT_TL_GPU_VALIDATION_PENDING
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerTLBackend:
     """TransformerLens backend integration tests for CircuitTracerAdapter.
@@ -176,7 +170,6 @@ class TestCircuitTracerTLBackend:
     transformer_lens, circuit_tracer) adapter combination. Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    # Unmeasured while the class is skipped; calibrate before lifting the pretrained-model validation gate.
     @RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_tl_backend_integration(self, get_it_session__ct_tl_gemma2__setup):
         """Verify TL backend initialization: property access, model loading, typing, and config preservation."""
@@ -196,7 +189,6 @@ class TestCircuitTracerTLBackend:
         assert it_session.module.model.config is not None
 
 
-@_CT_TL_GPU_VALIDATION_PENDING
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerLightningTLBackendInitialization:
     """Test Lightning + TransformerLens backend initialization.
@@ -204,8 +196,7 @@ class TestCircuitTracerLightningTLBackendInitialization:
     Requires CUDA with bf16 support (Gemma2 model) and Lightning.
     """
 
-    # Unmeasured while the class is skipped; calibrate before lifting the pretrained-model validation gate.
-    @RunIf(lightning=True, bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
+    @RunIf(lightning=True, bf16_cuda=True, min_gpu_mem_gb=0.5, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     @pytest.mark.parametrize(
         "session_fixture",
         [

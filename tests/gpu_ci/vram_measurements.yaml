@@ -209,15 +209,15 @@ tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_4b_it_ct_ns
   seconds: 44.65
   date: '2026-11-08'
 ? tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerLightningTLBackendInitialization::test_lightning_adapter_backend_support[lightning_transformerlens]
-: outcome: skipped
-  need_gb: 0.386
-  allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.0
-  date: '2026-10-01'
+: outcome: passed
+  need_gb: 0.217
+  allocator_peak_gb: 0.002
+  device_peak_gb: 0.217
+  context_gb: 0.072
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 3.75
+  date: '2026-11-23'
 tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerNNsightBackend::test_nnsight_backend_integration:
   outcome: passed
   need_gb: 10.277
@@ -229,15 +229,15 @@ tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerNNsightBackend::tes
   seconds: 16.21
   date: '2026-10-01'
 tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerTLBackend::test_tl_backend_integration:
-  outcome: skipped
-  need_gb: 0.386
-  allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.0
-  date: '2026-10-01'
+  outcome: passed
+  need_gb: 10.092
+  allocator_peak_gb: 9.871
+  device_peak_gb: 10.092
+  context_gb: 0.072
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 22.26
+  date: '2026-11-23'
 tests/core/test_adapters_sae_lens.py::TestClassSAELens::test_sl_tl_device_sync_warnings:
   outcome: passed
   need_gb: 0.386
