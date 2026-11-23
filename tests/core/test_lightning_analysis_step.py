@@ -178,7 +178,152 @@ def test_analysis_store_callback_writes_the_store(tmp_path):
     features, _, _ = dataset_features_and_format(module, {})
     assert set(store.dataset.column_names) == set(features)
     assert len(load_from_disk(str(store.save_dir))) == len(rows)
-    assert getattr(module, "_it_analysis_rows", None) is None, "rows were kept after the store was written"
+    assert getattr(module, "_it_analysis_row_writer", None) is None, "the writer was kept after the store was written"
+
+
+def _store_session(tmp_path, limit=2, **callback_kwargs):
+    """A cust session with a generated analysis step, and a Trainer carrying ``AnalysisStoreCallback``."""
+    from interpretune.adapters.lightning import AnalysisStoreCallback
+
+    it_session = _lightning_cust_session()
+    it_session.module.analysis_cfg = _analysis_cfg(ignore_manual=True)
+    trainer = _trainer(tmp_path, limit=limit)
+    trainer.callbacks.append(AnalysisStoreCallback(**callback_kwargs))
+    return it_session, trainer
+
+
+def test_analysis_store_callback_streams_rows_to_disk(tmp_path, monkeypatch):
+    """Rows reach the Arrow file during the run, at the configured batch size, not when the run ends."""
+    from datasets.arrow_writer import ArrowWriter
+
+    from interpretune.adapters.lightning import AnalysisStoreCallback
+    from interpretune.runners.analysis import AnalysisRowWriter
+
+    flushed, seen = [], []
+    write_batch, finalize = ArrowWriter.write_examples_on_file, AnalysisRowWriter.finalize
+
+    def counting_write(self):
+        flushed.append(len(self.current_examples))
+        return write_batch(self)
+
+    def counting_finalize(self):
+        seen.append(sum(flushed))
+        return finalize(self)
+
+    monkeypatch.setattr(AnalysisRowWriter, "finalize", counting_finalize)
+    it_session, trainer = _store_session(tmp_path, limit=3, writer_batch_size=1)
+    assert any(isinstance(c, AnalysisStoreCallback) for c in trainer.callbacks)
+    monkeypatch.setattr(ArrowWriter, "write_examples_on_file", counting_write)
+    trainer.predict(it_session.module, datamodule=it_session.datamodule, return_predictions=False)
+    n_rows = len(it_session.module.analysis_cfg.output_store.dataset)
+    assert n_rows == 3
+    assert seen == [n_rows], "rows were still buffered when the run ended"
+
+
+def test_analysis_store_callback_matches_the_rows_predict_returns(tmp_path):
+    """The streamed store holds, value for value, what the steps yielded."""
+    import torch
+
+    it_session, trainer = _store_session(tmp_path, writer_batch_size=1)
+    out = trainer.predict(it_session.module, datamodule=it_session.datamodule)
+    rows = [row for batch_rows in out for row in batch_rows]
+    dataset = it_session.module.analysis_cfg.output_store.dataset
+    assert len(dataset) == len(rows) > 1
+    compared = 0
+    for row, stored in zip(rows, dataset):
+        for name in dataset.column_names:
+            value = row[name]
+            if isinstance(value, torch.Tensor):
+                assert torch.equal(torch.as_tensor(stored[name]).reshape(value.shape), value), name
+                compared += 1
+    assert compared, "no tensor column was compared"
+
+
+def test_analysis_store_callback_runs_the_analysis_lifecycle(tmp_path, monkeypatch):
+    """The hooks and the op-state boundaries run in the core loop's order."""
+    it_session, trainer = _store_session(tmp_path)
+    module = it_session.module
+    events = []
+    for name in ("on_analysis_start", "on_analysis_epoch_end", "on_analysis_end"):
+        original = getattr(module, name)
+        monkeypatch.setattr(module, name, lambda n=name, o=original: (events.append(n), o())[1], raising=False)
+    cfg_cls = type(module.analysis_cfg)
+    reset, finalize = cfg_cls.reset_op_state, cfg_cls.finalize_op_state
+    monkeypatch.setattr(
+        cfg_cls,
+        "reset_op_state",
+        lambda self, *, epoch_boundary=False: (
+            events.append(f"reset(epoch_boundary={epoch_boundary})"),
+            reset(self, epoch_boundary=epoch_boundary),
+        )[1],
+    )
+    monkeypatch.setattr(cfg_cls, "finalize_op_state", lambda self: (events.append("finalize"), finalize(self))[1])
+    trainer.predict(module, datamodule=it_session.datamodule)
+    assert events == [
+        "reset(epoch_boundary=False)",
+        "on_analysis_start",
+        "on_analysis_epoch_end",
+        "reset(epoch_boundary=True)",
+        "on_analysis_end",
+        "finalize",
+    ]
+
+
+def test_analysis_store_callback_leaves_no_partial_store_when_a_step_raises(tmp_path):
+    """A run that raises removes its partial rows, restores the grad state and keeps no writer."""
+    import pytest
+    import torch
+
+    it_session, trainer = _store_session(tmp_path, limit=2)
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg(ignore_manual=False)
+
+    seen = []
+
+    def failing_step(batch, batch_idx, dataloader_idx=0):
+        seen.append(module._it_analysis_row_writer.path)
+        assert seen[0].exists(), "the rows file was not open during the run"
+        raise RuntimeError("step failed")
+
+    module.analysis_step = failing_step
+    grad_before = torch.is_grad_enabled()
+    with pytest.raises(RuntimeError, match="step failed"):
+        trainer.predict(module, datamodule=it_session.datamodule)
+    assert seen and not seen[0].exists(), "the partial rows file was kept"
+    assert module._it_analysis_row_writer is None
+    assert module.analysis_cfg.output_store.dataset is None
+    assert torch.is_grad_enabled() == grad_before
+
+
+def test_analysis_store_callback_refuses_a_run_without_rows(tmp_path):
+    import pytest
+
+    from interpretune.utils import MisconfigurationException
+
+    it_session, trainer = _store_session(tmp_path)
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg(ignore_manual=False)
+    paths = []
+
+    def empty_step(batch, batch_idx, dataloader_idx=0):
+        paths.append(module._it_analysis_row_writer.path)
+        return []
+
+    module.analysis_step = empty_step
+    with pytest.raises(MisconfigurationException, match="produced no analysis rows"):
+        trainer.predict(module, datamodule=it_session.datamodule)
+    assert paths and not paths[0].exists()
+    assert module._it_analysis_row_writer is None
+
+
+def test_analysis_store_callback_refuses_a_non_positive_writer_batch_size():
+    import pytest
+
+    from interpretune.adapters.lightning import AnalysisStoreCallback
+    from interpretune.utils import MisconfigurationException
+
+    with pytest.raises(MisconfigurationException, match="writer_batch_size must be a positive number"):
+        AnalysisStoreCallback(writer_batch_size=0)
 
 
 def test_analysis_store_callback_without_an_analysis_op_is_refused(tmp_path):
