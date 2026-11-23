@@ -51,6 +51,11 @@ ANALYSIS_STORE_ROW_GROUP_SIZE = "16MB"
 #: projected read of two small columns cost 5.4 MB of transfer where 64 KiB blocks cost 197 KB.
 STREAMING_BLOCK_SIZE = 64 * 1024
 
+#: The estimated first-row cost above which a streamed pull warns. A scan reads one row group ahead, so reaching the
+#: first row fetches about two row groups of the projected columns, and a store pushed before the row-group target
+#: (a file under 100 MB is then one group) costs its whole file. 64 MB is about two groups at the 16 MB target.
+STREAMED_FIRST_ROW_WARN_BYTES = 64 * 1024 * 1024
+
 #: The first schema whose envelopes must carry a ``subject`` block. Version 2 made it mandatory, since a store says
 #: nothing usable about what it was computed on without it; a version-1 envelope is still read, with no subject.
 SUBJECT_REQUIRED_FROM_SCHEMA = 2
@@ -493,6 +498,67 @@ def _published_parquet_urls(repo_id: str, commit: str, envelope: dict) -> list[s
     return [f"hf://datasets/{repo_id}@{commit}/{name}" for name in files]
 
 
+def _streamed_first_row_bytes(url: str, columns: list[str] | None, storage_options: dict) -> tuple[int, int]:
+    """Estimate what reaching the first row of ``url`` fetches, from its footer alone: ``(bytes, row groups)``.
+
+    One footer read (a single block of :data:`STREAMING_BLOCK_SIZE` for a footer that fits it) gives each row group's
+    compressed chunk sizes for the projected ``columns``. The scan reads one group ahead, so the estimate is the
+    largest group's projected bytes, twice when the file has more than one group.
+    """
+    import fsspec
+    import pyarrow.parquet as pq
+
+    protocol = url.split("://", 1)[0] if "://" in url else "file"
+    options = {**storage_options.get(protocol, {}), "block_size": STREAMING_BLOCK_SIZE}
+    fs, path = fsspec.core.url_to_fs(url, **options)
+    with fs.open(path, "rb", block_size=STREAMING_BLOCK_SIZE) as handle:
+        metadata = pq.ParquetFile(handle).metadata
+    wanted = None if columns is None else set(columns)
+    largest = 0
+    for g in range(metadata.num_row_groups):
+        group = metadata.row_group(g)
+        chunks = (group.column(c) for c in range(group.num_columns))
+        projected = sum(
+            chunk.total_compressed_size
+            for chunk in chunks
+            if wanted is None or chunk.path_in_schema.split(".", 1)[0] in wanted
+        )
+        largest = max(largest, projected)
+    return largest * min(2, metadata.num_row_groups), metadata.num_row_groups
+
+
+def _warn_on_streamed_read_cost(
+    source: str, files: list[str], urls: list[str], columns: list[str] | None, storage_options: dict
+) -> None:
+    """Warn when reaching a streamed store's first row is estimated to fetch more than
+    :data:`STREAMED_FIRST_ROW_WARN_BYTES`.
+
+    The read is correct, only slow, so this warns rather than refuses. A listed file that cannot be found is refused,
+    naming the envelope's commit and file list, which the raw ``FileNotFoundError`` does not.
+    """
+    worst = (0, 0, "")
+    for name, url in zip(files, urls):
+        try:
+            estimate, groups = _streamed_first_row_bytes(url, columns, storage_options)
+        except FileNotFoundError as e:
+            raise ArtifactEnvelopeError(
+                f"{source}: the envelope lists {name!r}, which is not in the repository at that commit (it lists"
+                f" {files}). Re-publish the store, or pull the commit that holds those files."
+            ) from e
+        worst = max(worst, (estimate, groups, name))
+    estimate, groups, name = worst
+    if estimate > STREAMED_FIRST_ROW_WARN_BYTES:
+        from interpretune.utils import rank_zero_warn
+
+        projected = f"columns {columns}" if columns is not None else "every column"
+        rank_zero_warn(
+            f"{source}: reaching the first row of this streamed store is estimated to fetch about"
+            f" {estimate / 1e6:.0f} MB ({projected}; {name} has {groups} row group(s), and a scan reads one ahead)."
+            " Pass `columns=` to read only what you need, or re-publish it with push_analysis_store, which writes"
+            f" row groups of {ANALYSIS_STORE_ROW_GROUP_SIZE}."
+        )
+
+
 def _stream_parquet(
     urls: list[str], split: str, *, columns: list[str] | None, storage_options: dict, token: str | None
 ):
@@ -540,7 +606,8 @@ def pull_analysis_store(
     ``streaming=True`` downloads nothing up front: the store streams the Parquet files the envelope lists, at the
     envelope's commit, through range requests of ``block_size`` bytes, reading only ``columns`` when they are named.
     It can be iterated and read by column but not indexed by position (see ``AnalysisStore``). ``columns`` projects a
-    streamed read, so it is refused without ``streaming=True``.
+    streamed read, so it is refused without ``streaming=True``. A streamed pull first reads each listed file's footer
+    and warns when reaching the first row is estimated to cost more than :data:`STREAMED_FIRST_ROW_WARN_BYTES`.
 
     ``protocol`` says what to do with the batch protocol the envelope records. ``"resolve"`` (the default) uses the
     class itself: interpretune's own, or one from a hub component this process loaded through the remote-code gate,
@@ -574,6 +641,8 @@ def pull_analysis_store(
     if streaming:
         urls = _published_parquet_urls(repo_id, commit, envelope)
         hf_options = {"hf": {"block_size": block_size, "token": token}}
+        files = list(envelope["artifacts"]["interchange"]["files"])
+        _warn_on_streamed_read_cost(f"{repo_id}@{commit}", files, urls, columns, hf_options)
         dataset = _stream_parquet(urls, split, columns=columns, storage_options=hf_options, token=token)
     else:
         snapshot = snapshot_download(
