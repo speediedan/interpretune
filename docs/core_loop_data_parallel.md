@@ -289,13 +289,38 @@ else:
 - Ranks that logged different metric names in an epoch.
 - A data-parallel placement on the analysis runner, since attribution and analysis ops are not yet designed for it.
 
+## Compositions under `fsdp2`
+
+Which compositions place under `fsdp2` depends on whether their parameters are contiguous and on which module the
+backend calls. Each row is a test: placing must keep every parameter's values, and a refusal must name what it found.
+
+| Composition | Under `fsdp2` |
+| --- | --- |
+| Core (the model is called through the Interpretune module) | Places. The plan names the transformer block class. Training on two ranks matches one process on the combined batch. |
+| nnsight, and sae_lens over nnsight | Places, with the Hugging Face model as its own unit beside the blocks (`class:GPT2LMHeadModel` for GPT-2): nnsight calls that model directly, so FSDP2 would otherwise never gather it. A plan without it is refused, naming the unit to add. |
+| circuit-tracer over nnsight, with spliced transcoders | Places, with the blocks, each transcoder and its activation functions as their own units, the Hugging Face model among them, and their direct calls registered. On two ranks the logits, the nnsight trace, the transcoder activations and the sparse encode and decode equal one process's. |
+| TransformerLens built from a configuration (`ITLensCustomConfig`), sae_lens included | Places. Its blocks hold whole tensors. A schedule that thaws spliced SAEs by role (`role:latent:sae`) tunes on two ranks. |
+| TransformerLens bridge over a Hugging Face model, sae_lens included | Refused: the bridge splits the packed attention weight into non-contiguous views (`q`, `k`, `v`), which `fully_shard` cannot shard. The refusal names them. |
+
+The plan for a composition not listed is found the same way: give each block class its own unit, and place any module
+the backend calls directly as its own unit too.
+
+An intervention attached to the module trains on two ranks as on one (`ddp` and `fsdp2`): its parameters are the root
+unit's, so the hook that applies it inside a block sees the whole operand, and both ranks end with the same value.
+
+A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
+`fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
+values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
+the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+
 ## Limits
 
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
-  process on the combined batch step for step), not yet under `ddp` or on accelerators.
+  process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
+  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
