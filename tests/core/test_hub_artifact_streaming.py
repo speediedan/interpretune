@@ -193,9 +193,15 @@ class TestStreamedPull:
             calls.append((urls, split, kwargs))
             return real([str(parquet_store)], split, **kwargs)
 
+        checked = []
         monkeypatch.setattr(artifacts, "_stream_parquet", _local)
+        monkeypatch.setattr(artifacts, "_warn_on_streamed_read_cost", lambda *a: checked.append(a))
         store = artifacts.pull_analysis_store(self.REPO, streaming=True, columns=["logit_diff"], cache_dir=tmp_path)
         ((urls, split, kwargs),) = calls
+        # the cost check reads the same files, with the same projection, before the stream is built
+        ((source, files, checked_urls, columns, options),) = checked
+        assert source == f"{self.REPO}@{self.COMMIT}" and files == [f"data/{parquet_store.name}"]
+        assert checked_urls == urls and columns == ["logit_diff"] and options == kwargs["storage_options"]
         assert urls == [f"hf://datasets/{self.REPO}@{self.COMMIT}/data/{parquet_store.name}"]
         assert split == "validation" and kwargs["columns"] == ["logit_diff"]
         assert kwargs["storage_options"] == {"hf": {"block_size": artifacts.STREAMING_BLOCK_SIZE, "token": None}}
@@ -331,3 +337,72 @@ class TestStreamedReadCost:
         assert [row["label"] for row in stream] == list(range(512))
         # each row group costs its small label chunk plus one read-ahead block, about 1 MB of this 6 MB file in all
         assert counting_fs["bytes"] < grouped_parquet.stat().st_size / 4, counting_fs
+
+    def test_the_footer_estimate_costs_one_request_of_one_block(self, counting_fs, grouped_parquet):
+        from interpretune.hub.artifacts import STREAMING_BLOCK_SIZE, _streamed_first_row_bytes
+
+        counting_fs.update(requests=0, bytes=0)
+        _, groups = _streamed_first_row_bytes(f"itcountfs://{grouped_parquet.as_posix()}", None, {"itcountfs": {}})
+        assert groups == 16
+        assert counting_fs["requests"] == 1 and counting_fs["bytes"] <= STREAMING_BLOCK_SIZE
+
+    @pytest.mark.parametrize("columns", [None, ["values"], ["label"]])
+    def test_the_estimate_tracks_what_the_first_row_fetches(self, counting_fs, grouped_parquet, columns):
+        """Within a factor of two of the measured fetch, for the full read and both projections."""
+        from interpretune.hub.artifacts import STREAMING_BLOCK_SIZE, _stream_parquet, _streamed_first_row_bytes
+
+        url = f"itcountfs://{grouped_parquet.as_posix()}"
+        options = {"itcountfs": {"block_size": STREAMING_BLOCK_SIZE}}
+        estimate, _ = _streamed_first_row_bytes(url, columns, options)
+        counting_fs.update(requests=0, bytes=0)
+        next(iter(_stream_parquet([url], "validation", columns=columns, storage_options=options, token=None)))
+        measured = counting_fs["bytes"]
+        # small projections are dominated by the footer and block rounding, so they get an absolute allowance too
+        assert measured / 2 - 4 * STREAMING_BLOCK_SIZE <= estimate <= 2 * measured + 4 * STREAMING_BLOCK_SIZE
+
+    def test_one_row_group_costs_the_whole_file(self, counting_fs, tmp_path):
+        """A store pushed before the row-group target: one group, so its first row is its whole file."""
+        import numpy as np
+        import pyarrow.parquet as pq
+        from datasets import Dataset
+
+        from interpretune.hub.artifacts import _streamed_first_row_bytes
+
+        path = tmp_path / "one_group.parquet"
+        values = np.random.default_rng(0).standard_normal((256, 1024)).astype(np.float32)
+        Dataset.from_dict({"values": values}).to_parquet(str(path), batch_size=256)
+        estimate, groups = _streamed_first_row_bytes(f"itcountfs://{path.as_posix()}", None, {"itcountfs": {}})
+        assert groups == 1
+        group = pq.ParquetFile(path).metadata.row_group(0)
+        assert estimate == sum(group.column(c).total_compressed_size for c in range(group.num_columns))
+        assert estimate > 0.9 * path.stat().st_size  # the one group is nearly all of the file
+
+    def test_a_costly_first_row_warns_with_the_remedies(self, counting_fs, grouped_parquet, monkeypatch):
+        import interpretune.hub.artifacts as artifacts
+
+        url = f"itcountfs://{grouped_parquet.as_posix()}"
+        values, _ = artifacts._streamed_first_row_bytes(url, ["values"], {"itcountfs": {}})
+        label, _ = artifacts._streamed_first_row_bytes(url, ["label"], {"itcountfs": {}})
+        assert label < values
+        monkeypatch.setattr(artifacts, "STREAMED_FIRST_ROW_WARN_BYTES", (label + values) // 2)
+        with pytest.warns(UserWarning, match=r"some/store@abc.*columns=.*re-publish"):
+            artifacts._warn_on_streamed_read_cost("some/store@abc", ["g.parquet"], [url], ["values"], {"itcountfs": {}})
+        # the control: the projection under the threshold does not warn
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            artifacts._warn_on_streamed_read_cost("some/store@abc", ["g.parquet"], [url], ["label"], {"itcountfs": {}})
+
+    def test_a_listed_file_missing_at_the_commit_is_refused(self, counting_fs, tmp_path):
+        from interpretune.hub.artifacts import _warn_on_streamed_read_cost
+
+        missing = tmp_path / "absent.parquet"
+        with pytest.raises(ArtifactEnvelopeError, match=r"some/store@abc: the envelope lists 'data/absent.parquet'"):
+            _warn_on_streamed_read_cost(
+                "some/store@abc",
+                ["data/absent.parquet"],
+                [f"itcountfs://{missing.as_posix()}"],
+                None,
+                {"itcountfs": {}},
+            )
