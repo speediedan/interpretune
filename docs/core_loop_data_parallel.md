@@ -107,6 +107,26 @@ its layouts. Without one, the module's own default is used: a Hugging Face model
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
 `fsdp_default_kwargs` under `tp`.
 
+A latent model spliced with `tuning.latents`, and an SAE that SAE Lens splices into a TransformerLens bridge
+(`add_saes_on_init`), read and rewrite a whole activation. To splice one inside a layer the plan splits, set
+`use_local_output: false` on that layer's entry, so that the activation reaches the splice split across ranks: the
+splice gathers it whole and lays its output out as the activation it replaces, and two ranks tune it as one process
+does. For an SAE at `blocks.0.mlp.hook_post`, between a bridge MLP's two projections:
+
+```yaml
+run_cfg:
+  placement: tp
+  tp_plan:
+    model\.blocks\.\d+\._original_component\.mlp\._original_component\.fc_in\._original_component:
+      style: colwise
+      use_local_output: false
+    model\.blocks\.\d+\._original_component\.mlp\._original_component\.fc_out\._original_component:
+      style: rowwise
+```
+
+Where a split layer hands on each rank's local shard instead (the default), the splice is refused, naming the site and
+this fix: a latent model's when the module is placed, an SAE's at the first forward pass.
+
 ## Models larger than one rank's accelerator
 
 By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
