@@ -177,24 +177,33 @@ def content_end(
     user_marker: str = "<|message_user|>",
     end_marker: str = "<|end_message|>",
 ) -> tuple[int, str]:
-    """Where the question's content ends in one prompt, and how it was found.
+    """Where the question's content ends in one prompt, and what shape the user's turn has.
 
-    ``question``: the last token containing ``?`` in the last user turn. ``content``: a user turn with no question
-    mark (an instruction followed by a text, say): the turn's last content token. ``plain``: no user turn, so the read
-    position is already the end of the content.
+    ``question``: the last token containing ``?`` in the last user turn. ``statement``: no question mark and the
+    content ends in a sentence terminator: the end of the sentence before the last one (a question phrased as a
+    statement and followed by an instruction, such as "Answer in one word."), or the final terminator when the content
+    is one sentence. ``open``: the content ends in open text (an instruction followed by a text to continue): its last
+    token. ``plain``: no user turn, so the read position is already the end of the content.
     """
     user, end = tokenizer.convert_tokens_to_ids(user_marker), tokenizer.convert_tokens_to_ids(end_marker)
     starts = [i for i, t in enumerate(ids) if t == user]
     if not starts:
         return read_position, "plain"
-    ends = [i for i in range(starts[-1] + 1, read_position) if ids[i] == end]
+    first = starts[-1] + 2  # the user marker, then the content-kind marker
+    ends = [i for i in range(first, read_position) if ids[i] == end]
     stop = ends[0] if ends else read_position
-    marks = [i for i in range(starts[-1] + 1, stop) if "?" in tokenizer.decode([ids[i]])]
+    if stop <= first:
+        return read_position, "plain"
+    text = [tokenizer.decode([ids[i]]) for i in range(first, stop)]
+    marks = [first + j for j, t in enumerate(text) if "?" in t]
     if marks:
         return marks[-1], "question"
-    if stop - 1 > starts[-1] + 1:
-        return stop - 1, "content"
-    return read_position, "plain"
+    terminators = [first + j for j, t in enumerate(text) if t.strip() in (".", "!")]
+    last = stop - 1
+    if terminators and terminators[-1] == last:
+        earlier = [i for i in terminators if i < last]
+        return (earlier[-1] if earlier else last), "statement"
+    return last, "open"
 
 
 def question_end(ids: list[int], read_position: int, tokenizer: Any, user_marker: str = "<|message_user|>") -> int:
@@ -205,14 +214,18 @@ def question_end(ids: list[int], read_position: int, tokenizer: Any, user_marker
 def site_positions(table: dict, ids: list[int], read_position: int, tokenizer: Any) -> dict[str, int]:
     """Where each site of ``table`` is read in one prompt.
 
-    A question reads its ``question_end`` sites at its question mark and the others at the read position. A chat turn
-    with no question mark reads every site at its content's end: at the opening of the model's turn the model is about
-    to format, and a readout there names almost nothing (0 of 34 multihop items in an instruction-first chat render,
-    against 24 at the content's end). A plain prompt reads every site at the read position.
+    A question, or a question phrased as a statement and followed by an instruction, reads its ``question_end`` sites at
+    the end of the question and the others at the read position. A turn of open text after an instruction reads every
+    site at the text's end: at the opening of the model's turn the model is about to format, and a readout there names
+    almost nothing (0 of 34 multihop items in an instruction-first render, against 24 at the text's end). A plain prompt
+    reads every site at the read position. Reading a statement-shaped question at its instruction's final period instead
+    names nothing at all (0 of 79), which is why the statement case reads the end of the first sentence.
     """
     end, how = content_end(ids, read_position, tokenizer)
     return {
-        s["label"]: end if how == "content" or s.get("position", "read") == "question_end" else read_position
+        s["label"]: end
+        if how == "open" or (how in ("question", "statement") and s.get("position", "read") == "question_end")
+        else read_position
         for s in table["sites"]
     }
 

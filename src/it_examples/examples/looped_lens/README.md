@@ -49,9 +49,11 @@ leave-one-family-out picks).
 A readout may carry `position: question_end`: it is then read at the end of the question (the last token containing
 `?` in the user's turn, or the read position when there is none) rather than at the read position. The Looped Lens
 Challenge reads chat questions at `<|message_model|>`, where the model is about to format its answer; at the question's
-end it still holds the answer, so the challenge entry reads two of its six sites there. A chat turn with no question
-mark (an instruction followed by a text) reads every site at the end of its content: at the opening of the model's turn
-such a prompt reads almost nothing (0 of 34 multihop items in an instruction-first render, against 24 at the content's
+end it still holds the answer, so the challenge entry reads two of its six sites there. A question phrased as a
+statement and followed by an instruction ("... . Answer in one word.") reads those sites at the end of its first
+sentence; read at the instruction's final period it names nothing (0 of 79 items, against 56 at the first sentence's
+end). A turn of open text after an instruction reads every site at the text's end: at the opening of the model's turn
+such a prompt reads almost nothing (0 of 34 multihop items in an instruction-first render, against 24 at the text's
 end). A plain prompt is read at the read position.
 
 ## Use
