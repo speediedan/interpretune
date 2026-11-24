@@ -397,6 +397,21 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
             meta_built(partial)
 
+    def test_what_is_attached_beside_a_meta_built_model_holds_its_values(self):
+        """The model's checkpoint does not hold it, so it must be built with values, which the placement keeps."""
+
+        def holder(model_device: str, latent_device: str) -> nn.Module:
+            root = nn.Module()
+            root.model = nn.Linear(2, 2, device=model_device)
+            root.latent_models = nn.ModuleDict({"probe": nn.Linear(2, 2, device=latent_device)})
+            return root
+
+        assert meta_built(holder("meta", "cpu"))
+        assert not meta_built(holder("cpu", "cpu"))
+        for model_device in ("meta", "cpu"):
+            with pytest.raises(MisconfigurationException, match="2 parameters attached beside the model"):
+                meta_built(holder(model_device, "meta"))
+
     def test_a_meta_build_materializes_on_the_cpu_only_when_every_unit_offloads(self):
         """FSDP2 keeps an offloaded unit's shards on the CPU, so a meta-built module is materialized there when
         every unit offloads, on the rank's device when none does, and a plan offloading only some units is
@@ -978,6 +993,19 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert record["step_diff"] < 1e-6 and record["step_effect"] > 0.01
         assert record["trainable"] == ["default"] and record["param_types"] == ["DTensor"]
         assert record["tied"] and record["source_dropped"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+@pytest.mark.parametrize("extra", [(), ("--loader", "dcp")], ids=["rank0", "dcp"])
+def test_a_latent_model_beside_a_meta_built_model_keeps_rank_zeros_values(tiny_gpt2_checkpoint, tmp_path, extra):
+    """Materializing a meta-built module discards every parameter's value, and the checkpoint gives back only the
+    model's: an attached latent model's are kept, rank 0's on every rank, so the spliced logits match one
+    process's."""
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "out", "--latent", *extra):
+        assert record["max_abs_diff"] < 1e-5 and record["adapter_effect"] > 0.1
+        assert record["param_types"] == ["DTensor"] and record["tied"] and record["source_dropped"]
 
 
 # the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads

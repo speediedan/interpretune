@@ -531,7 +531,9 @@ def place_module(
 
     A module built on the meta device (``HFFromPretrainedConfig.meta_init``) holds no values to broadcast. It is
     sharded as it is, materialized on each rank's device with ``to_empty``, and then loaded from rank 0's CPU copy of
-    the checkpoint (see :func:`_load_from_rank0`), so no rank ever holds the whole model on its accelerator.
+    the checkpoint (see :func:`_load_from_rank0`), so no rank ever holds the whole model on its accelerator. What is
+    attached beside the model (a latent model, an intervention) is built with its values, which are kept across the
+    materialization, rank 0's on every rank.
 
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
@@ -559,6 +561,8 @@ def place_module(
         with torch.no_grad():
             for tensor in [*module.parameters(), *module.buffers()]:
                 dist.broadcast(tensor, src=0)
+    # copied before sharding, which replaces the parameters and, for a meta-built module, discards their values
+    kept_params = {n: p.detach().clone() for n, p in _beside_load_target(module).items()} if on_meta else {}
     device_type = torch.device(run.devices[run.rank]).type
     if run.placement == "ddp":
         mesh = init_device_mesh(device_type, (run.world_size, 1), mesh_dim_names=("replicate", "shard"))
@@ -584,6 +588,7 @@ def place_module(
                 buffer = module.get_buffer(name)
                 buffer.copy_(value)
                 dist.broadcast(buffer, src=0)
+        _restore_kept(module, run, kept_params)
         if hasattr(module, META_INIT_CHECKPOINT):
             _load_from_checkpoint_files(module, run)
         else:
@@ -859,14 +864,31 @@ def params_on_meta() -> Iterator[None]:
         torch.nn.Module.register_parameter = register
 
 
-def meta_built(module: torch.nn.Module) -> bool:
-    """Whether ``module``'s parameters were built on the meta device, refusing a module only partly built there.
+def _beside_load_target(module: torch.nn.Module) -> dict[str, torch.nn.Parameter]:
+    """The parameters outside the load target (see :func:`_load_target`), by name: latent models and interventions
+    attached beside the model, which its checkpoint does not hold.
 
-    Buffers may hold values on a meta-built module (see :func:`params_on_meta`); :func:`place_module` keeps them across
-    materialization. A buffer left on the meta device of a module whose parameters are not is refused, since nothing
-    would ever give it values.
+    Empty for a module with no load target.
     """
-    params = dict(module.named_parameters())
+    target = _load_target(module)
+    if target is None:
+        return {}
+    loaded = {id(p) for p in target.parameters()}
+    return {n: p for n, p in module.named_parameters() if id(p) not in loaded}
+
+
+def meta_built(module: torch.nn.Module) -> bool:
+    """Whether the model ``module`` holds (its load target, or the whole module when it has none) was built on the
+    meta device, refusing one only partly built there.
+
+    Parameters beside the load target (an attached latent model's) are in no checkpoint of the model, so on a meta-built
+    module they must hold values, which :func:`place_module` keeps across materialization. Buffers may hold values too
+    (see :func:`params_on_meta`) and are kept the same way. A parameter beside the load target on the meta device is
+    refused, and so is a buffer left there on a module whose parameters are not, since nothing would ever give either
+    values.
+    """
+    beside = _beside_load_target(module)
+    params = {n: p for n, p in module.named_parameters() if n not in beside}
     on_meta = [p.is_meta for p in params.values()]
     if any(on_meta) and not all(on_meta):
         names = [n for n, p in params.items() if not p.is_meta]
@@ -874,6 +896,13 @@ def meta_built(module: torch.nn.Module) -> bool:
             f"This module was built partly on the meta device: {len(names)} tensors are not ({', '.join(names[:3])}"
             f"{' and more' if len(names) > 3 else ''}). Materializing the meta part would also discard their values,"
             " so build the whole module on the meta device or none of it."
+        )
+    if valueless := [n for n, p in beside.items() if p.is_meta]:
+        raise MisconfigurationException(
+            f"{len(valueless)} parameters attached beside the model are on the meta device"
+            f" ({', '.join(valueless[:3])}{' and more' if len(valueless) > 3 else ''}), and the model's checkpoint does"
+            " not hold them, so nothing would give them values. Build what is attached beside a meta-built model on a"
+            " real device."
         )
     built = bool(params) and all(on_meta)
     if not built and (meta_buffers := [n for n, b in module.named_buffers() if b.is_meta]):
@@ -883,6 +912,20 @@ def meta_built(module: torch.nn.Module) -> bool:
             " give them values. Build the whole module on the meta device or none of it."
         )
     return built
+
+
+def _restore_kept(module: torch.nn.Module, run: DistributedRun, kept: Mapping[str, torch.Tensor]) -> None:
+    """Give each kept parameter (see :func:`_beside_load_target`) of a placed module its shard of rank 0's
+    value."""
+    from torch.distributed.tensor import DTensor, distribute_tensor
+
+    for name, value in kept.items():
+        param = module.get_parameter(name)
+        assert isinstance(param, DTensor)  # `fully_shard` made it one
+        whole = value.to(rank_device(run)).contiguous()
+        shard = distribute_tensor(whole, param.device_mesh, param.placements, src_data_rank=0)
+        with torch.no_grad():
+            param.to_local().copy_(shard.to_local())
 
 
 def _hub_layout_keys(model: Any) -> set[str]:

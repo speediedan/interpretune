@@ -3,7 +3,9 @@
 Every rank builds a small model (GPT-2, or Llama with ``--arch llama``) from the checkpoint's config on the meta
 device, as ``HFFromPretrainedConfig.meta_init`` does. With ``--loader rank0``, rank 0 also loads the checkpoint on the
 CPU and ``place_module`` loads the sharded model from it; with ``--drop ln_f``, rank 0's copy lacks the final norm,
-which must be refused by name. With ``--loader dcp``, only the parameters are built on meta (buffers keep their values)
+which must be refused by name. With ``--latent``, a latent model built with its values is spliced over the first
+block's MLP, beside the model the checkpoint holds: each rank builds it with its own values, and rank 0's must be every
+rank's after placement. With ``--loader dcp``, only the parameters are built on meta (buffers keep their values)
 and every rank reads its own slices of the checkpoint's safetensors files.
 
 Writes ``<out_dir>/rank<rank>.json``: the largest difference between the placed model's logits and a plain
@@ -53,6 +55,36 @@ def with_adapters(model: nn.Module) -> nn.Module:
     return model
 
 
+class Latent(nn.Module):
+    """A small latent model over an MLP's output, seeded, so a wiped or wrongly placed value changes the logits."""
+
+    def __init__(self, width: int, seed: int) -> None:
+        super().__init__()
+        self.enc, self.dec = nn.Linear(width, 5), nn.Linear(5, width)  # 5 latents: an uneven split on two ranks
+        generator = torch.Generator().manual_seed(seed)
+        with torch.no_grad():
+            for param in self.parameters():
+                param.normal_(0.0, 0.5, generator=generator)
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.relu(self.enc(x))
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.dec(z)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decode(self.encode(x))
+
+
+def splice(root: nn.Module, seed: int) -> None:
+    """Attach the latent model where an interpretune module attaches one: beside its model."""
+    from interpretune.tuning.latents import LatentSite, attach_latent_model
+
+    mlp = root.model.transformer.h[0].mlp
+    latent = Latent(mlp.c_proj.nf, seed)
+    attach_latent_model(root, "probe", latent, LatentSite("model.transformer.h.0.mlp", op="replace"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
@@ -62,6 +94,7 @@ def main() -> None:
     parser.add_argument("--arch", default="gpt2", choices=("gpt2", "llama", "mixtral"))
     parser.add_argument("--reference", default=None, help="a hub-layout checkpoint of the model, to compare with")
     parser.add_argument("--lora", action="store_true", help="LoRA on the model and on rank 0's copy (GPT-2, rank0)")
+    parser.add_argument("--latent", action="store_true", help="a latent model with values beside the meta-built model")
     parser.add_argument("--train-step", action="store_true", help="one SGD step after loading, against one process")
     args = parser.parse_args()
 
@@ -104,6 +137,12 @@ def main() -> None:
             delattr(source.transformer, args.drop)
         object.__setattr__(holder, META_INIT_SOURCE, with_adapters(source) if args.lora else source)
     record: dict = {}
+    expected_holder = Holder(reference)
+    if args.latent:
+        with torch.no_grad():
+            base_logits = reference(torch.arange(12).reshape(2, 6)).logits
+        splice(holder, seed=run.rank)  # each rank's own values, of which rank 0's are placed (in the root unit)
+        splice(expected_holder, seed=0)
     try:
         place_module(holder, run, {f"class:{block}": {}})
     except MisconfigurationException as err:
@@ -120,7 +159,7 @@ def main() -> None:
         record["tied"] = model.lm_head.weight is model.get_input_embeddings().weight
         record["source_dropped"] = not hasattr(holder, META_INIT_SOURCE) and not hasattr(holder, META_INIT_CHECKPOINT)
         record["trainable"] = sorted({n.split(".")[-2] for n, p in holder.named_parameters() if p.requires_grad})
-        if base_logits is not None:  # how far the adapters move the output, so a dropped adapter cannot pass
+        if base_logits is not None:  # how far the adapters or the latent model move the output, so neither can drop
             record["adapter_effect"] = float((expected - base_logits).abs().max())
         if args.train_step:
             # one SGD step on the same batch on every rank: FSDP2 averages identical gradients, so the sharded step

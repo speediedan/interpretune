@@ -176,8 +176,10 @@ does not. For any other model with converters the conversion path decides, and t
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
 `lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
-base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
-module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
+base weights. A latent model or intervention attached beside the model (`interpretune.tuning`) is in no checkpoint of the
+model, so it is built with its values on a real device: the placement keeps them, rank 0's on every rank, and refuses one
+built on the meta device. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized
+parameters), a model built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
 not build on the meta device (a TransformerLens bridge, a plain nnsight model, or `defer_model_init`), rather than being
 ignored.
 
