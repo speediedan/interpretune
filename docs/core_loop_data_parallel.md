@@ -100,8 +100,9 @@ A plan that leaves a called module to the root unit is refused, naming the `clas
 ## Tensor parallelism
 
 `tp` splits layers across ranks instead of data: the layers `tp_plan` selects are split with `parallelize_module`
-(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned. Every
-rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
+(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned: built
+with `meta_init` (below), it is split before it holds any weights, and each rank holds its slices of the split layers
+and the whole of the rest. Without it every rank builds the whole model first. Every rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
 as `fsdp_plan`, each mapped to a parallel style (`{style: colwise}`, `rowwise`, `sequence`, `prepare_input`, ...) and
 its layouts. Without one, the module's own default is used: a Hugging Face model's declared plan on the core and nnsight
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
@@ -129,8 +130,8 @@ this fix: a latent model's when the module is placed, an SAE's at the first forw
 
 ## Models larger than one rank's accelerator
 
-By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
-with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
+By default every rank builds the whole model before it is sharded or split, so each rank must fit it once. For a model
+loaded with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
 
 ```yaml
 module_cfg:
@@ -141,10 +142,11 @@ module_cfg:
 ```
 
 Every rank then builds the model from its configuration without any weights, and the launcher's rank 0 also loads the
-checkpoint on the CPU. The placement shards the empty model with the plan, materializes each rank's shards on its
-device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
+checkpoint on the CPU. The placement shards the empty model with the plan (or splits it, under `tp`), materializes each
+rank's shards on its device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
 `broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
-state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
+state dict. No accelerator ever holds the whole model (under `tp`, each holds the layers the plan leaves whole and its
+slices of the rest); rank 0's host holds one copy of it while loading.
 
 When even one host copy is too much, `meta_init_load: dcp` loads each rank's shards straight from the checkpoint's
 safetensors files with distributed checkpointing (`torch.distributed.checkpoint` with `HuggingFaceStorageReader`), so

@@ -1008,6 +1008,51 @@ def test_a_latent_model_beside_a_meta_built_model_keeps_rank_zeros_values(tiny_g
         assert record["param_types"] == ["DTensor"] and record["tied"] and record["source_dropped"]
 
 
+@pytest.fixture(scope="module")
+def tied_tiny_llama_checkpoint(tmp_path_factory):
+    """A Llama checkpoint whose LM head is tied to its embedding, both of which the default plan leaves whole."""
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tied_tiny_llama")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+        tie_word_embeddings=True,
+    )
+    LlamaForCausalLM(config).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+@pytest.mark.parametrize("loader", ["rank0", "dcp"])
+@pytest.mark.parametrize("latent", [False, True], ids=["model", "latent"])
+def test_a_meta_built_model_is_split_then_loaded(tied_tiny_llama_checkpoint, tmp_path, loader, latent):
+    """A model built on the meta device and split by its default tensor-parallel plan holds about half of the split
+    parameters on each rank and computes, and trains, what one process does: the LM head stays tied to the
+    embedding the plan leaves whole, and a latent model attached beside the model keeps rank 0's values."""
+    extra = ("--arch", "llama", "--placement", "tp", "--loader", loader, "--train-step")
+    for record in _launch_meta(
+        tied_tiny_llama_checkpoint, tmp_path / "out", *extra, *(("--latent",) if latent else ())
+    ):
+        assert record["max_abs_diff"] < 1e-5
+        assert record["step_diff"] < 1e-5 and record["step_effect"] > 0.01
+        assert record["tied"] and record["source_dropped"]
+        split = record["split_params"]
+        assert len(split) == 14 and all(".layers." in name for name in split)  # q, k, v, o and gate, up, down, twice
+        assert record["held_numel"] < 0.75 * record["whole_numel"]
+        if latent:
+            assert record["adapter_effect"] > 0.1
+
+
 # the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads
 # every head (TransformerLens's attention reshapes q, k and v by the model's head count)
 JOINT_QKV_TP_PLAN = {
