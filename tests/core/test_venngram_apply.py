@@ -302,13 +302,25 @@ def test_a_doses_table_on_a_composed_target_doses_only_its_members():
     assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
 
 
-def test_an_evidence_value_on_a_composed_target_is_refused():
-    """Venngram lists a composition's members through an op's doses, so an evidence-sourced value is refused, as a
-    unit target and not as a feature one."""
+def test_an_evidence_value_on_a_composed_target_reads_its_column_for_every_member():
+    """``@a - @b`` is units 1 and 2: each takes its own value from the column, and a row for unit 4 (in ``b``) is not a
+    member, so nothing doses it. It was refused before venngram listed a composition's members (venngram#131)."""
     value = {"from": {"evidence": "scores", "column": "score"}}
-    with pytest.raises(MisconfigurationException, match="composes unit sets") as excinfo:
-        recipe_interventions(_composed_recipe("both", value), site_widths={"mlp.out.hook_in": 16})
-    assert "feature" not in str(excinfo.value)
+    evidence = {"scores": {"score": {(12, 1): 0.5, (12, 2): -0.25, (12, 4): 9.0}}}
+    payload = recipe_interventions(
+        _composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence
+    )
+    (spec,) = payload["blocks.12.mlp.out.hook_in"]
+    assert spec.intervention_tensor[1] == 0.5 and spec.intervention_tensor[2] == -0.25
+    assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
+
+
+def test_an_evidence_value_on_a_composed_target_lists_the_members_its_column_misses():
+    """A composed target's member the column has no row for is refused rather than dropped, as for a single set."""
+    value = {"from": {"evidence": "scores", "column": "score"}}
+    evidence = {"scores": {"score": {(12, 1): 0.5}}}
+    with pytest.raises(MisconfigurationException, match=r"no value for \(layer, unit\) \[\(12, 2\)\]"):
+        recipe_interventions(_composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence)
 
 
 def test_a_composed_gradient_target_is_refused_like_a_single_one():
