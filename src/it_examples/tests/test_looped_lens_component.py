@@ -260,3 +260,105 @@ def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: _Map())
     with pytest.raises(ValueError, match="readout position 'answer' is not one this lens reads"):
         R.resolve_book(book, map_path)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the lens output as an AnalysisStore, and the store as the challenge's readouts
+# ---------------------------------------------------------------------------------------------------------------------
+LABELS = ["L15p3:coda", "L19:active", "L18:moe_in"]
+TOKENS = [[["Egypt", "Cairo"], ["Giza"], []], [["Paris", "France"], ["Lyon", "Nice"], ["Rhone"]]]
+
+
+def _op_batch(prompt_tokens, first: int):
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    n = len(prompt_tokens)
+    ab = AnalysisBatch()
+    ab.update(
+        looped_lens_labels=list(LABELS),
+        looped_lens_tokens=prompt_tokens,
+        looped_lens_top_ids=torch.arange(n * 3 * 100).reshape(n, 3, 100) + first,
+        looped_lens_positions=torch.arange(n),
+        looped_lens_book="books/example.yaml",
+    )
+    return ab
+
+
+@pytest.fixture
+def lens_store(tmp_path):
+    from types import SimpleNamespace
+
+    from interpretune.analysis.core import analysis_store_from_batches
+    from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+    dispatcher = AnalysisOpDispatcher(yaml_paths=[COMPONENT], enable_hub_ops=False)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    dispatcher._cache_manager.cache_dir = cache
+    dispatcher.load_definitions()
+    op = dispatcher.get_op("looped_lens_read")
+    tok = SimpleNamespace(vocab_size=200058, model_max_length=4096)
+    module = SimpleNamespace(
+        datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=1)),
+        it_cfg=SimpleNamespace(),
+        model=SimpleNamespace(tokenizer=tok),
+        analysis_cfg=None,
+    )
+    # one prompt, then two in one call: rows of different prompt counts
+    return analysis_store_from_batches(module, [_op_batch(TOKENS[:1], 0), _op_batch(TOKENS, 1000)], op=op)
+
+
+def test_the_lens_output_survives_the_store(lens_store):
+    # a list of strings declared as `object` is stored as its repr; the columns must come back as the lists they were
+    row = lens_store.dataset[1]
+    assert row["looped_lens_labels"] == LABELS
+    assert [[list(s) for s in p] for p in row["looped_lens_tokens"]] == TOKENS
+    raw = lens_store.dataset.with_format(None)[0]["looped_lens_tokens"]
+    assert not isinstance(raw, str), raw
+
+
+def test_the_store_writes_the_challenge_readouts(lens_store, tmp_path):
+    R = _runtime()
+    ids = ["q0", "q1", "q2"]
+    expect_first = [
+        {"layer": 39, "tokens": ["Egypt", "Cairo"]},
+        {"layer": 42, "tokens": []},
+        {"layer": 43, "tokens": ["Giza"]},
+    ]
+    got = R.challenge_readouts(lens_store, ids)
+    assert [g["id"] for g in got] == ids and got[0]["readouts"] == expect_first
+    assert [r["layer"] for r in got[2]["readouts"]] == [39, 42, 43]
+    assert got[2]["readouts"][0]["tokens"] == ["Paris", "France"]
+    # the same rows read back from disk, and streamed, write the same file
+    from datasets import load_dataset
+
+    from interpretune.analysis.core import AnalysisStore
+
+    path = tmp_path / "rows.parquet"
+    lens_store.dataset.to_parquet(str(path))
+    fmt = {"col_cfg": lens_store.it_format_kwargs["col_cfg"]}
+    again = AnalysisStore(dataset=load_dataset("parquet", data_files=str(path), split="train"), it_format_kwargs=fmt)
+    assert R.challenge_readouts(again, ids) == got
+    stream = load_dataset("parquet", data_files=str(path), split="train", streaming=True)
+    assert R.challenge_readouts(AnalysisStore(dataset=stream, it_format_kwargs=fmt), ids) == got
+
+
+def test_the_visit_of_a_label_is_the_challenge_layer():
+    R = _runtime()
+    assert [
+        R.visit_index(x) for x in ("L0", "L6p1:coda", "L14p3:coda", "L15p3", "L17p3", "L18:moe_in", "L23:active")
+    ] == [0, 6, 38, 39, 41, 42, 47]
+    for bad in ("X3", "L15:coda", "L6p1:coda".replace("p1", ""), "L3p1", "L24", "L18p2"):
+        with pytest.raises(ValueError):
+            R.visit_index(bad)
+
+
+def test_readouts_refuse_what_the_challenge_would_not_take(lens_store):
+    R = _runtime()
+    with pytest.raises(ValueError, match="more prompts"):
+        R.challenge_readouts(lens_store, ["only-one"])
+    with pytest.raises(ValueError, match="prompts for"):
+        R.challenge_readouts(lens_store, ["q0", "q1", "q2", "q3"])
+    row = {"looped_lens_labels": ["L15p3:coda", "L15p3:active"], "looped_lens_tokens": [[["a"], ["b"]]]}
+    with pytest.raises(ValueError, match="at most"):
+        R.challenge_readouts([row], ["q0"])

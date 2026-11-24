@@ -47,12 +47,16 @@ looped_lens_read:
       sequence_type: false
   output_schema:
     looped_lens_labels:
-      datasets_dtype: object
+      # One label per read site, in site order.
+      datasets_dtype: string
       non_tensor: true
-      sequence_type: false
+      sequence_type: true
     looped_lens_tokens:
-      datasets_dtype: object
+      # Per prompt, per site, the kept token texts: prompts x sites x up to K strings (ragged). A nested string schema
+      # rather than `object`: a stored `object` column holds a list's repr, not the list.
+      datasets_dtype: string
       non_tensor: true
+      array_shape: [null, null, null]
       sequence_type: false
     looped_lens_top_ids:
       datasets_dtype: int64

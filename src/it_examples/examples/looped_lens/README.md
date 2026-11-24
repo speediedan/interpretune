@@ -90,6 +90,18 @@ Read through such a session, the first book scores what its runtime scores on th
 0.852 (30 of 33), locally 0.875 (31 of 33; the third NDIF miss is a near-tie). Local and NDIF reads agree at top-1 on
 193 of 198 site readouts.
 
+## Stored and shared
+
+The op's output schema stores as an `AnalysisStore`, so a lens's reads are an exchangeable artifact rather than session
+state. `analysis_store_from_batches(module, batches, op="looped_lens_read")` builds one row per op call, with the site
+labels, the kept tokens per prompt and site (nested strings), the unfiltered top 100 ids per site, the read positions
+and the book. The store pushes and streams like any other.
+
+`looped_lens_runtime.challenge_readouts(store, question_ids)` writes the Looped Lens Challenge's readouts from it
+(each site's layer is its visit, 0 to 47). It takes a store read from disk, pulled from the Hub or streamed, since it
+only iterates the rows; a label that names no visit, more than ten sites, or a number of ids that differs from the number
+of prompts is refused.
+
 ## Limits
 
 - Read position: one per prompt (default the last token).
