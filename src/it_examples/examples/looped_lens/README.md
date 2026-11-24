@@ -36,6 +36,7 @@ the lens's sites than any one distractor. Two selection criteria choose the conf
 
 | book | sites | $K$ | item CV | leave one family out | held out | runs on |
 | --- | --- | --- | --- | --- | --- | --- |
+| `inkling2_mini_qend_coda_remote_k10_n6` | the first book with layer 21 active and layer 22's MoE input read at the question's end | 10 | (chosen in the challenge format: basic 0.722 exact / 0.848 alias against 0.468 / 0.608) | | | NDIF (3 rows per prompt) or local |
 | `inkling2_mini_icv_coda_remote_k10_n6` | coda at layers 15 and 14 (pass 3); active at 19, 22, 21; MoE input at 18 | 10 | 0.954 | 0.805 | 31 of 33 (30 of 33 end to end on NDIF) | NDIF (3 rows per prompt) or local |
 | `inkling2_mini_icv_nocoda_k10_n6` | active at 21, 19 and layer 15 pass 3; MoE input at 19, 23, 18 | 10 | 0.928 | 0.854 | 29 of 33 | NDIF or local |
 | `inkling2_mini_nocoda6` | active at 21, 19, 22 and layer 11 pass 2; MoE input at 18; final mix at 21 | 5 | 0.860 | 0.860 | 31 of 33 (31 end to end on NDIF) | NDIF or local |
@@ -44,6 +45,11 @@ the lens's sites than any one distractor. Two selection criteria choose the conf
 Multihop items (where the hidden thing is a bridge the model never writes) separate the criteria: item
 cross-validation picks mid-loop coda sites that only multihop needs (multihop 0.90 to 1.00 against 0.63 to 0.67 for the
 leave-one-family-out picks).
+
+A readout may carry `position: question_end`: it is then read at the end of the question (the last token containing
+`?` in the user's turn, or the read position when there is none) rather than at the read position. The Looped Lens
+Challenge reads chat questions at `<|message_model|>`, where the model is about to format its answer; at the question's
+end it still holds the answer, so the challenge entry reads two of its six sites there.
 
 ## Use
 

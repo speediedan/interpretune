@@ -43,6 +43,10 @@ READOUT_POINTS = {
 BOOK_READOUTS = {"plain", "final_input_mix", "coda", "translator:final", "translator:near"}
 REMOTE_READOUTS = {"active", "final_input_mix", "tl_final", "tl_near", "moe_in", "coda"}
 FILTERS = {"content", "echo"}
+# Where a site is read in a prompt: at the read position, or at the end of the question (the last token containing "?"
+# in the user's turn; the read position when there is none). The Looped Lens Challenge reads chat questions at
+# <|message_model|>, where the model is about to format its answer; at the question's end it still holds the answer.
+POSITIONS = {"read", "question_end"}
 WORD = re.compile(r"\w", re.UNICODE)
 TOPK = 100
 
@@ -101,6 +105,9 @@ def resolve_book(book_path: str | pathlib.Path, map_path: str | pathlib.Path) ->
             raise ValueError(f"readout {kind!r} is not one this lens implements: {sorted(BOOK_READOUTS)}")
         if r["set"] not in sets:
             raise ValueError(f"readout names set {r['set']!r}, which the book does not define")
+        position = r.get("position", "read")
+        if position not in POSITIONS:
+            raise ValueError(f"readout position {position!r} is not one this lens reads: {sorted(POSITIONS)}")
         s = one("@" + r["set"], sets)
         layer, pas = s.visit.layer, s.visit.pass_number
         visit = f"layers:{layer}" + (f" & passes:{pas}" if LOOP[0] <= layer < LOOP[1] else "")
@@ -125,6 +132,7 @@ def resolve_book(book_path: str | pathlib.Path, map_path: str | pathlib.Path) ->
                 "pass": pas,
                 "reads": reads,
                 "set": r["set"],
+                "position": position,
             }
         )
     spec = {
@@ -160,6 +168,30 @@ def check_spec(spec: dict) -> None:
             f"variant {spec.get('variant')!r} / filters {sorted(unknown)} are not implemented here "
             "(variant `plain`; filters `content`, `echo`)"
         )
+
+
+def question_end(ids: list[int], read_position: int, tokenizer: Any, user_marker: str = "<|message_user|>") -> int:
+    """The last token containing ``?`` after the last user-turn marker and before ``read_position``; else
+    ``read_position`` (a plain prompt, or a turn with no question mark)."""
+    user = tokenizer.convert_tokens_to_ids(user_marker)
+    starts = [i for i, t in enumerate(ids) if t == user]
+    if not starts:
+        return read_position
+    marks = [i for i in range(starts[-1] + 1, read_position) if "?" in tokenizer.decode([ids[i]])]
+    return marks[-1] if marks else read_position
+
+
+def site_positions(table: dict, ids: list[int], read_position: int, tokenizer: Any) -> dict[str, int]:
+    """Where each site of ``table`` is read in one prompt."""
+    q = None
+    out = {}
+    for s in table["sites"]:
+        if s.get("position", "read") == "question_end":
+            q = question_end(ids, read_position, tokenizer) if q is None else q
+            out[s["label"]] = q
+        else:
+            out[s["label"]] = read_position
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -331,14 +363,19 @@ class LensRuntime:
         raise ValueError(f"readout {kind!r} is not implemented")
 
     @torch.no_grad()
-    def top_ids(self, input_ids: list[int], positions: list[int]) -> dict[str, torch.Tensor]:
-        """Top 100 ids per site label, (len(positions), 100), from one forward pass of one prompt."""
+    def top_ids(self, input_ids: list[int], positions: list[int] | dict[str, int]) -> dict[str, torch.Tensor]:
+        """Top 100 ids per site label, (len(positions), 100), from one forward pass of one prompt; ``positions`` is
+        one list for every site, or one position per site label (:func:`site_positions`)."""
         self.state = {"counts": collections.Counter(), "got": {}}
         self.hf(input_ids=torch.tensor([input_ids], device=self.tm.embed_tokens.weight.device))
         missing = [key for reqs in self.needs.values() for *_, key in reqs if key not in self.state["got"]]
         if missing:
             raise RuntimeError(f"sites that never fired (a call index the forward did not reach): {missing[:4]}")
-        return {s["label"]: self.readout(s, positions).topk(TOPK, dim=-1).indices.cpu() for s in self.table["sites"]}
+
+        def at(s):
+            return [positions[s["label"]]] if isinstance(positions, dict) else positions
+
+        return {s["label"]: self.readout(s, at(s)).topk(TOPK, dim=-1).indices.cpu() for s in self.table["sites"]}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -357,10 +394,12 @@ def check_remote(table: dict) -> None:
             )
 
 
-def remote_collect(model, llm, table: dict, ids: list[int], pos: list[int]) -> dict[str, torch.Tensor]:
+def remote_collect(model, llm, table: dict, ids: list[int], pos: list[int] | dict[str, int]) -> dict[str, torch.Tensor]:
     """One NDIF trace of one prompt: each plain site's state at ``pos`` (float16), and each coda site's top-100 ids
-    as an extra batch row patched from row 0 earlier in the same forward."""
+    as an extra batch row patched from row 0 earlier in the same forward. ``pos`` is one list for every site, or one
+    position per site label (:func:`site_positions`)."""
     check_remote(table)
+    where = {s["label"]: ([pos[s["label"]]] if isinstance(pos, dict) else pos) for s in table["sites"]}
     sites = sorted(table["sites"], key=lambda s: next(iter(s["reads"].values()))["step"])
     coda = [s for s in sites if s["readout"] == "coda"]
     visits: dict[tuple[int, int], list[dict]] = {}
@@ -390,19 +429,21 @@ def remote_collect(model, llm, table: dict, ids: list[int], pos: list[int]) -> d
                 args = layer.inputs[0]
                 hidden, blocks = args[0], args[1]
             if "moe_in" in kinds:
-                moe = layer.mlp_input.output[0][0, pos]
+                moe = layer.mlp_input.output[0][0]
             out = layer.output
             for s in ss:
+                at = where[s["label"]]
                 if s["readout"] == "moe_in":
-                    val = moe
+                    assert moe is not None  # read above whenever a site at this visit is a moe_in readout
+                    val = moe[at]
                 elif s["readout"] == "final_input_mix":
                     assert blocks is not None and hidden is not None
                     b = blocks
                     if layer_i % 6 == 0:  # a block boundary: the entering state completes a block
                         b = torch.cat([blocks.to(hidden.device), hidden.unsqueeze(-2)], dim=-2)
-                    val = llm.final_input(b, out)[0][0, pos]
+                    val = llm.final_input(b, out)[0][0, at]
                 else:
-                    val = out[0, pos]
+                    val = out[0, at]
                 assert val is not None
                 got.append(val.detach().to("cpu", torch.float16))
             if v in keep:
@@ -422,7 +463,19 @@ def remote_collect(model, llm, table: dict, ids: list[int], pos: list[int]) -> d
                 visit(layer_i, p + 1)
         for v in post:
             visit(*v)
-        coda_top = model.output.logits[1:, pos].float().topk(TOPK, dim=-1).indices.cpu().save() if coda else None
+        coda_top = None
+        if coda:
+            logits = model.output.logits
+            coda_top = (
+                torch.stack(
+                    [
+                        logits[r, where[s["label"]]].float().topk(TOPK, dim=-1).indices
+                        for r, s in enumerate(coda, start=1)
+                    ]
+                )
+                .cpu()
+                .save()  # pyright: ignore[reportAttributeAccessIssue]  # nnsight's saved value
+            )
     order = [
         s["label"] for v in pre + [(i, p) for p in (1, 2, 3) for i in range(*LOOP)] + post for s in visits.get(v, [])
     ]
@@ -438,7 +491,7 @@ def remote_top_ids(
     llm,
     table: dict,
     ids: list[int],
-    pos: list[int],
+    pos: list[int] | dict[str, int],
     w_u: torch.Tensor,
     gain: torch.Tensor,
     translators: dict | None = None,

@@ -103,6 +103,7 @@ def test_books_are_lens_books(book):
     for r in lens["readouts"]:
         assert r["readout"] in R.BOOK_READOUTS
         assert r["set"] in doc["sets"]
+        assert r.get("position", "read") in R.POSITIONS
 
 
 def test_lists_apply_the_filters_in_order():
@@ -194,4 +195,68 @@ def test_a_venngram_without_execution_maps_is_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(venngram.book, "AddressBook", _Book)
     monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: object())
     with pytest.raises(ValueError, match="venngram read no execution map"):
+        R.resolve_book(book, map_path)
+
+
+class _Tok:
+    """A stand-in tokenizer: one character per token, ``U`` the user-turn marker."""
+
+    def convert_tokens_to_ids(self, token):
+        return ord("U") if token == "<|message_user|>" else -1
+
+    def decode(self, ids):
+        return "".join(chr(i) for i in ids)
+
+
+def test_question_end_reads_the_last_question_mark_of_the_user_turn():
+    R = _runtime()
+    tok = _Tok()
+    ids = [ord(c) for c in "S?xU ab? cd? e.M"]
+    read = len(ids) - 1
+    assert R.question_end(ids, read, tok) == 11  # the second "?" of the user turn, not the system turn's
+    plain = [ord(c) for c in "what? no marker"]
+    assert R.question_end(plain, len(plain) - 1, tok) == len(plain) - 1
+    no_mark = [ord(c) for c in "SUabc.M"]
+    assert R.question_end(no_mark, len(no_mark) - 1, tok) == len(no_mark) - 1
+
+
+def test_site_positions_follow_each_site():
+    R = _runtime()
+    table = {"sites": [{"label": "a", "position": "read"}, {"label": "b", "position": "question_end"}, {"label": "c"}]}
+    ids = [ord(c) for c in "Uab?c.M"]
+    assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 6, "b": 3, "c": 6}
+
+
+def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
+    import venngram.book
+    import venngram.maps
+
+    class _Book:
+        @classmethod
+        def from_file(cls, path):
+            return cls()
+
+        def check_applies(self, **kwargs):
+            return None
+
+        def sets(self):
+            return {"s": "point:state.active & layers:19"}
+
+    class _Exec:
+        def resolve(self, address, sets=None):
+            raise AssertionError("the position is checked before any address resolves")
+
+    class _Map:
+        execution = _Exec()
+
+    R = _runtime()
+    book = tmp_path / "b.yaml"
+    book.write_text(
+        "lens: {model: m, K: 3, variant: plain, filters: [], readouts: [{set: s, readout: plain, position: answer}]}\n"
+    )
+    map_path = tmp_path / "inkling2_mini.yaml"
+    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n")
+    monkeypatch.setattr(venngram.book, "AddressBook", _Book)
+    monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: _Map())
+    with pytest.raises(ValueError, match="readout position 'answer' is not one this lens reads"):
         R.resolve_book(book, map_path)
