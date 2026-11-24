@@ -31,6 +31,7 @@ from interpretune.analysis.optools import (
     refuse_retired_jlens_basis,
     require_backend_capability,
     jlens_direction_rows,
+    jlens_provenance_json,
     last_token_logits,
     load_json_field,
     mean_target_logit_delta,
@@ -892,7 +893,7 @@ def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs:
         concept_basis=basis,
         jlens_layer=layer,
         jlens_kind=artifact.kind,
-        jlens_provenance=artifact.provenance,
+        jlens_provenance_json=jlens_provenance_json(artifact),
     )
     return analysis_batch
 

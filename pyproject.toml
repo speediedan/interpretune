@@ -204,7 +204,7 @@ git-deps = [
     #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
     #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
     #                                       which the adapter composition consumes rather than reimplements)
-    # plus six fork-only changes, not yet proposed upstream:
+    # plus eight fork-only changes, not yet proposed upstream:
     #   layer-local custom targets          a CustomTarget read at a block's output rather than the final
     #                                       residual, which a J-lens-basis attribution target needs (#661)
     #   multi-device layer split            the nnsight backend's model split across GPUs by a device map,
@@ -218,6 +218,8 @@ git-deps = [
     #   head reports                        `head_loadings` and `head_conductance`, on both backends (#781, #933)
     #   TransformerLens backend             `TransformerLensReplacementModel` on a TransformerBridge, since
     #                                       TransformerLens 4 removed the HookedTransformer it subclassed (#223)
+    #   disk offload of a bridge            a bridge lists its MLP weights under two names and shares the tied
+    #                                       embedding, which the disk offload refused or left on `meta` (#223)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -228,7 +230,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@2557abfbcae4d60e85bbf8b468fc24e17abef390",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@bff0788e335275f349d1641b341e6cfc4601af13",
     # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
     # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
@@ -652,8 +654,8 @@ env = { IT_RESOURCE_DEBUG = "1" }
 # adds. Its rerun and resource-debug flags reach the `run` phases through PYTEST_ADDOPTS and the special-test phases as
 # runner options.
 name = "IT"
-# sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls sys.settrace(None) on trace
-# teardown, which wipes the default settrace-based core for the rest of the process
+# sys.monitoring measurement core (coverage>=7.4, py>=3.12): code that replaces the thread's trace function (debuggers,
+# nnsight before 0.8) wipes the default settrace-based core for the rest of the process
 env = { COVERAGE_CORE = "sysmon", PYTHONFAULTHANDLER = "1" }
 setup = [["-m", "coverage", "erase"]]
 report = [["-m", "coverage", "report", "-m"]]
