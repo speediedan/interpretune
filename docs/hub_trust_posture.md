@@ -24,18 +24,31 @@ such a store's columns without trusting its producer, pull it with `protocol="sc
 imported, and attribute access comes from the field names the envelope records (see
 [AnalysisStore serialization](analysis_store_serialization.md)).
 
-Three paths execute publisher-authored Python in your process, and all three are gated:
+Interpretune executes publisher-authored Python in your process along these paths, and gates each of them:
 
 | Path | What runs | Gate |
 | --- | --- | --- |
 | Analysis op collections | the op collection's module code, via the dynamic-module cache | discovery skips untrusted repos with a warning |
+| Module and datamodule entrypoints (`it.hub.load`, `it.hub.pull` with a key) | the entrypoint module the manifest names, where a configuration's `class_path` addresses it | `RemoteCodeNotTrustedError` |
+| Helper modules (`it.hub.load_helpers`) | one helper module the manifest declares, and any other declared one it imports relatively | `RemoteCodeNotTrustedError` |
 | Prompt-config entrypoints (`compose_ref`) | the entrypoint module the manifest names | `RemoteCodeNotTrustedError` |
 | Adapter components (`load_hub_adapter`) | the adapters entrypoint the manifest names, which composes into the session MRO | `RemoteCodeNotTrustedError` |
 
 They behave differently on purpose. A session with no hub ops is still a working session, so op
 discovery degrades to "load fewer things" rather than failing your first op access. A `compose_ref`
-that cannot be resolved, or an adapter that cannot be loaded, has no such fallback: the configuration
-or composition you asked for cannot be built, so it raises.
+that cannot be resolved, or an adapter or helper module that cannot be loaded, has no such fallback: what you
+asked for cannot be built, so it raises.
+
+A component's helper modules are the Python an experiment's notebook uses beside the component itself: analysis and
+plotting code. The manifest declares each one by import name (`kinds: [helpers]`, with
+`helpers.modules: {plots: plots.py}`, alone or beside other kinds), a key-less `it.hub.pull` fetches them, and
+`it.hub.load_helpers("<org>/<repo>", "plots", revision=...)` imports one. Loading is cache-only and scoped by revision:
+nothing is added to `sys.path`, two revisions can be loaded side by side, and a file the manifest does not declare is
+not importable this way.
+
+**An experiment's pipeline is not on this list.** An `experiment` component's pipeline modules run when its notebook puts
+the fetched snapshot on `sys.path` and imports them, which Interpretune does not intercept. Read a pipeline before running
+its notebook, as you would any notebook you downloaded.
 
 ## The threat model
 

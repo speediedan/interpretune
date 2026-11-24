@@ -108,6 +108,8 @@ ignore:
   - src/interpretune/hub/cards.py
   # store discovery reads Hub listings and envelopes only; nothing it does reaches a device
   - src/interpretune/hub/discovery.py
+  # imports the Python files a component declares, on an explicit `load_helpers` call that no GPU test makes
+  - src/interpretune/hub/helpers.py
   - src/interpretune/utils/neuronpedia_*
   - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
   - src/interpretune/utils/notebook_config.py

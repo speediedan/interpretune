@@ -7,6 +7,7 @@ entry: parsing stays cheap and side-effect free.
 
 from __future__ import annotations
 
+import keyword
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ import yaml
 
 IT_COMPONENT_MANIFEST = "it_component.yaml"
 SUPPORTED_SCHEMA_VERSIONS = (1,)
-KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs", "hookmaps", "experiment")
+KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs", "hookmaps", "experiment", "helpers")
 
 
 class ComponentManifestError(ValueError):
@@ -108,6 +109,33 @@ def _validate_requires_shape(requires: Any, where: str) -> None:
                 f"{where}.components entries must be `<org>/<repo>` component references naming the module "
                 f"components whose registry keys the experiment resolves, with an optional `@revision` pin, "
                 f"got {values!r}"
+            )
+
+
+def _validate_helpers(manifest: dict, kinds: list, source: str) -> None:
+    """The ``helpers`` kind: a mapping of module name to the repo-relative ``.py`` file it loads from."""
+    if "helpers" not in kinds:
+        if manifest.get("helpers") is not None:
+            raise ComponentManifestError(
+                f"{source}: a `helpers` block without kind `helpers` is an orphan: no loader reads it, so it publishes "
+                "files nothing consumes. Declare the kind or remove the block."
+            )
+        return
+    modules = (manifest.get("helpers") or {}).get("modules")
+    if not modules or not isinstance(modules, dict):
+        raise ComponentManifestError(
+            f"{source}: kind `helpers` requires a non-empty `helpers.modules` mapping (module name -> repo-relative "
+            f".py path), got {modules!r}. `it.hub.load_helpers` imports a declared module by that name."
+        )
+    for name, rel in modules.items():
+        if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
+            raise ComponentManifestError(
+                f"{source}: `helpers.modules` name {name!r} must be a Python identifier: it is the import name."
+            )
+        if not isinstance(rel, str) or not rel.endswith(".py") or not _is_relative_inside(rel):
+            raise ComponentManifestError(
+                f"{source}: `helpers.modules` entry {name!r} declares path {rel!r}, which must be a repo-relative .py "
+                "path inside the component directory."
             )
 
 
@@ -254,6 +282,7 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
     ):
         if isinstance(entry, dict) and isinstance(entry.get("requires"), dict):
             _validate_requires_shape(entry["requires"], f"{source}: `adapters.compositions[].requires`")
+    _validate_helpers(manifest, kinds, source)
     if "hookmaps" in kinds:
         hm = manifest.get("hookmaps") or {}
         files = hm.get("files")

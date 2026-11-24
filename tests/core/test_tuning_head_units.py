@@ -180,6 +180,10 @@ def test_the_transformer_lens_views_structure_reports_the_wrapped_models_head_bl
     too."""
     from interpretune.adapters.transformer_lens.tunable_view import _WrappedModelStructure
 
-    structure = _WrappedModelStructure(_view(model, measured).structure(), {"bridge.o.weight": W_O})
+    inner = _view(model, measured).structure()
+    structure = _WrappedModelStructure(inner, {"bridge.o.weight": W_O})
     assert structure.unit_block("bridge.o.weight") == D_HEAD
     assert structure.unit_block("bridge.unknown.weight") is None
+    # the same tensor as a view the bridge makes has neither a unit axis nor a head block size of its own
+    as_view = _WrappedModelStructure(inner, {"bridge.o.weight": W_O}, views={"bridge.o.weight": W_O})
+    assert as_view.unit_block("bridge.o.weight") is None
