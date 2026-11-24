@@ -109,6 +109,8 @@ _LAZY_ATTRS = {
     "pull_hookmaps": "interpretune.hub.api",
     "pull_experiment": "interpretune.hub.api",
     "load_experiment": "interpretune.hub.api",
+    "load_helpers": "interpretune.hub.helpers",
+    "HelperModuleError": "interpretune.hub.helpers",
     "load_hookmaps": "interpretune.hub.api",
     "unpin_ops": "interpretune.hub.api",
     "op_pins": "interpretune.hub.api",

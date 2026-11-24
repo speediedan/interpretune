@@ -381,6 +381,16 @@ def generate_component_card(
             "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture interpretune already",
             "bundles must agree with the bundled one, or be loaded with `replace=True` deliberately.",
         ]
+    helper_modules = (manifest.get("helpers") or {}).get("modules") or {}
+    if helper_modules:
+        lines += ["", "## Helper modules", ""]
+        lines += [f"- `{name}`: `{rel}`" for name, rel in sorted(helper_modules.items())]
+        lines += [
+            "",
+            'Fetch with `interpretune.hub.pull("<org>/<repo>")`, then import one with',
+            '`interpretune.hub.load_helpers("<org>/<repo>", "<name>")`. Loading runs this repo\'s code, so it needs',
+            "the `IT_TRUST_REMOTE_CODE` opt-in.",
+        ]
     definitions = (manifest.get("promptconfigs") or {}).get("definitions") or {}
     if definitions:
         lines += ["", "## Prompt-config definitions", ""]
