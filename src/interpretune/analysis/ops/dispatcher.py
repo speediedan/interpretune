@@ -14,7 +14,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
-from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, load_component_manifest
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY, CollectionSpec
@@ -273,23 +273,55 @@ class AnalysisOpDispatcher:
         return name.replace("/", ".").replace("-", "_").lower()
 
     def _discover_yaml_files(self, paths: list[Path]) -> list[Path]:
-        """Discover all YAML files from the given paths (files or directories).
+        """Discover the op-definition YAML files of the given paths (files or directories).
 
-        A component manifest is never an op-definitions file. It shares the ``.yaml`` suffix and sits at the root of
-        every interpretune component repo, including op collections, so a directory holding both a manifest and its op
-        YAMLs (the ordinary shape when authoring a collection locally) would otherwise feed the manifest through the op
-        compiler, where its scalar keys (``it_schema_version: 1``) raise on ``op_def.get(...)`` and take down the whole
-        load -- every bundled op included.
+        A file named directly is taken as given. A directory is scanned recursively, except that a component in it (a
+        directory holding a component manifest) supplies exactly the op files its manifest declares: see
+        :meth:`_directory_op_files`. A component manifest is never an op-definitions file itself.
         """
-        yaml_files = []
+        yaml_files: list[Path] = []
         for path in paths:
             if path.is_file() and path.suffix.lower() in (".yaml", ".yml"):
                 yaml_files.append(path)
             elif path.is_dir():
-                # Recursively find all YAML files in the directory
-                yaml_files.extend(path.glob("**/*.yaml"))
-                yaml_files.extend(path.glob("**/*.yml"))
+                yaml_files.extend(self._directory_op_files(path))
         return sorted({p for p in yaml_files if p.name != IT_COMPONENT_MANIFEST})
+
+    @staticmethod
+    def _directory_op_files(directory: Path) -> list[Path]:
+        """The op YAMLs under ``directory``, taking each component's manifest at its word.
+
+        A component repo carries YAML that is not op definitions (address books, model specs, experiment configs). Their
+        scalar keys are refused one by one by the op compiler, but a mapping-valued top-level key reads as an op and
+        would be registered as one. The manifest already says which files are op definitions, and hub collections
+        load only those, so a local component directory does the same: under a manifest, a YAML loads only when
+        ``ops.files`` declares it (a component that declares no ops supplies none). A manifest that cannot be read, or
+        that declares a file which is absent, is reported and its component supplies nothing, rather than falling back
+        to the scan the manifest exists to replace.
+        """
+        found = [*directory.glob("**/*.yaml"), *directory.glob("**/*.yml")]
+        declared: dict[Path, set[Path]] = {}
+        for manifest_path in (p for p in found if p.name == IT_COMPONENT_MANIFEST):
+            # imported here because only a directory holding a component needs it, and this runs at import time
+            from interpretune.hub.opcollections import declared_op_files
+
+            root = manifest_path.parent
+            declared[root] = set()
+            try:
+                files = declared_op_files(load_component_manifest(manifest_path), source=str(manifest_path))
+                if missing := [f for f in files if not (root / f).is_file()]:
+                    raise ValueError(f"`ops.files` declares {missing}, which the component does not hold")
+            except (ValueError, OSError, yaml.YAMLError) as err:
+                op_load_failure(f"Loading no op definitions from {root}: {manifest_path.name} is not usable: {err}")
+                continue
+            declared[root] = {root / f for f in files}
+
+        def loads(path: Path) -> bool:
+            # the nearest component owns a file, so a component nested in another is read by its own manifest
+            owner = next((parent for parent in path.parents if parent in declared), None)
+            return owner is None or path in declared[owner]
+
+        return [p for p in found if loads(p)]
 
     def load_definitions(self) -> None:
         """Load operation definitions from YAML files."""
