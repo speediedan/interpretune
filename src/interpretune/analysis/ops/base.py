@@ -11,7 +11,7 @@ import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.protocol import BaseAnalysisBatchProtocol
-from interpretune.analysis.store_dtypes import check_storable
+from interpretune.analysis.store_dtypes import STORE_TEXT_DTYPES, check_storable, check_storable_text
 
 # Cross-backend batch key aliases. Different backends store tokenized input under different keys:
 # TransformerLens (HookedTransformer) uses 'input', HuggingFace/NNsight uses 'input_ids'.
@@ -882,14 +882,27 @@ class AnalysisOp:
                             serialized_dict[hook_name] = latent_dict
                     setattr(analysis_batch, col_name, serialized_dict)
 
-            # A latent-model hook column takes its dtype from the latent model, not from this declaration, and a
-            # non-tensor column is not cast; every other column must hold what it is given without changing it.
-            if not (col_cfg.non_tensor or col_cfg.per_latent_model_hook):
-                check_storable(
-                    col_name, getattr(analysis_batch, col_name), col_cfg.array_dtype or col_cfg.datasets_dtype
-                )
+            AnalysisOp._check_storable_column(col_name, col_cfg, getattr(analysis_batch, col_name))
 
         return analysis_batch
+
+    @staticmethod
+    def _check_storable_column(col_name: str, col_cfg: ColCfg, value: Any) -> None:
+        """Refuse a value the column's declaration cannot hold without changing it.
+
+        A latent-model hook column takes its dtype from the latent model, not from this declaration, so it is not
+        checked against it. Neither is a non-tensor column of numbers, which is not cast. A text column is checked
+        whether or not it is marked non-tensor, at the depth ``schema_to_features`` gives it; an intermediate-only
+        column is never stored, and its declared dtype (``object``, compiled to ``string``) says nothing about it.
+        """
+        stored_dtype = col_cfg.array_dtype or col_cfg.datasets_dtype
+        if col_cfg.per_latent_model_hook:
+            return
+        if stored_dtype in STORE_TEXT_DTYPES:
+            if not (col_cfg.intermediate_only or col_cfg.per_latent):
+                check_storable_text(col_name, value, 1 if col_cfg.sequence_type else len(col_cfg.array_shape or ()))
+        elif not col_cfg.non_tensor:
+            check_storable(col_name, value, stored_dtype)
 
     # TODO: Add a mode where save_batch does not apply dyn_dim serialization transformations? Would allow for
     # wrap_summary/latent transformations to be executed but enable manual dataset construction
