@@ -289,6 +289,7 @@ def lens_store(tmp_path):
     from types import SimpleNamespace
 
     from interpretune.analysis.core import analysis_store_from_batches
+    from interpretune.analysis.ops.base import AnalysisOp
     from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 
     dispatcher = AnalysisOpDispatcher(yaml_paths=[COMPONENT], enable_hub_ops=False)
@@ -297,6 +298,7 @@ def lens_store(tmp_path):
     dispatcher._cache_manager.cache_dir = cache
     dispatcher.load_definitions()
     op = dispatcher.get_op("looped_lens_read")
+    assert isinstance(op, AnalysisOp)
     tok = SimpleNamespace(vocab_size=200058, model_max_length=4096)
     module = SimpleNamespace(
         datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=1)),
