@@ -145,6 +145,7 @@ def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component_gpu, clea
     """
     core = _run("core", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
     lightning = _run("lightning", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
+    assert core["devices"] == lightning["devices"] == ["cuda:0"]
     assert core["transition_epochs"] == lightning["transition_epochs"] == [2, 4]
     assert core["final_depth"] == lightning["final_depth"] == 2
     assert core["best_depth"] == lightning["best_depth"] == 2
