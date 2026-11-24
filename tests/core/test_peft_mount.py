@@ -84,6 +84,24 @@ def test_remount_same_source_is_a_noop_and_a_different_one_is_refused(tmp_path):
         pm.mount_adapter(model, _save_lora(tmp_path / "b"), name="lens", base="org/tiny")
 
 
+def test_an_adapter_whose_tensors_do_not_land_is_refused_and_removed(tmp_path, ids):
+    # PEFT gives every configured target fresh weights, so without the load report this adapter would mount and read
+    # as a random one: planted by renaming its q_proj tensors to a module the model does not have
+    from safetensors.torch import load_file, save_file
+
+    path = tmp_path / "lens"
+    _save_lora(path)
+    sd = load_file(str(path / "adapter_model.safetensors"))
+    save_file({k.replace("q_proj", "nowhere_proj"): v for k, v in sd.items()}, str(path / "adapter_model.safetensors"))
+    model = _tiny()
+    bare = _logits(model, ids)
+    with pytest.raises(ValueError, match="does not fit the session's model: 4 of its tensors match no parameter"):
+        pm.mount_adapter(model, str(path), name="lens", base="org/tiny")
+    assert pm.mounted_adapters(model) == {}
+    assert "lens" not in (getattr(model, "peft_config", None) or {})
+    assert torch.equal(_logits(model, ids), bare)
+
+
 def test_enabling_an_unmounted_adapter_is_refused():
     with pytest.raises(KeyError, match="no adapter is mounted as 'lens'; mounted: none"):
         with pm.adapter_enabled(_tiny(), "lens"):

@@ -32,7 +32,7 @@ class AdapterMount:
     base: str
 
 
-def hf_model_of(model: Any) -> torch.nn.Module:
+def hf_model_of(model: Any) -> Any:
     """The Hugging Face model an op reads through: the model itself, or the one an nnsight wrapper holds.
 
     nnsight keeps the wrapped module at ``_module``. It is read from the instance dict, because an envoy forwards any
@@ -108,14 +108,38 @@ def mount_adapter(
     # the revision reaches the adapter's config and weights through `adapter_kwargs` (download options), not as a
     # top-level keyword, which `load_adapter` passes to its state-dict loader
     adapter_kwargs = {**load_kwargs.pop("adapter_kwargs", {}), **({"revision": revision} if revision else {})}
-    hf.load_adapter(str(source), adapter_name=name, adapter_kwargs=adapter_kwargs or None, **load_kwargs)
+    info = hf.load_adapter(str(source), adapter_name=name, adapter_kwargs=adapter_kwargs or None, **load_kwargs)
+    _check_fit(hf, name, str(source), info)
     hf.disable_adapters()  # loading switches the adapter on; a mount leaves the session's model as it was
     mounts[name] = want
     return want
 
 
+def _check_fit(hf: Any, name: str, source: str, info: Any) -> None:
+    """Refuse an adapter whose tensors did not all land on the model: PEFT gives every configured target fresh LoRA
+    weights, so an adapter whose keys match nothing loads without error and reads as a random adapter would."""
+    if info is None:
+        hf.delete_adapter(name)
+        raise RuntimeError(f"loading {source!r} returned no load report, so the mount cannot be checked")
+    unexpected = sorted(getattr(info, "unexpected_keys", None) or ())
+    missing = sorted(k for k in (getattr(info, "missing_keys", None) or ()) if f".{name}." in k)
+    mismatched = sorted(str(k) for k in (getattr(info, "mismatched_keys", None) or ()))
+    if unexpected or missing or mismatched:
+        hf.delete_adapter(name)
+        parts = [
+            f"{len(keys)} {what} (e.g. {keys[0]})"
+            for keys, what in (
+                (unexpected, "of its tensors match no parameter of the model"),
+                (missing, "adapter parameters were left uninitialized"),
+                (mismatched, "tensors have the wrong shape"),
+            )
+            if keys
+        ]
+        raise ValueError(f"the adapter {source!r} does not fit the session's model: " + "; ".join(parts))
+
+
 @contextlib.contextmanager
-def adapter_enabled(model: Any, name: str) -> Iterator[torch.nn.Module]:
+def adapter_enabled(model: Any, name: str) -> Iterator[Any]:
     """Switch the mounted adapter ``name`` on for the block, and off again when it ends, including on an error."""
     hf = hf_model_of(model)
     mounts = vars(hf).get(MOUNTS_ATTR, {})
