@@ -52,10 +52,11 @@ def _local_runtime(module: Any, table_path: str, map_path: str | None, translato
 
 
 def looped_lens_read_impl(module, analysis_batch, batch, batch_idx: int, **kwargs):
-    """Read the lens at one position of every prompt in the batch.
+    """Read the lens at one read position of every prompt in the batch (a book may place a site at its question's
+    end).
 
-    Returns the site labels, per prompt the filtered token lists (the N x K labelled tokens the challenge pools), and
-    the unfiltered top 100 ids per site for scoring or a later op.
+    Returns the site labels, per prompt the filtered token lists (the N x K labelled tokens the challenge pools) and
+    where each site was read, and the unfiltered top 100 ids per site for scoring or a later op.
     """
     table_path = _arg(analysis_batch, kwargs, "looped_lens_table")
     if table_path is None:
@@ -97,33 +98,34 @@ def looped_lens_read_impl(module, analysis_batch, batch, batch_idx: int, **kwarg
         llm = module.model.model.language_model
         vocab = [tok.decode([i]) for i in range(R.UNPADDED_VOCAB)]
 
-        def top_ids(ids: list[int], pos: int) -> dict[str, torch.Tensor]:
-            return R.remote_top_ids(
-                module.model, llm, table, ids, R.site_positions(table, ids, pos, tok), w_u, gain, translators
-            )
+        def top_ids(ids: list[int], where: dict[str, int]) -> dict[str, torch.Tensor]:
+            return R.remote_top_ids(module.model, llm, table, ids, where, w_u, gain, translators)
     else:
         rt = _local_runtime(module, str(table_path), map_path, translators_path)
         table, tok, vocab = rt.table, rt.tok, rt.vocab
 
-        def top_ids(ids: list[int], pos: int) -> dict[str, torch.Tensor]:
-            return rt.top_ids(ids, R.site_positions(table, ids, pos, tok))
+        def top_ids(ids: list[int], where: dict[str, int]) -> dict[str, torch.Tensor]:
+            return rt.top_ids(ids, where)
 
     spec = table["spec"]
     labels = [s["label"] for s in table["sites"]]
     k, filters = int(spec.get("K", 3)), set(spec.get("filters", []))
-    all_top, tokens, positions = [], [], []
+    all_top, tokens, positions, site_positions = [], [], [], []
     for ids, off in zip(prompts, offs):
         pos = len(ids) + off
-        top = top_ids(ids, pos)
+        where = R.site_positions(table, ids, pos, tok)
+        top = top_ids(ids, where)
         stacked = torch.stack([top[lab][0] for lab in labels])  # (N, 100)
         all_top.append(stacked)
         tokens.append(R.build_lists(stacked, vocab, tok.decode(ids), k, filters))
         positions.append(pos)
+        site_positions.append([where[lab] for lab in labels])
     analysis_batch.update(
         looped_lens_labels=labels,
         looped_lens_tokens=tokens,
         looped_lens_top_ids=torch.stack(all_top).long(),
         looped_lens_positions=torch.tensor(positions),
+        looped_lens_site_positions=torch.tensor(site_positions),
         looped_lens_book=str(spec.get("book", table_path)),
     )
     return analysis_batch
