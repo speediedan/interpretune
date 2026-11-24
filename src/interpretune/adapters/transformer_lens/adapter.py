@@ -182,6 +182,24 @@ class BaseITLensModule(BaseITModule):
         model's head-splitting plan does not apply, and placement 'tp' needs an explicit ``tp_plan``."""
         return None
 
+    def refresh_tensor_references(self) -> None:
+        """Point the bridge's bias aliases (``b_in``, ``b_out``, ``b_Q``, ...) at the tensors placement registered.
+
+        A bridge component resolves each of its property aliases once, at setup, and keeps the tensor it found as a
+        plain attribute, so after a placement replaces that tensor the alias still names the old one. Its weight
+        properties (``W_in``, ``W_Q``, ...) are read anew each time and need nothing.
+        """
+        super().refresh_tensor_references()
+        for component in self.model.modules() if isinstance(self.model, torch.nn.Module) else ():
+            for alias, path in getattr(component, "_property_alias_registry", {}).items():
+                if alias not in component.__dict__:  # a property of the component's class, read anew each time
+                    continue
+                try:
+                    target = reduce(getattr, path.split("."), component)
+                except AttributeError:
+                    continue
+                object.__setattr__(component, alias, target)
+
     def build_tunable_view(self) -> Any | None:
         """The TransformerLens-names view over this module's bridge (#758), with the modules spliced in beside it
         placed at their sites (#875)."""

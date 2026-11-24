@@ -1,12 +1,16 @@
-"""One rank of the two-rank latent-tuning check (#834): FSDP2 latent-space fine-tuning through the core loop.
+"""One rank of the two-rank latent-tuning checks: latent-space fine-tuning through the core loop under FSDP2 (#834)
+and tensor parallelism (#853).
 
 A SAELens composition (the tiny custom TransformerLens model of ``CoreSLCust``) with SAEs spliced in, so the SAE
 parameters take the ``latent:sae`` role. finetuning-scheduler's ``TuningScheduler`` drives two phases through
 ``FTSCoreCallback``: the base model's last block first, then, by role, the spliced SAEs (``role:latent:sae``).
 
-Run under ``torch.distributed.run`` as one rank of an ``fsdp2`` run. Writes ``<out_dir>/rank<rank>.json`` with the
-per-step training losses, each phase's trainable parameter names (read at every epoch end), the final depth, each
-rank's device and its peak allocated accelerator memory.
+Run under ``torch.distributed.run`` as one rank of an ``fsdp2`` or ``tp`` run, or with ``--placement single`` as
+the one-process reference of a ``tp`` run (whose ranks share one batch). ``--sae-hook`` splices the SAE at another
+hook, such as one inside a layer ``tp_plan`` splits. Writes ``<out_dir>/rank<rank>.json`` with the per-step training
+losses, each phase's trainable parameter names (read at every epoch end) and the last block's, the final depth, the
+SAE's parameters before and after training, the split parameters, each rank's device and its peak allocated
+accelerator memory, or the placement's refusal.
 """
 
 from __future__ import annotations
@@ -43,7 +47,10 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--train-batches", type=int, default=4)
-    parser.add_argument("--fsdp-plan", type=json.loads, required=True, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--placement", default="fsdp2", choices=("single", "fsdp2", "tp"))
+    parser.add_argument("--fsdp-plan", type=json.loads, default=None, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--tp-plan", type=json.loads, default=None, help="the tensor-parallel plan, as JSON")
+    parser.add_argument("--sae-hook", default=None, help="the hook to splice the SAE at (default: its config's)")
     parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
     args = parser.parse_args()
 
@@ -51,6 +58,7 @@ def main() -> None:
     from interpretune.runners import SessionRunner
     from interpretune.session import ITSession
     from interpretune.tuning.core_loop import FTSCoreCallback
+    from interpretune.utils import MisconfigurationException
     from tests.configuration import config_modules
     from tests.core.cfg_aliases import CoreSLCust
     from tests.core.test_adapters_sae_lens import TestClassSAELens
@@ -73,6 +81,8 @@ def main() -> None:
     cfg = config_modules(test_cfg, "dist_latent", {}, out_dir / f"rank{rank}", cfg_only=True)
     cfg.module_cfg.add_saes_on_init = True
     sae_cfg = deepcopy(TestClassSAELens.test_sl_cust_config)
+    if args.sae_hook:
+        sae_cfg.cfg.metadata.hook_name = args.sae_hook
     if args.device_type != "cpu":
         sae_cfg.cfg.device = args.device_type  # "cuda" is each rank's current device (LOCAL_RANK), as the model's is
     cfg.module_cfg.sae_cfgs = [sae_cfg]
@@ -87,26 +97,43 @@ def main() -> None:
         limit_train_batches=args.train_batches,
         limit_val_batches=2,
         callbacks=[fts, recorder],
-        placement="fsdp2",
+        placement=args.placement,
         fsdp_plan=args.fsdp_plan,
+        tp_plan=args.tp_plan,
     )
     runner = SessionRunner(run_cfg=runner_cfg)
     # the view names the bridge's parameters canonically (``blocks.1.attn.W_Q``), so phase 0 selects the last block
     # by a regex over those names; phase 1 adds the spliced SAEs by role
     n_layers = module.model.cfg.n_layers
     last_block = rf"blocks\.{n_layers - 1}\..*"
+    last_block_prefix = f"model.blocks.{n_layers - 1}."
     fts.schedule = {
         0: {"params": [last_block], "max_transition_epoch": args.epochs // 2},
         1: {"params": ["role:latent:sae"]},
     }
+
+    def sae_values() -> dict[str, list[float]]:
+        # whole on every rank: FSDP2 shards the SAEs with the root unit, and no tensor-parallel plan here splits them
+        whole = {n: p.full_tensor() if hasattr(p, "full_tensor") else p for n, p in module.named_parameters()}
+        return {n: p.detach().flatten().tolist() for n, p in whole.items() if n.startswith("attached_saes.")}
+
+    sae_init = sae_values()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    runner.train()
+    try:
+        runner.train()
+    except MisconfigurationException as err:
+        (out_dir / f"rank{rank}.json").write_text(json.dumps({"refused": str(err)}))
+        return
     record = {
         "losses": recorder.losses,
         "trainable_by_epoch": recorder.trainable_by_epoch,
         "phase0_selector": last_block,
+        "last_block_params": sorted(n for n, _ in module.named_parameters() if n.startswith(last_block_prefix)),
         "sae_params": sorted(n for n, _ in module.named_parameters() if n.startswith("attached_saes.")),
+        "sae_init": sae_init,
+        "sae_values": sae_values(),
+        "split_params": sorted(n for n, p in module.named_parameters() if type(p.data).__name__ == "DTensor"),
         "depth": fts.tuning_scheduler.curr_depth if fts.tuning_scheduler is not None else None,
         "devices": list(runner.dist_run.devices) if runner.dist_run else [],
         "peak_allocated_gb": (torch.cuda.max_memory_allocated() / 2**30) if torch.cuda.is_available() else None,
