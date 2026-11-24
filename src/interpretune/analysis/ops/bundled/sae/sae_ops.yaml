@@ -28,6 +28,9 @@ get_alive_latents:
       datasets_dtype: int64
       per_latent_model_hook: true
       non_tensor: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
 
 model_fwd_w_cache_latent_models:
   description: Model forward pass with activation caching and latent model (SAE) hooks
@@ -78,6 +81,9 @@ model_ablation:
       per_latent: true
       sequence_type: false
       array_shape: [batch_size, vocab_size]
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
 
 latent_correct_acts:
   description: Compute correct activations from the latent-model activation cache
@@ -97,3 +103,6 @@ latent_correct_acts:
     correct_activations:
       datasets_dtype: float32
       per_latent_model_hook: true
+      site:
+        - {binds: hook_key}
+        - {binds: latent_feature}
