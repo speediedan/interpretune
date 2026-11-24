@@ -12,6 +12,10 @@ rounds floats to the declared float precision, which is warned about once per co
 fraction, booleanizing, losing integer precision, a finite value overflowing to infinity) is refused by
 :func:`check_storable` with :class:`StoreDtypeError`, naming the column, both dtypes and the first changed value.
 
+A text column has the same problem in another form: ``datasets`` coerces whatever a string column is given, so a list
+or dict is stored as its Python repr, a number as its digits, and a string in a list-of-strings column as the list of
+its characters. :func:`check_storable_text` refuses those.
+
 The measured round-trip table is in ``docs/analysis_store_serialization.md``.
 """
 
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import torch
 
 #: Arrow value types a store column can declare, mapped to the tensor dtype a reader gets back. Arrow has no
@@ -127,8 +132,8 @@ def check_storable(col_name: str, value: Any, stored_dtype: str) -> None:
     once per column and dtype pair (see :func:`_is_float_rounding`).
 
     Tensors are checked wherever they sit in ``value``: directly, inside the mappings a per-hook or per-latent column
-    writes, and inside lists. Columns whose dtype is not numeric (strings, objects) are not checked, and neither are
-    non-tensor values, which ``datasets`` encodes without a cast this module can reason about.
+    writes, and inside lists. Text columns are checked by :func:`check_storable_text` instead, and non-tensor values are
+    not checked: ``datasets`` encodes those without a cast this module can reason about.
     """
     target = STORE_TORCH_DTYPES.get(str(stored_dtype))
     if target is None:
@@ -158,6 +163,51 @@ def check_storable(col_name: str, value: Any, stored_dtype: str) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             check_storable(col_name, item, stored_dtype)
+
+
+#: Declared dtypes whose columns hold text, and so are checked by :func:`check_storable_text`.
+STORE_TEXT_DTYPES = frozenset({"string", "large_string"})
+
+
+def check_storable_text(col_name: str, value: Any, depth: int) -> None:
+    """Refuse a value that text column ``col_name`` would store as something other than itself.
+
+    ``depth`` is how many lists the column nests its strings in: 0 for a plain string column, 1 for a list of strings
+    (``sequence_type``), and the rank of ``array_shape`` for a nested one. ``None`` is a null at any level.
+
+    ``datasets`` encodes a string column without complaint whatever it is given: a list, dict or tensor is stored as
+    its Python repr, a number as its digits, and a string where a list is declared as the list of its characters.
+    """
+    if value is None:
+        return
+    if depth == 0:
+        if not isinstance(value, str):
+            raise StoreDtypeError(_text_refusal(col_name, value))
+        return
+    if isinstance(value, str):
+        raise StoreDtypeError(
+            f"Column {col_name!r} is declared a list of strings and was given the string {_shortened(value)}, which an"
+            " AnalysisStore would keep as the list of its characters. Declare the column `sequence_type: false` to"
+            " hold one string, or write a list."
+        )
+    if not isinstance(value, (list, tuple, np.ndarray)):
+        raise StoreDtypeError(_text_refusal(col_name, value))
+    for item in value:
+        check_storable_text(col_name, item, depth - 1)
+
+
+def _text_refusal(col_name: str, value: Any) -> str:
+    return (
+        f"Column {col_name!r} holds strings and was given a {type(value).__name__}, which an AnalysisStore would keep"
+        f" as the text {_shortened(str(value))}. For nested lists of strings declare `datasets_dtype: string` with"
+        " `sequence_type: false` and one `array_shape` entry per level (`[null, null]` for a list of lists); for"
+        " numbers declare their dtype the same way; for any other structure write `json.dumps(value)` into a string"
+        " column named `<column>_json`, which an op reads back with `load_json_field`."
+    )
+
+
+def _shortened(text: str, limit: int = 60) -> str:
+    return repr(text if len(text) <= limit else text[:limit] + "...")
 
 
 def _torch_name(dtype: torch.dtype) -> str:

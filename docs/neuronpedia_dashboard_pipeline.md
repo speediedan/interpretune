@@ -39,12 +39,14 @@ defaults:
   Once the Wave 1 PRs land upstream and the packages are installed normally, the relevant modules are importable
   from site-packages and none of these variables should be needed.
 
-For local DB imports, the pipeline resolves the DB URL from the Neuronpedia local env files (`IT_ENV_FILE` overrides
-the env-file path; a repo-local `.env` is used by default when present), but the explicit localhost URL currently in
-use is:
+For local DB imports, the pipeline takes the DB URL from `--local-db-url` (or the config's `local_db_url`), then from
+`LOCAL_NEURONPEDIA_DB_URL`, `POSTGRES_URL_NON_POOLING` and `DATABASE_URL`, in the environment or in the interpretune env
+file (`IT_ENV_FILE` names one; a repo-local `.env` is used by default when present). There is no built-in fallback,
+because the import writes to the database it resolves: a run that asks for an import with no URL set is refused before it
+generates anything. The committed configs name no URL, so set one for your machine once, for example in `.env`:
 
 ```bash
-postgres://postgres:postgres@127.0.0.1:5432/postgres
+LOCAL_NEURONPEDIA_DB_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
 ```
 
 
@@ -54,7 +56,7 @@ This is a run that was actually executed and timed, not a template. It regenerat
 `gemmascope-2-transcoder-16k` source set for `gemma-3-1b-it` from the Monology pile and imports it
 into the local Neuronpedia DB.
 
-Everything is in a committed config, so the command is one line:
+Everything but the database URL (above) is in a committed config, so the command is one line:
 
 ```bash
 python -m interpretune.utils.neuronpedia_dashboard_pipeline \

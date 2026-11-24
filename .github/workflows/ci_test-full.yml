@@ -161,8 +161,8 @@ jobs:
       # when a token is present). Both lines revert together at the #261 flip.
       HF_TOKEN: ${{ secrets.HF_MCP_TOKEN_RW }}
       HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY: ${{ secrets.HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY }}
-      # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
-      # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
+      # sysmon coverage core (coverage>=7.4, py>=3.12): code that replaces the thread's trace function cannot wipe it
+      # (see [tool.gpu-epsilon.phases] in pyproject.toml)
       COVERAGE_CORE: sysmon
       # Windows console streams default to cp1252, so any non-latin-1 char in a log message (e.g.
       # the '→' in the TL param-mapping summary) raises UnicodeEncodeError inside logging.emit —

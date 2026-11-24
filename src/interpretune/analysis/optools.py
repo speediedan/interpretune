@@ -483,6 +483,15 @@ class JLensArtifact(NamedTuple):
     kind: str
 
 
+def jlens_provenance_json(artifact: JLensArtifact) -> str:
+    """``artifact.provenance`` as the JSON text an op's ``jlens_provenance_json`` column holds.
+
+    A store column has no type for an arbitrary mapping, so the mapping is stored as JSON; ``load_json_field`` reads it
+    back. A sidecar value JSON has no type for (a YAML date) is kept as its text.
+    """
+    return json.dumps(artifact.provenance, default=str)
+
+
 def _require_jlens_kind(kind: object) -> str:
     """``kind`` when it names a lens kind, otherwise a refusal naming the kinds that exist."""
     if not isinstance(kind, str) or kind not in JLENS_KINDS:
@@ -1209,6 +1218,7 @@ __all__ = [
     "resolve_jlens_layer",
     "jlens_layer_for_percentile",
     "JLensArtifact",
+    "jlens_provenance_json",
     "DEFAULT_JLENS_REPO",
     "DEFAULT_JLENS_KIND",
     "JLENS_KINDS",

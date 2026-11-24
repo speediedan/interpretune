@@ -212,6 +212,7 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_a:
       required: false
       datasets_dtype: string
@@ -269,6 +270,7 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_a_token_ids:
       datasets_dtype: int64
       required: false
@@ -313,8 +315,8 @@ concept_direction:
       required: false
       non_tensor: true
       sequence_type: false
-    jlens_provenance:
-      datasets_dtype: object
+    jlens_provenance_json:
+      datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
