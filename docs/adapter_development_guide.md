@@ -529,12 +529,12 @@ Two things worth knowing when developing against these:
   (LayerNorm folding, `center_writing_weights`, `center_unembed`). Omitting it is the equivalent of the old
   `from_pretrained_no_processing`.
 
-### circuit-tracer's TransformerLens backend is unavailable
+### circuit-tracer's TransformerLens backend wraps the composition's bridge
 
-circuit-tracer's TL backend declares `class TransformerLensReplacementModel(HookedTransformer)`, so it cannot
-be imported under TL 4.0 at all. Use `circuit_tracer_cfg.backend="nnsight"` for circuit-tracer compositions
-until upstream ports that replacement model onto `TransformerBridge`. This is a path awaiting an upstream port,
-not a retired one.
+For `circuit_tracer_cfg.backend="transformerlens"` the composition builds the `TransformerBridge` from `tl_cfg` as
+the TransformerLens adapter does, and circuit-tracer's `TransformerLensReplacementModel` is made from that bridge
+with the configured transcoders. Compatibility mode is refused there, because its weight processing changes the
+activations the transcoders read.
 
 
 

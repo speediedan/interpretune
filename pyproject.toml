@@ -227,7 +227,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@290cb75e0f1c71fe2e65ce354cd4852d07fa7ce3",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@2557abfbcae4d60e85bbf8b468fc24e17abef390",
     # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
     # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
