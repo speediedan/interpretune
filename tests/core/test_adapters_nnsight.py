@@ -74,6 +74,7 @@ class TestNNsightConfig:
         assert config.default_padding_side == "left"
         assert config.remote is False
         assert config.api_key is None
+        assert config.task == "text-generation"
 
     def test_nnsight_config_dtype_resolution(self):
         """Verify torch dtype string resolution works correctly."""
@@ -126,6 +127,35 @@ class TestNNsightConfig:
         assert kwargs["trust_remote_code"] is True
         assert kwargs["attn_implementation"] == "sdpa"
         assert "tokenizer_kwargs" in kwargs
+
+    def test_init_builds_the_model_for_the_configured_task(self):
+        """The model is built for ``nnsight_cfg.task``, so a checkpoint registered only under a multimodal task
+        (Inkling 2 Mini's ``Inkling2LoopConfig`` is ``image-text-to-text``) loads rather than failing in
+        ``AutoModelForCausalLM``."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.nnsight.adapter import BaseNNsightModule
+
+        built: dict = {}
+
+        class _Recorder:
+            tokenizer = SimpleNamespace()
+
+            def __init__(self, name, **kwargs):
+                built.update(name=name, **kwargs)
+
+        cfg = NNsightConfig(model_name="org/multimodal", task="image-text-to-text", dispatch=False)
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(
+                nnsight_cfg=cfg, model_name_or_path=None, os_env_model_auth_key=None, tokenizer=object()
+            ),
+            _apply_generation_config=lambda: None,
+            _model_backend=object(),
+        )
+        with patch("nnsight.TransformersModel", _Recorder):
+            BaseNNsightModule._init_nnsight_model(module)  # type: ignore[arg-type]
+        assert built["name"] == "org/multimodal"
+        assert built["task"] == "image-text-to-text"
 
     def test_get_nnsight_kwargs_remote(self):
         """Verify get_nnsight_kwargs includes remote settings when enabled."""

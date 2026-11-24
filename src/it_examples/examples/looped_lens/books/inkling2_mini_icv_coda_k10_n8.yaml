@@ -1,0 +1,33 @@
+# A looped lens for Inkling 2 Mini as a venngram address book: the best majority configuration under item
+# cross-validation with coda sites (every development family in selection; item-CV 0.953, multihop 0.90, leave one
+# family out 0.805; held out 31 of 33; blind gemma judge 0.959 on dev basic and multihop), K=10, no filter. Four coda
+# readouts (three mid-loop visits of pass 3 and one of pass 2) carry multihop bridges; the coda readout runs the
+# visit's whole-context state through the six coda layers, so this lens runs locally.
+schema_version: 12
+name: inkling2-mini-looped-lens-icv-coda-k10-n8
+description: Read sites of an eight-site looped lens for Inkling 2 Mini (active block, MoE input, coda lens).
+portability: family
+applies_to: {architectures: [Inkling2LoopForConditionalGeneration]}
+sets:
+  l15p3: "point:state.active & layers:15 & passes:3"
+  l19: "point:state.active & layers:19"
+  l14p3: "point:state.active & layers:14 & passes:3"
+  l18_moe: "point:mlp.mix & layers:18"
+  l22: "point:state.active & layers:22"
+  l21: "point:state.active & layers:21"
+  l13p3: "point:state.active & layers:13 & passes:3"
+  l9p2: "point:state.active & layers:9 & passes:2"
+lens:
+  model: thinkingmachines/Inkling-2-Mini
+  K: 10
+  variant: plain
+  filters: []
+  readouts:
+    - {set: l15p3, readout: coda}
+    - {set: l19, readout: plain}
+    - {set: l14p3, readout: coda}
+    - {set: l18_moe, readout: plain}
+    - {set: l22, readout: plain}
+    - {set: l21, readout: plain}
+    - {set: l13p3, readout: coda}
+    - {set: l9p2, readout: coda}

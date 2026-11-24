@@ -187,7 +187,31 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
                 f"{rewrite_name!r} (available: {sorted(EXPERIMENT_SNAPSHOT_REWRITES)})."
             ) from None
         rewrite(out_dir, manifest)
+    _refuse_unshipped_implementations(component_dir, out_dir, manifest)
     return manifest
+
+
+def _refuse_unshipped_implementations(component_dir: Path, out_dir: Path, manifest: dict) -> None:
+    """Refuse an ``ops`` component whose definitions name a module of the component that the tree would not ship.
+
+    ``ops.files`` stages only the definitions; the modules their ``implementation:`` entries name ship through
+    ``extra_files``. Without this check a forgotten declaration publishes a collection that loads and then fails on
+    its first call, in the consumer's cache. A module the component does not contain belongs to an installed package
+    and is not checked.
+    """
+    from interpretune.hub.opcollections import implementation_module_paths
+
+    op_yamls = [component_dir / rel for rel in (manifest.get("ops") or {}).get("files") or []]
+    missing = sorted(
+        rel
+        for rel in implementation_module_paths(op_yamls)
+        if (component_dir / rel).is_file() and not (out_dir / rel).is_file()
+    )
+    if missing:
+        raise ComponentManifestError(
+            f"{component_dir / IT_COMPONENT_MANIFEST}: the op definitions' implementations live in {missing}, which "
+            "the published tree would not contain; list them in `extra_files`."
+        )
 
 
 def build_op_collection_tree(

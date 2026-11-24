@@ -147,10 +147,11 @@ class TestDiscoveryFailsSoftPerCollection:
 class TestPullIsManifestFirstAndPinned:
     """The ``countDownloads: path:"it_component.yaml"`` contract, and single-revision coherence."""
 
-    def _run_pull(self, tmp_path, manifest_body: str, revision: str | None = None):
+    def _run_pull(self, tmp_path, manifest_body: str, revision: str | None = None, repo_files=()):
         from interpretune.hub import opcollections
 
         calls: list[tuple[str, str | None]] = []
+        listed: list[str | None] = []
         snapshot = tmp_path / "models--u--r" / "snapshots" / ("d" * 40)
         snapshot.mkdir(parents=True)
         (snapshot / "it_component.yaml").write_text(manifest_body)
@@ -160,11 +161,40 @@ class TestPullIsManifestFirstAndPinned:
             calls.append((filename, revision))
             return str(snapshot / filename)
 
+        def fake_list(self, repo_id, revision=None, **kwargs):
+            listed.append(revision)
+            return ["it_component.yaml", "ops.yaml", *repo_files]
+
         # `pull_op_collection` imports hf_hub_download inside the function body, so the module-level
         # huggingface_hub attribute is the binding it resolves through.
-        with patch("huggingface_hub.hf_hub_download", fake_download):
+        with (
+            patch("huggingface_hub.hf_hub_download", fake_download),
+            patch("huggingface_hub.HfApi.list_repo_files", fake_list),
+        ):
             paths, commit = opcollections.pull_op_collection("u/r", revision=revision, cache_dir=tmp_path)
+        self.listed = listed
         return calls, paths, commit
+
+    def test_declared_extra_files_are_fetched_at_the_manifest_commit(self, tmp_path):
+        """A module the implementation imports and data it reads reach the consumer: a file entry and every file
+        under a directory entry, each at the commit the manifest resolved to; undeclared files stay on the Hub."""
+        manifest = OPS_MANIFEST + "extra_files: [helper.py, books]\n"
+        repo_files = ["helper.py", "books/a.yaml", "books/sub/b.yaml", "bookshelf.md", "NOTES.md"]
+        calls, _, commit = self._run_pull(tmp_path, manifest, revision="main", repo_files=repo_files)
+        fetched = {name: rev for name, rev in calls}
+        assert {"helper.py", "books/a.yaml", "books/sub/b.yaml"} <= set(fetched)
+        assert "bookshelf.md" not in fetched and "NOTES.md" not in fetched
+        assert {fetched[f] for f in ("helper.py", "books/a.yaml", "books/sub/b.yaml")} == {commit}
+        assert self.listed == [commit]
+
+    def test_a_declared_extra_the_repo_lacks_is_refused(self, tmp_path):
+        manifest = OPS_MANIFEST + "extra_files: [helper.py]\n"
+        with pytest.raises(OpCollectionManifestError, match=r"declares extra files \['helper.py'\]"):
+            self._run_pull(tmp_path, manifest)
+
+    def test_a_collection_without_extras_lists_nothing(self, tmp_path):
+        self._run_pull(tmp_path, OPS_MANIFEST)
+        assert self.listed == []
 
     def test_manifest_is_fetched_first_and_op_files_are_pinned_to_its_commit(self, tmp_path):
         calls, paths, commit = self._run_pull(tmp_path, OPS_MANIFEST, revision="main")

@@ -425,7 +425,11 @@ extra_files:
   - NOTES.md
 ```
 
-Entries must exist and sit inside the component directory. On republish the Hub tree is made to **match** the
+Entries must exist and sit inside the component directory. A consumer pulling the collection
+(`interpretune.hub.pull_ops`) receives the declared extras too, at the same commit as the definitions, so this is
+also how a collection ships a module its implementation imports or data it reads. The module an `implementation:`
+entry names must itself be declared when it lives in the component: the builder refuses a tree that would publish
+the definitions without it. On republish the Hub tree is made to **match** the
 staged tree: any file already published that the current publish would not produce (a renamed file's old name, or
 something pushed by hand) is reported by name and removed in the same commit, so a rename cannot leave a drift
 pair and nothing arrives out of band. If you see that report and did not expect it, the named files came from a
