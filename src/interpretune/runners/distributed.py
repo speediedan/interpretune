@@ -1114,6 +1114,35 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
     object.__delattr__(module, META_INIT_CHECKPOINT)
 
 
+def _copy_from_rank0(model: torch.nn.Module, full: Mapping[str, torch.Tensor], run: DistributedRun) -> None:
+    """Copy rank 0's parameters (``full``, by name) into a split model on every rank, one tensor at a time, so that
+    a rank holds at most one parameter's copy beside its own storage.
+
+    ``set_model_state_dict`` keeps a full copy of every parameter it does not find sharded, the embedding and the LM
+    head among them under ``tp``, until the end of the load.
+    """
+    import torch.distributed as dist
+    from torch.distributed.tensor import DTensor, distribute_tensor
+
+    device = rank_device(run)
+    done: set[int] = set()
+    for name, param in model.named_parameters(remove_duplicate=False):
+        if id(param) in done:  # tied: the copy already made holds
+            continue
+        done.add(id(param))
+        with torch.no_grad():
+            if run.rank == 0:
+                whole = full[name].to(device, param.dtype).contiguous()
+            else:
+                whole = torch.empty(param.shape, dtype=param.dtype, device=device)
+            dist.broadcast(whole, src=0)
+            if isinstance(param, DTensor):  # every rank holds the whole tensor, so each keeps its own slice of it
+                mine = distribute_tensor(whole, param.device_mesh, param.placements, src_data_rank=None)
+                param.to_local().copy_(mine.to_local())
+            else:
+                param.copy_(whole)
+
+
 def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     """Load rank 0's CPU copy of the checkpoint into the load target (see :func:`_load_target`), sharded and
     materialized on every rank.
@@ -1170,8 +1199,11 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     if box[0] is not None:
         raise MisconfigurationException(box[0])
     assert model is not None
-    options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
-    set_model_state_dict(model, full, options=options)
+    if run.placement == "tp":
+        _copy_from_rank0(model, full, run)
+    else:
+        options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+        set_model_state_dict(model, full, options=options)
     with torch.no_grad():
         for name, buffer in model.named_buffers():
             if run.rank == 0:
