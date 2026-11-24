@@ -40,11 +40,14 @@ from interpretune.utils.neuronpedia_db_utils import (
     DEFAULT_COLUMNAR_COPY_IMPORT_TABLES,
     DEFAULT_COLUMNAR_IMPORT_TABLES,
     DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
+    EXAMPLE_LOCAL_NEURONPEDIA_DB_URL,
     LocalNeuronpediaServiceStatus,
+    NeuronpediaDBError,
     NeuronpediaLocalImportSummary,
     check_local_neuronpedia_services,
     import_neuronpedia_export_bundle_local_db,
     import_saedashboard_columnar_bundle_local_db,
+    resolve_local_neuronpedia_db_url,
 )
 from interpretune.utils.neuronpedia_explanations import (
     DEFAULT_EXPLANATION_AUTHOR_ID,
@@ -998,10 +1001,12 @@ def _parse_meminfo_kib() -> dict[str, int]:
     return meminfo
 
 
-def _process_status_kib() -> dict[str, int]:
+def _process_status_kib(pid: int | None = None) -> dict[str, int]:
+    """Resident and peak memory of process ``pid`` (this one when None); empty where ``/proc`` has none to give."""
     status: dict[str, int] = {}
     try:
-        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+        status_path = Path("/proc") / ("self" if pid is None else str(pid)) / "status"
+        for line in status_path.read_text(encoding="utf-8").splitlines():
             if not line.startswith(("VmRSS:", "VmHWM:", "VmSize:")):
                 continue
             key, raw_value = line.split(":", 1)
@@ -1019,21 +1024,52 @@ def _format_gib_from_kib(value: int | None) -> str:
     return f"{value / 1024 / 1024:.2f}"
 
 
-def _host_memory_snapshot() -> str:
+@dataclass
+class _RunnerMemory:
+    """Memory of the spawned generation runner, which holds nearly all of a run's host memory.
+
+    Sampled while the runner lives, because ``/proc`` forgets a process once it exits. The kernel keeps the high-water
+    mark itself, so a sample misses only growth after the last one.
+    """
+
+    pid: int
+    rss_kib: int | None = None
+    hwm_kib: int | None = None
+
+    def sample(self) -> None:
+        status = _process_status_kib(self.pid)
+        self.rss_kib = status.get("VmRSS")
+        # A runner that exited but is not yet reaped reports no memory, which must not erase its last reading.
+        self.hwm_kib = status.get("VmHWM", self.hwm_kib)
+
+
+def _host_memory_snapshot(runner: _RunnerMemory | None = None) -> str:
+    """Host memory, with each process named: the pipeline's own figures say nothing about the runner's."""
     meminfo = _parse_meminfo_kib()
     status = _process_status_kib()
+    runner_segment = (
+        ""
+        if runner is None
+        else (
+            f"runner_rss_gib={_format_gib_from_kib(runner.rss_kib)} "
+            f"runner_hwm_gib={_format_gib_from_kib(runner.hwm_kib)} "
+        )
+    )
     return (
-        f"rss_gib={_format_gib_from_kib(status.get('VmRSS'))} "
-        f"hwm_gib={_format_gib_from_kib(status.get('VmHWM'))} "
+        f"{runner_segment}"
+        f"pipeline_rss_gib={_format_gib_from_kib(status.get('VmRSS'))} "
+        f"pipeline_hwm_gib={_format_gib_from_kib(status.get('VmHWM'))} "
         f"mem_available_gib={_format_gib_from_kib(meminfo.get('MemAvailable'))} "
         f"swap_free_gib={_format_gib_from_kib(meminfo.get('SwapFree'))} "
         f"swap_total_gib={_format_gib_from_kib(meminfo.get('SwapTotal'))}"
     )
 
 
-def _log_host_memory(logger: logging.Logger, *, stage: str, layer_num: int | None = None) -> None:
+def _log_host_memory(
+    logger: logging.Logger, *, stage: str, layer_num: int | None = None, runner: _RunnerMemory | None = None
+) -> None:
     layer_segment = "" if layer_num is None else f" layer={layer_num}"
-    logger.info("HostMemory stage=%s%s %s", stage, layer_segment, _host_memory_snapshot())
+    logger.info("HostMemory stage=%s%s %s", stage, layer_segment, _host_memory_snapshot(runner))
 
 
 def _configure_logger(log_path: Path) -> logging.Logger:
@@ -1964,6 +2000,7 @@ def _monitor_process(
     logger: logging.Logger,
     heartbeat_seconds: int,
     stall_timeout_seconds: int,
+    runner_memory: _RunnerMemory,
 ) -> int:
     last_seen_size = 0
     last_seen_file_count = 0
@@ -1971,9 +2008,11 @@ def _monitor_process(
     while True:
         return_code = process.poll()
         if return_code is not None:
+            runner_memory.rss_kib = None  # it has exited; the high-water mark is what is left to report
             return return_code
         if heartbeat_seconds > 0:
             time.sleep(heartbeat_seconds)
+        runner_memory.sample()
 
         current_file_count, current_size = _directory_stats(output_dir)
         if current_size > last_seen_size or current_file_count > last_seen_file_count:
@@ -1991,7 +2030,7 @@ def _monitor_process(
             process.pid,
             _process_snapshot(process.pid),
             _gpu_snapshot(process.pid),
-            _host_memory_snapshot(),
+            _host_memory_snapshot(runner_memory),
         )
         if stall_timeout_seconds > 0 and elapsed_without_growth >= stall_timeout_seconds:
             _log_runtime_diagnostics(logger, pid=process.pid, output_dir=output_dir, reason="stall-timeout")
@@ -2532,6 +2571,21 @@ def ensure_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> Pat
     return path
 
 
+def _resolve_pipeline_local_db_url(config: NeuronpediaDashboardPipelineConfig, env: Mapping[str, str]) -> None:
+    """Resolve the URL this run imports into once, so every later step uses the same database.
+
+    ``env`` is the run's environment, the interpretune env file's values included, so a configuration need not name a
+    URL: that machine's environment does. An unresolvable URL is left unset for the availability check, which refuses
+    a requested import unless ``allow_missing_local_db`` accepts a generation-only run.
+    """
+    if not config.import_to_local_db:
+        return
+    try:
+        config.local_db_url = resolve_local_neuronpedia_db_url(config.local_db_url, env=env)
+    except NeuronpediaDBError:
+        config.local_db_url = None
+
+
 def _apply_source_set_conflict_policy(config: NeuronpediaDashboardPipelineConfig) -> None:
     """Detect an occupied target source set and apply the configured policy.
 
@@ -2598,12 +2652,13 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
+    env = _build_generation_env(config)
+    _resolve_pipeline_local_db_url(config, env)
     # Resolve source-set collisions BEFORE generating anything: the check costs one query, and the
     # alternative is discovering after hours of GPU work that the import will be a silent no-op.
     # Placed AFTER the logger so the chosen set is recorded in the run log -- resolving it earlier
     # sent the decision to a logger with no handlers, leaving no record of which set was imported.
     _apply_source_set_conflict_policy(config)
-    env = _build_generation_env(config)
 
     service_status: LocalNeuronpediaServiceStatus | None = None
     should_import = config.import_to_local_db
@@ -2619,8 +2674,9 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
             if not config.allow_missing_local_db:
                 raise RuntimeError(
                     "import_to_local_db=true but the local DB is unavailable/unresolvable: "
-                    f"{service_status.db_error}. Fix the DB URL (--local-db-url / LOCAL_NEURONPEDIA_DB_URL / "
-                    "POSTGRES_URL_NON_POOLING), pass --skip-local-db-import for an intentional "
+                    f"{service_status.db_error}. Fix the DB URL (--local-db-url, or LOCAL_NEURONPEDIA_DB_URL / "
+                    "POSTGRES_URL_NON_POOLING / DATABASE_URL in the environment or the interpretune env file, e.g. "
+                    f"{EXAMPLE_LOCAL_NEURONPEDIA_DB_URL}), pass --skip-local-db-import for an intentional "
                     "generation-only run, or pass --allow-missing-local-db to degrade with a warning."
                 )
             should_import = False
@@ -2853,15 +2909,17 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                     stderr=subprocess.STDOUT,
                     text=True,
                 )
+                runner_memory = _RunnerMemory(process.pid)
                 return_code = _monitor_process(
                     process,
                     output_dir=output_dir,
                     logger=logger,
                     heartbeat_seconds=config.heartbeat_seconds,
                     stall_timeout_seconds=config.stall_timeout_seconds,
+                    runner_memory=runner_memory,
                 )
 
-            _log_host_memory(logger, stage="after_generation", layer_num=layer_num)
+            _log_host_memory(logger, stage="after_generation", layer_num=layer_num, runner=runner_memory)
             if return_code != 0:
                 _log_runtime_diagnostics(
                     logger,

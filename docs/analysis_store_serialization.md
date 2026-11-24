@@ -25,6 +25,7 @@ Aliases and composite ops do not create separate storage rules. Aliases resolve 
 - `sequence_type` maps to `Sequence(Value(...))` for variable-length vectors.
 - `non_tensor` marks fields that should remain Python values instead of being tensorized by the formatter.
 - `per_latent` and `per_latent_model_hook` describe nested latent-model dictionaries.
+- `site` declares what the column's values name in the model they were computed on: a layer index, hook-name keys, token ids or positions, latent indices, or values in an activation space. It is published with `col_cfg`, and `AnalysisStore.resolve_on` reads it to decide whether the column carries over to another model (see [Reading a store against another model](finding_analysis_stores.md#reading-a-store-against-another-model)).
 - formatter kwargs can optionally provide an analysis backend that hydrates richer objects from the primitive row data after Arrow decoding.
 
 `OpSchema` is just a validated `dict[str, ColCfg]` wrapper, so the schema remains data-driven and serializable.
@@ -112,6 +113,29 @@ Two reads narrowed silently before this table was measured, and no longer do: a 
 back as `float32` or `int64`. A store written by `analysis_store_from_batches` also carried no column configs, so a
 `dyn_dim` column read back with its dimensions still swapped and its pushed envelope recorded no `col_cfg`; it now
 carries them, as the runner's stores do.
+
+### Text columns
+
+`datasets` encodes whatever a string column is given, so a value of the wrong kind is stored as text that looks like
+data. `AnalysisOp.process_batch` refuses those with `StoreDtypeError`, naming the column and what to declare. `None`
+is a null at any level.
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| a list, dict or tensor into a string column | its Python repr | refused |
+| a number or bool into a string column | its digits or `"True"` | refused |
+| a string into a list-of-strings column (`sequence_type: true`) | the list of its characters | refused |
+| lists nested deeper than the column declares | the inner lists' reprs | refused |
+
+To store structured values, declare their shape or encode them:
+
+- **Nested lists** of strings or numbers: `datasets_dtype` of the element, `non_tensor: true`, `sequence_type: false`
+  and one `array_shape` entry per level (`[null, null]` for a list of lists, whose rows may differ in length).
+- **Anything else:** `json.dumps(value)` into a string column named `<column>_json`, which an op reads back with
+  `load_json_field`.
+
+A column declared `datasets_dtype: object` compiles to a plain string column, so a stored `object` column holds strings
+only. `object` is for `intermediate_only` columns, which are never stored.
 
 ### AnalysisStore access
 
@@ -311,13 +335,14 @@ three different actions:
 | `schema` missing or not an integer | refuse: this is not an Interpretune artifact envelope |
 
 **Raising the floor retires published artifacts**, so it is a deliberate, documented act rather
-than a side effect of a refactor. The floor is currently `1` and the schema is currently `2`: version
-2 made the `subject` block mandatory, and a version-1 envelope is still read, with no subject. Each
+than a side effect of a refactor. The floor is currently `1` and the schema is currently `3`: version
+2 made the `subject` block mandatory, and a version-1 envelope is still read, with no subject; version 3 put
+`site` in every `col_cfg` entry and `n_layers` in the subject, and a version-2 reader refuses it as newer. Each
 version in the window has an envelope the writer of that version produced, frozen under
-`tests/core/fixtures/` (`it_artifact_schema1.json`, `it_artifact_schema2.json`) and read on every run.
+`tests/core/fixtures/` (`it_artifact_schema1.json`, `it_artifact_schema2.json`, `it_artifact_schema3.json`) and read on every run.
 That is the piece that catches an accidental mandatory-field change, since every other test builds its
 envelope with the current writer and so drifts along with it. The reader matrix runs against those same
-fixtures: a reader one version behind refuses the version-2 envelope as newer, and a floor raised to `2`
+fixtures: a reader one version behind refuses the version-3 envelope as newer, and a floor raised to `2`
 refuses the version-1 envelope.
 
 **Publishing refuses to emit an envelope this build could not read back.** `build_analysis_store_envelope`

@@ -31,6 +31,7 @@ from interpretune.analysis.optools import (
     refuse_retired_jlens_basis,
     require_backend_capability,
     jlens_direction_rows,
+    jlens_provenance_json,
     last_token_logits,
     load_json_field,
     mean_target_logit_delta,
@@ -892,7 +893,7 @@ def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs:
         concept_basis=basis,
         jlens_layer=layer,
         jlens_kind=artifact.kind,
-        jlens_provenance=artifact.provenance,
+        jlens_provenance_json=jlens_provenance_json(artifact),
     )
     return analysis_batch
 
@@ -1241,7 +1242,9 @@ def model_bwd_intervention_impl(
 
     ``grad_capture`` names the sites whose gradients are stored: hook names or patterns, or one venngram site address
     under ``of: grad`` (``grad_capture_sets`` supplies its book's sets). Without it, the intervention sites are
-    captured, each after its own edit.
+    captured, each after its own edit. With ``capture_activations``, the activation at each captured site is stored
+    too (``grad_activation_values``, laid out as the gradients are and described by the same ``grad_shape``), read in
+    the same pass, so a gradient-times-activation attribution is one elementwise product of two stored fields.
     """
     model_backend = require_model_backend(module)
     require_backend_capability(model_backend, Capability.INTERVENTION, "model_bwd_intervention")
@@ -1287,15 +1290,31 @@ def model_bwd_intervention_impl(
             target_ids = concept_ids or None
         readout = last_token_logit_readout(target_ids)
 
-    # the flow gate above has refused a backend that does not declare `grad`, which is the promise of this method
-    pre_grads, post_grads, metric = model_backend.bwd_w_intervention(
-        model=module.model,
-        batch=batch,
-        interventions=interventions,
-        readout=readout,
-        capture=capture,
-        latent_model_handles=latent_model_handles,
+    capture_activations = bool(
+        resolve_aggregate_input(module, analysis_batch, "capture_activations")
+        or kwargs.get("capture_activations", False)
     )
+    # the flow gate above has refused a backend that does not declare `grad`, which is the promise of this method
+    activations: dict[str, torch.Tensor] = {}
+    if capture_activations:
+        pre_grads, post_grads, metric, activations = model_backend.bwd_w_intervention(
+            model=module.model,
+            batch=batch,
+            interventions=interventions,
+            readout=readout,
+            capture=capture,
+            latent_model_handles=latent_model_handles,
+            capture_activations=True,
+        )
+    else:
+        pre_grads, post_grads, metric = model_backend.bwd_w_intervention(
+            model=module.model,
+            batch=batch,
+            interventions=interventions,
+            readout=readout,
+            capture=capture,
+            latent_model_handles=latent_model_handles,
+        )
     names = sorted(post_grads)
     pre_values, shape_code = _flat_tensors(pre_grads, names)
     post_values, _ = _flat_tensors(post_grads, names)
@@ -1312,6 +1331,8 @@ def model_bwd_intervention_impl(
         bwd_intervention_metric=torch.as_tensor(metric).detach().to("cpu", torch.float32),
         intervention_grad_position_effect=position_effect,
     )
+    if capture_activations:
+        analysis_batch.update(grad_activation_values=_flat_tensors(activations, names)[0])
     return analysis_batch
 
 

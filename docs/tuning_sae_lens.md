@@ -6,4 +6,4 @@ SAEs spliced at init (`add_saes_on_init=True`) are registered as `attached_saes`
 schedule can select them by role (`role:latent:sae`). Without splicing, no SAE parameter is the module's and nothing takes
 a latent role.
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/interpretune/interpretune/issues/812).

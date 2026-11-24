@@ -108,7 +108,7 @@ mapping. Use the Gemma 3 configuration for the automatic head/source report.
 ## What it has shown
 
 Three seeds on one 24 GB GPU, about 30 minutes each (results on
-[interpretune#899](https://github.com/speediedan/interpretune/issues/899)):
+[interpretune#899](https://github.com/interpretune/interpretune/issues/899)):
 
 - **The chain's order holds on every seed.** Each stage continues from the one before, as the separate-process chain
   it ports did.
@@ -138,9 +138,9 @@ The completed follow-ups cover [step-matched controls and selection](https://git
 [attention routing](https://github.com/interpretune/interpretune/issues/989) and
 [J++ lens readouts](https://github.com/interpretune/interpretune/issues/991). Remaining experiments include:
 
-- [interpretune#990](https://github.com/speediedan/interpretune/issues/990): stages by component, unit set, dictionary
+- [interpretune#990](https://github.com/interpretune/interpretune/issues/990): stages by component, unit set, dictionary
   order and penalty strength, rather than by layer band.
-- [interpretune#992](https://github.com/speediedan/interpretune/issues/992): training informed by the premise and
+- [interpretune#992](https://github.com/interpretune/interpretune/issues/992): training informed by the premise and
   hypothesis spans that agree or contradict.
-- [interpretune#993](https://github.com/speediedan/interpretune/issues/993): dictionaries beyond fixed point
+- [interpretune#993](https://github.com/interpretune/interpretune/issues/993): dictionaries beyond fixed point
   transcoders.

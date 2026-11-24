@@ -107,6 +107,26 @@ its layouts. Without one, the module's own default is used: a Hugging Face model
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
 `fsdp_default_kwargs` under `tp`.
 
+A latent model spliced with `tuning.latents`, and an SAE that SAE Lens splices into a TransformerLens bridge
+(`add_saes_on_init`), read and rewrite a whole activation. To splice one inside a layer the plan splits, set
+`use_local_output: false` on that layer's entry, so that the activation reaches the splice split across ranks: the
+splice gathers it whole and lays its output out as the activation it replaces, and two ranks tune it as one process
+does. For an SAE at `blocks.0.mlp.hook_post`, between a bridge MLP's two projections:
+
+```yaml
+run_cfg:
+  placement: tp
+  tp_plan:
+    model\.blocks\.\d+\._original_component\.mlp\._original_component\.fc_in\._original_component:
+      style: colwise
+      use_local_output: false
+    model\.blocks\.\d+\._original_component\.mlp\._original_component\.fc_out\._original_component:
+      style: rowwise
+```
+
+Where a split layer hands on each rank's local shard instead (the default), the splice is refused, naming the site and
+this fix: a latent model's when the module is placed, an SAE's at the first forward pass.
+
 ## Models larger than one rank's accelerator
 
 By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
@@ -144,8 +164,14 @@ holds, are computed on the CPU as the model is built and kept through the placem
 way `from_pretrained` renames them, and a parameter tied to one the checkpoint supplies (an LM head tied to the
 embedding) needs no key of its own. Before reading anything, every rank refuses a checkpoint key that matches no model
 key and a parameter no key supplies, naming them, and a model whose checkpoint needs transformers' weight converters
-(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load. A Hub model's
-safetensors files are downloaded to the local cache first, on every rank.
+(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load, naming the
+converters that match a key of the checkpoint. A Hub model's safetensors files are downloaded to the local cache first,
+on every rank.
+
+A checkpoint already in the model's own layout, such as one written from `model.state_dict()`, loads with its own keys
+and no conversion, whatever the model's mapping would do to them. Its keys alone do not show the layout, because a
+converter can edit a tensor under its own key, so this holds only for a model whose hub layout has a key the model
+does not. For any other model with converters the conversion path decides, and the checkpoint is refused.
 
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
@@ -283,19 +309,44 @@ else:
 - Ranks that logged different metric names in an epoch.
 - A data-parallel placement on the analysis runner, since attribution and analysis ops are not yet designed for it.
 
+## Compositions under `fsdp2`
+
+Which compositions place under `fsdp2` depends on whether their parameters are contiguous and on which module the
+backend calls. Each row is a test: placing must keep every parameter's values, and a refusal must name what it found.
+
+| Composition | Under `fsdp2` |
+| --- | --- |
+| Core (the model is called through the Interpretune module) | Places. The plan names the transformer block class. Training on two ranks matches one process on the combined batch. |
+| nnsight, and sae_lens over nnsight | Places, with the Hugging Face model as its own unit beside the blocks (`class:GPT2LMHeadModel` for GPT-2): nnsight calls that model directly, so FSDP2 would otherwise never gather it. A plan without it is refused, naming the unit to add. |
+| circuit-tracer over nnsight, with spliced transcoders | Places, with the blocks, each transcoder and its activation functions as their own units, the Hugging Face model among them, and their direct calls registered. On two ranks the logits, the nnsight trace, the transcoder activations and the sparse encode and decode equal one process's. |
+| TransformerLens built from a configuration (`ITLensCustomConfig`), sae_lens included | Places. Its blocks hold whole tensors. A schedule that thaws spliced SAEs by role (`role:latent:sae`) tunes on two ranks. |
+| TransformerLens bridge over a Hugging Face model, sae_lens included | Refused: the bridge splits the packed attention weight into non-contiguous views (`q`, `k`, `v`), which `fully_shard` cannot shard. The refusal names them. |
+
+The plan for a composition not listed is found the same way: give each block class its own unit, and place any module
+the backend calls directly as its own unit too.
+
+An intervention attached to the module trains on two ranks as on one (`ddp` and `fsdp2`): its parameters are the root
+unit's, so the hook that applies it inside a block sees the whole operand, and both ranks end with the same value.
+
+A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
+`fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
+values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
+the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+
 ## Limits
 
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
-  process on the combined batch step for step), not yet under `ddp` or on accelerators.
+  process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
+  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
-  (tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
+  (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
-[interpretune#803](https://github.com/speediedan/interpretune/issues/803).
+[interpretune#803](https://github.com/interpretune/interpretune/issues/803).

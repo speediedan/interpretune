@@ -1,0 +1,31 @@
+# Phased fine-tuning of GPT-2 on RTE on a TransformerLens composition, scheduled by venngram address, small enough for a CPU:
+#
+#   interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.transformer_lens.yaml
+#
+# The schedule, `ft_schedules/rte_ft.gpt2.addresses.yaml`, names no tensor: it addresses blocks and components through
+# GPT-2's component map, so the same file runs on the core/HF, TransformerLens and nnsight compositions
+# (`runs/rte_ft.gpt2.{core.addresses,transformer_lens,nnsight}.yaml`), and each phase thaws the same tensors of the
+# underlying model on all three. Otherwise this is `runs/rte_ft.gpt2.core.yaml`: `FTSCoreCallback` drives
+# finetuning-scheduler's `TuningScheduler` through every phase, a phase advances on a validation-loss plateau (or at its
+# `max_transition_epoch`), and the best checkpoint by validation loss is kept.
+session_ref: speediedan/rte:rte_ft.gpt2.transformer_lens
+seed_everything: 0
+run_cfg:
+  max_epochs: 10
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/rte/ft_schedules/rte_ft.gpt2.addresses.yaml
+        tuning_scheduler_kwargs:
+          max_depth: -1
+          transition:
+            class_path: finetuning_scheduler.core.transitions.PlateauTransition
+            init_args:
+              monitor: val_loss
+              patience: 1
+              min_delta: 0.001
+          checkpoint:
+            class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
+            init_args:
+              dirpath: checkpoints/rte_ft.gpt2.transformer_lens
+              monitor: val_loss

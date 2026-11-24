@@ -39,10 +39,10 @@ import atexit
 import functools
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import torch
 
@@ -550,6 +550,7 @@ def place_module(
     run.devices = _check_devices(per_rank, run.placement)
     if run.placement == "tp":
         _place_tensor_parallel(module, run, tp_plan, on_meta)
+        _refresh_tensor_references(module)
         return
     _refuse_unshardable(module, run.placement)
     _require_fts(fsdp_plan, fsdp_default_kwargs)
@@ -587,6 +588,15 @@ def place_module(
             _load_from_checkpoint_files(module, run)
         else:
             _load_from_rank0(module, run)
+    _refresh_tensor_references(module)
+
+
+def _refresh_tensor_references(module: torch.nn.Module) -> None:
+    """Let the module refresh the references its model holds to tensors the placement replaced
+    (``refresh_tensor_references``): sharding, splitting and materializing register new parameters."""
+    refresh = getattr(module, "refresh_tensor_references", None)
+    if callable(refresh):
+        refresh()
 
 
 def _place_tensor_parallel(
@@ -621,7 +631,56 @@ def _place_tensor_parallel(
     parallelize_module(module, mesh, styles)
     for group in groups:
         _split_packed(group, mesh, run.rank)
+    _gather_activation_splices(module)
     run.mesh = mesh
+
+
+class _WholeActivation:
+    """The forward hooks that let a backend's spliced module (``activation_splices``) read a whole activation under
+    'tp'.
+
+    An activation that arrives split across ranks (a ``DTensor``) is gathered whole before the module reads it, and
+    the module's output is laid out as the activation it replaces, as the splice of a latent model does
+    (``tuning.latents``). A plain tensor narrower than the module reads is one rank's local shard, which is refused.
+    """
+
+    def __init__(self, site: str, width: int | None) -> None:
+        self.site, self.width = site, width
+        self.target: Any = None
+
+    def gather(self, module: torch.nn.Module, args: tuple[Any, ...]) -> tuple[Any, ...] | None:
+        from interpretune.tuning.latents import _split
+
+        x = args[0]
+        if _split(x):
+            self.target = x
+            return (x.full_tensor(), *args[1:])
+        self.target = None
+        if self.width is not None and x.shape[-1] < self.width:
+            raise MisconfigurationException(
+                f"The module spliced at {self.site} reads activations of width {self.width}, but under placement 'tp'"
+                f" it received {x.shape[-1]} features: a layer `tp_plan` splits hands it each rank's local shard. Set"
+                " `use_local_output: false` on that entry, so that the splice receives the split activation and"
+                " gathers it, or splice the module where the activation is whole."
+            )
+        return None
+
+    def lay_out(self, module: torch.nn.Module, args: tuple[Any, ...], output: Any) -> Any:
+        from interpretune.tuning.latents import _laid_out_as
+
+        target, self.target = self.target, None
+        return output if target is None else _laid_out_as(output, target)
+
+
+def _gather_activation_splices(module: torch.nn.Module) -> None:
+    """Register :class:`_WholeActivation`'s hooks on each module a backend splices into the forward pass, as the
+    module declares them (``activation_splices``)."""
+    declare = getattr(module, "activation_splices", None)
+    splices = cast(Mapping[str, tuple[torch.nn.Module, int | None]], declare() if callable(declare) else {})
+    for site, (spliced, width) in splices.items():
+        hooks = _WholeActivation(site, width)
+        spliced.register_forward_pre_hook(hooks.gather)
+        spliced.register_forward_hook(hooks.lay_out)
 
 
 def step_per_tensor(optimizers: Iterable[Any], run: DistributedRun | None) -> None:
@@ -826,7 +885,32 @@ def meta_built(module: torch.nn.Module) -> bool:
     return built
 
 
-def _checkpoint_renamer(model: torch.nn.Module) -> Any:
+def _hub_layout_keys(model: Any) -> set[str]:
+    """The checkpoint keys ``save_pretrained`` writes for ``model``: its state-dict keys through transformers'
+    conversion mapping, reversed (from shapes alone, so a model built on the meta device reads no data)."""
+    from transformers import core_model_loading
+
+    shapes = {name: torch.empty(tensor.shape, device="meta") for name, tensor in model.state_dict().items()}
+    return set(core_model_loading.revert_weight_conversion(model, shapes))
+
+
+def _is_model_layout(model: Any, keys: Sequence[str], ignored: Callable[[str], bool]) -> bool:
+    """Whether a checkpoint with ``keys`` is already in ``model``'s own layout, so its keys need no conversion.
+
+    Its keys must all be model keys, but that alone does not show it: a checkpoint whose layout differs from the model's
+    only by a converter that edits a tensor under its own key has the same key set. So the model's hub layout must have
+    a key of its own, which a hub-layout checkpoint would contain and this one does not.
+    """
+    from transformers import PreTrainedModel
+
+    if not isinstance(model, PreTrainedModel):  # only transformers' own models state a hub layout
+        return False
+    targets = set(model.state_dict())
+    checked = {key for key in keys if not ignored(key)}
+    return bool(checked) and checked <= targets and bool(_hub_layout_keys(model) - targets)
+
+
+def _checkpoint_renamer(model: torch.nn.Module, keys: Sequence[str]) -> Any:
     """``rename(checkpoint_key, model_keys)``: the model key transformers' own checkpoint conversion maps a key to.
 
     Raises:
@@ -844,11 +928,16 @@ def _checkpoint_renamer(model: torch.nn.Module) -> Any:
     renamings = [t for t in transforms if isinstance(t, core_model_loading.WeightRenaming)]
     converters = [t for t in transforms if isinstance(t, core_model_loading.WeightConverter)]
     if converters:
+        # the converters that match a key of this checkpoint name the tensors it needs merged or reshaped
+        matched = [
+            c for c in converters if any(core_model_loading.apply_converters(key, [c])[1] is not None for key in keys)
+        ]
+        shown = ", ".join(str(c.source_patterns) for c in (matched or converters)[:3])
         raise MisconfigurationException(
             "`meta_init_load: dcp` reads each rank's slices of the checkpoint as they are stored, but"
-            f" {type(model).__name__}'s checkpoint needs transformers' weight converters"
-            f" ({', '.join(str(c.source_patterns) for c in converters[:3])}), which merge or reshape tensors. Use"
-            " `meta_init_load: rank0`."
+            f" {type(model).__name__}'s checkpoint needs transformers' weight converters ({shown}"
+            f"{'' if matched else '; none matches a key of this checkpoint'}), which merge or reshape tensors, and"
+            " its keys are not the model's own. Use `meta_init_load: rank0`."
         )
     prefix = getattr(model, "base_model_prefix", None) or None
 
@@ -907,13 +996,16 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
             f"`meta_init_load: dcp` reads safetensors files, but {path} holds neither `model.safetensors` nor"
             " `model.safetensors.index.json`. Use `meta_init_load: rank0`."
         )
-    rename = _checkpoint_renamer(model)
     targets = model.state_dict()
     params = dict(model.named_parameters())
     # patterns a model declares for keys `from_pretrained` ignores (old checkpoints' attention-mask buffers, for one)
     ignore_unexpected = getattr(model, "_keys_to_ignore_on_load_unexpected", None) or []
     ignore_missing = getattr(model, "_keys_to_ignore_on_load_missing", None) or []
-    mapped = {key: rename(key, targets) for key in keys}
+    if _is_model_layout(model, keys, lambda key: any(re.search(p, key) for p in ignore_unexpected)):
+        mapped = {key: key for key in keys}  # converted keys would be read twice through a mapping not made for them
+    else:
+        rename = _checkpoint_renamer(model, keys)
+        mapped = {key: rename(key, targets) for key in keys}
     ignored = {k for k, v in mapped.items() if v not in targets and any(re.search(p, k) for p in ignore_unexpected)}
     mapped = {k: v for k, v in mapped.items() if k not in ignored}
     unknown = sorted(k for k, v in mapped.items() if v not in targets)

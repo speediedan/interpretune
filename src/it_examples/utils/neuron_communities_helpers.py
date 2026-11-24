@@ -280,16 +280,17 @@ def attribute(
 ) -> Attribution:
     """The paper's per-prompt attribution at the last position, over every neuron of every layer.
 
-    Activations come from ``backend.fwd_w_cache`` and gradients of ``top1_log_prob`` from ``backend.bwd_w_intervention``
-    with no edits, two calls over the same batch until one trace can return both (#1090).
+    The gradients of ``top1_log_prob`` and the activations they multiply come from one ``backend.bwd_w_intervention``
+    pass with no edits and ``capture_activations``.
     """
     hooks = [f"blocks.{layer}.{POINT}" for layer in range(n_layers)]
     out = Attribution()
     for b0 in range(0, len(windows), batch_size):
         batch = {"input_ids": torch.tensor(windows[b0 : b0 + batch_size])}
-        _, cache = backend.fwd_w_cache(model, batch, names_filter=hooks)
-        acts = torch.stack([torch.as_tensor(cache[h])[:, -1].float().cpu() for h in hooks], 1)
-        grads, _, _ = backend.bwd_w_intervention(model, batch, {}, top1_log_prob, capture=hooks)
+        grads, _, _, activations = backend.bwd_w_intervention(
+            model, batch, {}, top1_log_prob, capture=hooks, capture_activations=True
+        )
+        acts = torch.stack([activations[h][:, -1].float().cpu() for h in hooks], 1)
         grads = torch.stack([grads[h][:, -1].float().cpu() for h in hooks], 1)
         if out.first_batch_grads is None:
             out.first_batch_grads, out.first_batch_ids = grads, batch["input_ids"]

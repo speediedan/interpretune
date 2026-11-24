@@ -55,13 +55,13 @@ between a J-lens and a J++ lens.
 
 - **Readouts favour J++.** Held-out macro recall@10, scored the way the post scores it: gemma-3-1b-it 0.302
   for the J-lens against 0.388 for J++, almost all of the gain on the typo task
-  ([results](https://github.com/speediedan/interpretune/issues/784#issuecomment-6618055568)); Qwen3.5-4B 0.340 against 0.457, with about 60% of the gain
-  surviving when each task is held out of the weight fit ([results](https://github.com/speediedan/interpretune/issues/925#issuecomment-6715805780)). On
+  ([results](https://github.com/interpretune/interpretune/issues/784#issuecomment-6618055568)); Qwen3.5-4B 0.340 against 0.457, with about 60% of the gain
+  surviving when each task is held out of the weight fit ([results](https://github.com/interpretune/interpretune/issues/925#issuecomment-6715805780)). On
   Qwen3.5-4B the held-out J++ readout falls below the J-lens in the last quarter of layers and at layers 3
   and 4, so use it for single-token readouts at layers 5 to 22.
 - **Swaps and steering favour the J-lens.** On the two-hop swap battery the J-lens swaps better than J++ on
-  both models, significantly at mid-depth bands ([gemma-3-1b-it](https://github.com/speediedan/interpretune/issues/784#issuecomment-6623062231),
-  [Qwen3.5-4B](https://github.com/speediedan/interpretune/issues/925#issuecomment-6729102253)). On the post's own `probe-swap` runner Qwen3.5-4B's J++ is
+  both models, significantly at mid-depth bands ([gemma-3-1b-it](https://github.com/interpretune/interpretune/issues/784#issuecomment-6623062231),
+  [Qwen3.5-4B](https://github.com/interpretune/interpretune/issues/925#issuecomment-6729102253)). On the post's own `probe-swap` runner Qwen3.5-4B's J++ is
   level with the J-lens. Build steering and swap directions from a J-lens.
 
 Those two models are the evidence. The post reports swaps at least as strong as the J-lens's on one model at

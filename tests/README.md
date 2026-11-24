@@ -290,17 +290,18 @@ scope to `function` scope. This further reduces peak resource usage at the cost 
 each test method gets a fresh fixture instance rather than sharing one across the test session.
 This tradeoff intentionally prioritises cross-platform validation in the normal CI suite over
 runtime efficiency; the self-hosted standalone runner is reserved for tests that require subprocess
-isolation for correctness reasons (e.g., `sys.settrace` / coverage conflicts).
+isolation for correctness reasons (a test that changes process-wide state, for example).
 
 **Tradeoff summary:** Using `cleanup_memory` at the function level means some fixtures with wider
 scope are still shared across test methods — fixture teardown is not accelerated by the gc sweep
 alone. The combination of `cleanup_memory` + `function`-scoped fixtures provides the strongest
 memory containment short of standalone isolation.
 
-**When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation,
-e.g., when a library uses `sys.settrace()` (which interferes with pytest-cov). The current canonical
-example is `test_nnsight_trace_context` in `tests/core/test_adapters_nnsight.py`, which must stay
-`@RunIf(standalone=True)`.
+**When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation, e.g., because
+they change process-wide state that later tests would see. One that needs no GPU takes
+`@RunIf(standalone_cpu=True)`, which runs it in the hosted Linux job. nnsight traces no longer need it: nnsight 0.8
+restores the trace function it displaces, and CI records coverage through `sys.monitoring`
+(`COVERAGE_CORE=sysmon`), which a trace function cannot disable.
 
 ### Shared Low-Memory Extraction Helpers
 
@@ -382,7 +383,7 @@ Recommended triage flow:
 
 ```bash
 # Inspect the failed job summary first
-gh run view --repo speediedan/interpretune --job <job_id>
+gh run view --repo interpretune/interpretune --job <job_id>
 
 # Download the raw job log when artifacts are missing or upload steps were skipped
 gh api "repos/speediedan/interpretune/actions/jobs/<job_id>/logs" > /tmp/ci_job_<job_id>.log

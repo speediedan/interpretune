@@ -44,7 +44,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 22, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 24, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -279,7 +279,7 @@ class TestFixtureNormalizationRules:
     def test_urls_and_plain_strings_pass_through(self):
         from tests.core.loader_equivalence import _normalize_env_paths
 
-        for value in ("https://github.com/speediedan/interpretune", "gpt2", "a\\literal\\backslash"):
+        for value in ("https://github.com/interpretune/interpretune", "gpt2", "a\\literal\\backslash"):
             assert _normalize_env_paths(value) == value
 
     def test_fixture_key_derives_posix_from_windows_shaped_path(self):

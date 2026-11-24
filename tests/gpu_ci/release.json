@@ -1,6 +1,6 @@
 {
   "description": "interpretune's release evidence, as gpu_epsilon.phase_evidence writes it under [tool.gpu-epsilon.phase-evidence]",
-  "repository": "speediedan/interpretune",
+  "repository": "interpretune/interpretune",
   "artifact_prefix": "it-release",
   "phases_dir": "it-phases",
   "phases": ["cuda", "standalone", "profile_ci"],

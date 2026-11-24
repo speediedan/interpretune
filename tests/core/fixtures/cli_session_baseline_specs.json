@@ -141,10 +141,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -400,10 +400,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -693,10 +693,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -991,10 +991,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1286,10 +1286,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1537,10 +1537,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1821,10 +1821,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2085,10 +2085,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2356,10 +2356,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2626,10 +2626,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2704,6 +2704,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"
@@ -2868,10 +2869,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2946,6 +2947,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"
@@ -3111,10 +3113,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3397,10 +3399,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3682,10 +3684,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3974,10 +3976,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
