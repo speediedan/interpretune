@@ -341,6 +341,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- The bf16 comparison of the core loop and the Lightning CLI runs on a GPU in the gated pipeline instead of on the hosted macOS leg, where it took 31 of 103 minutes. A hosted Linux leg is no substitute: on a runner whose CPU has no native bf16 it was still running after an hour ([#926](https://github.com/interpretune/interpretune/issues/926))
+
 - Pulling an op collection (`interpretune.hub.pull_ops`) also fetches the files its manifest declares in `extra_files`, at the commit the manifest resolved to, so a module the implementation imports or data it reads reaches the consumer; a declared entry the repository lacks is refused by name. Staging a component (`build_component_tree`) refuses an `ops` component whose definitions name an implementation module of the component that the published tree would not contain ([#1191](https://github.com/interpretune/interpretune/issues/1191))
 - `regen-ci-req-report` writes its report to the job summary instead of commenting on the pull request. The regeneration nearly always finds upstream drift, so the comment landed on almost every pull request and mailed every subscriber about something nobody acts on; the job now needs only `contents: read` ([#1197](https://github.com/interpretune/interpretune/issues/1197))
 - The transformers ceiling rises from `<5.23` to `<5.25`, admitting 5.24, the first release that ships Inkling 2 Mini's modeling code (`inkling2_loop`). The old ceiling guarded nnsight 0.8.2's model construction under 5.23, which the nnsight 0.8.3 pin no longer fails ([#1180](https://github.com/interpretune/interpretune/issues/1180))

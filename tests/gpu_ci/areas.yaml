@@ -188,6 +188,8 @@ areas:
       - src/interpretune/utils/**
       # launched by path rather than imported, so no import edge reaches the tests that run it
       - tests/core/distributed_core_loop_worker.py
+      # named by class path in the run configurations the RTE CLI test writes, so likewise
+      - tests/core/rte_ft_record.py
     tests:
       - tests/core/test_components_mixins.py
       - tests/core/test_debug_generation.py
@@ -198,6 +200,8 @@ areas:
       - tests/core/test_tuning_packed_storage.py
       # the core loop's placements on two GPUs: tensor-parallel transcoder tuning against one GPU
       - tests/core/test_core_loop_distributed.py
+      # the core loop and the Lightning CLI under bf16-mixed, on one GPU
+      - tests/core/test_rte_ft_cli.py
       - tests/gpu_ci/
   tl_arch:
     # the TransformerLens view's parameter mapping on gated llama3/gemma2
