@@ -131,7 +131,7 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
     assert core["best_score"] == pytest.approx(lightning["best_score"], rel=1e-5)
 
 
-@RunIf(min_cuda_gpus=1, bf16_cuda=True, min_gpu_mem_gb=2.5)
+@RunIf(min_cuda_gpus=1, bf16_cuda=True, min_gpu_mem_gb=5.5)
 def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component_gpu, clean_cli_env, tmp_path, monkeypatch):
     """bf16-mixed with two-step accumulation on both hosts: the same thawed sets and transition epochs, and
     validation loss within bf16 tolerance rather than exact.
