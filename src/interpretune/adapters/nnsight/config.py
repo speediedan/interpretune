@@ -34,6 +34,7 @@ class NNsightConfig(ITSerializableCfg):
         torch_dtype: Data type for model weights (e.g., "float32", "float16", "bfloat16").
         dispatch: Whether to load model immediately (True) or defer loading (False).
             Default True for typical usage.
+        task: The transformers pipeline task the model is built for (default "text-generation").
         tokenizer_kwargs: Additional kwargs passed to tokenizer initialization.
         trust_remote_code: Whether to trust remote code for custom model architectures.
         attn_implementation: Attention implementation to use (e.g., "flash_attention_2").
@@ -81,6 +82,14 @@ class NNsightConfig(ITSerializableCfg):
 
     When True (default), the model is loaded into memory immediately upon initialization. When False, model loading is
     deferred until first use (useful for lazy initialization).
+    """
+
+    task: str = "text-generation"
+    """The transformers pipeline task nnsight builds the model for, which selects its auto class.
+
+    ``text-generation`` (``AutoModelForCausalLM``) also covers multimodal checkpoints whose top-level configuration
+    is registered for causal LM (gemma-3-4b-it). A checkpoint registered only under a multimodal task needs that task
+    named: Inkling 2 Mini's ``Inkling2LoopConfig`` is ``image-text-to-text``.
     """
 
     # Tokenizer settings
