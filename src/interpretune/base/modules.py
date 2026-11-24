@@ -112,6 +112,31 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         return [(type(self).__name__, self, ("it_generate",))] if hasattr(self, "it_generate") else []
 
+    def refresh_tensor_references(self) -> None:
+        """Refresh any reference this composition's model holds to its own parameters or buffers outside the module
+        tree, once a placement has replaced them.
+
+        Every placement registers new tensors in place of the module's own (``fully_shard`` and
+        ``parallelize_module`` register ``DTensor`` parameters, and a meta-built module is materialized), so a reference
+        taken before it still names the old tensor, which is no longer trained or read. Called by
+        :func:`~interpretune.runners.distributed.place_module` once the module is placed. Cooperative: an adapter
+        extends ``super()``'s.
+        """
+
+    def activation_splices(self) -> dict[str, tuple[torch.nn.Module, int | None]]:
+        """Modules a backend splices into the model's forward pass in place of one activation, each as ``site:
+        (module, width)``.
+
+        Each module is called with the activation at ``site`` and returns what replaces it (an SAE spliced by SAE Lens
+        reads and rewrites a whole activation). ``width`` is the size of the activation's last dimension the module
+        reads, or ``None`` when that is not known. Placement 'tp' gathers an activation that arrives split across ranks
+        (a ``DTensor``) whole for each module and lays its output out as the activation it replaces, as it does for a
+        latent model spliced with ``tuning.latents``, and refuses one narrower than ``width``: a split layer's local
+        shard. Interpretune's own latent models and interventions are not listed here. Cooperative: an adapter extends
+        ``super()``'s mapping.
+        """
+        return {}
+
     def default_tp_plan(self, world_size: int) -> dict[str, dict[str, Any]] | None:
         """The ``tp_plan`` placement 'tp' uses when none is given: the plan transformers declares for the Hugging
         Face model this composition runs (:meth:`meta_load_target`), keyed under its path here, or ``None`` when

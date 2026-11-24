@@ -8,7 +8,7 @@ collection:
   version: 0.1.0
 
 looped_lens_read:
-  description: Read a looped lens (N sites x K tokens, labelled by visit) from Inkling 2 Mini at one position per prompt
+  description: Read a looped lens (N sites x K tokens, labelled by visit) from Inkling 2 Mini, one read position per prompt
   implementation: looped_lens_ops.looped_lens_read_impl
   aliases: [looped_lens]
   input_schema:
@@ -47,20 +47,31 @@ looped_lens_read:
       sequence_type: false
   output_schema:
     looped_lens_labels:
-      datasets_dtype: object
+      # One label per read site, in site order.
+      datasets_dtype: string
       non_tensor: true
-      sequence_type: false
+      sequence_type: true
     looped_lens_tokens:
-      datasets_dtype: object
+      # Per prompt, per site, the kept token texts: prompts x sites x up to K strings (ragged). A nested string schema
+      # rather than `object`: a stored `object` column holds a list's repr, not the list.
+      datasets_dtype: string
       non_tensor: true
+      array_shape: [null, null, null]
       sequence_type: false
     looped_lens_top_ids:
       datasets_dtype: int64
       array_shape: [null, null, null]
       sequence_type: false
     looped_lens_positions:
+      # The read position per prompt, the one a site with no placement of its own is read at.
       datasets_dtype: int64
       array_shape: [null]
+      sequence_type: false
+    looped_lens_site_positions:
+      # Where each site was read (prompts x sites): a book may place a site at its question's end, so a prompt's sites
+      # can be read at different tokens.
+      datasets_dtype: int64
+      array_shape: [null, null]
       sequence_type: false
     looped_lens_book:
       datasets_dtype: string

@@ -42,7 +42,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import torch
 
@@ -550,6 +550,7 @@ def place_module(
     run.devices = _check_devices(per_rank, run.placement)
     if run.placement == "tp":
         _place_tensor_parallel(module, run, tp_plan, on_meta)
+        _refresh_tensor_references(module)
         return
     _refuse_unshardable(module, run.placement)
     _require_fts(fsdp_plan, fsdp_default_kwargs)
@@ -587,6 +588,15 @@ def place_module(
             _load_from_checkpoint_files(module, run)
         else:
             _load_from_rank0(module, run)
+    _refresh_tensor_references(module)
+
+
+def _refresh_tensor_references(module: torch.nn.Module) -> None:
+    """Let the module refresh the references its model holds to tensors the placement replaced
+    (``refresh_tensor_references``): sharding, splitting and materializing register new parameters."""
+    refresh = getattr(module, "refresh_tensor_references", None)
+    if callable(refresh):
+        refresh()
 
 
 def _place_tensor_parallel(
@@ -621,7 +631,56 @@ def _place_tensor_parallel(
     parallelize_module(module, mesh, styles)
     for group in groups:
         _split_packed(group, mesh, run.rank)
+    _gather_activation_splices(module)
     run.mesh = mesh
+
+
+class _WholeActivation:
+    """The forward hooks that let a backend's spliced module (``activation_splices``) read a whole activation under
+    'tp'.
+
+    An activation that arrives split across ranks (a ``DTensor``) is gathered whole before the module reads it, and
+    the module's output is laid out as the activation it replaces, as the splice of a latent model does
+    (``tuning.latents``). A plain tensor narrower than the module reads is one rank's local shard, which is refused.
+    """
+
+    def __init__(self, site: str, width: int | None) -> None:
+        self.site, self.width = site, width
+        self.target: Any = None
+
+    def gather(self, module: torch.nn.Module, args: tuple[Any, ...]) -> tuple[Any, ...] | None:
+        from interpretune.tuning.latents import _split
+
+        x = args[0]
+        if _split(x):
+            self.target = x
+            return (x.full_tensor(), *args[1:])
+        self.target = None
+        if self.width is not None and x.shape[-1] < self.width:
+            raise MisconfigurationException(
+                f"The module spliced at {self.site} reads activations of width {self.width}, but under placement 'tp'"
+                f" it received {x.shape[-1]} features: a layer `tp_plan` splits hands it each rank's local shard. Set"
+                " `use_local_output: false` on that entry, so that the splice receives the split activation and"
+                " gathers it, or splice the module where the activation is whole."
+            )
+        return None
+
+    def lay_out(self, module: torch.nn.Module, args: tuple[Any, ...], output: Any) -> Any:
+        from interpretune.tuning.latents import _laid_out_as
+
+        target, self.target = self.target, None
+        return output if target is None else _laid_out_as(output, target)
+
+
+def _gather_activation_splices(module: torch.nn.Module) -> None:
+    """Register :class:`_WholeActivation`'s hooks on each module a backend splices into the forward pass, as the
+    module declares them (``activation_splices``)."""
+    declare = getattr(module, "activation_splices", None)
+    splices = cast(Mapping[str, tuple[torch.nn.Module, int | None]], declare() if callable(declare) else {})
+    for site, (spliced, width) in splices.items():
+        hooks = _WholeActivation(site, width)
+        spliced.register_forward_pre_hook(hooks.gather)
+        spliced.register_forward_hook(hooks.lay_out)
 
 
 def step_per_tensor(optimizers: Iterable[Any], run: DistributedRun | None) -> None:
