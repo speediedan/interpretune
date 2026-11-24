@@ -323,6 +323,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 ### Changed
 
 - `regen-ci-req-report` writes its report to the job summary instead of commenting on the pull request. The regeneration nearly always finds upstream drift, so the comment landed on almost every pull request and mailed every subscriber about something nobody acts on; the job now needs only `contents: read` ([#1197](https://github.com/interpretune/interpretune/issues/1197))
+- The transformers ceiling rises from `<5.23` to `<5.25`, admitting 5.24, the first release that ships Inkling 2 Mini's modeling code (`inkling2_loop`). The old ceiling guarded nnsight 0.8.2's model construction under 5.23, which the nnsight 0.8.3 pin no longer fails ([#1180](https://github.com/interpretune/interpretune/issues/1180))
+- With `activation_checkpointing: true`, the model's checkpointing is enabled through `activation_checkpointing_enable` where transformers provides it (5.24 on) and through `gradient_checkpointing_enable` before that, so 5.24's deprecation warning for the old name is not raised ([#1180](https://github.com/interpretune/interpretune/issues/1180))
 
 - The nnsight pin moves from 0.8.2 to 0.8.3, the release NDIF's hosted service runs. It lets NDIF accept requests over 1 MB, keeps an attached PEFT adapter from freezing the base model, and passes a `cache_dir`, `token` or `revision` through to the tokenizer. Two of its changes reach callers: `local_files_only=True` passed to an nnsight model constructor now raises a `TypeError` (set `HF_HUB_OFFLINE=1` instead), and a Gemma tokenizer that leaves `<bos>` off a plain string now adds it, so a string that already starts with `<bos>` gets a second ([#1169](https://github.com/interpretune/interpretune/issues/1169))
 
