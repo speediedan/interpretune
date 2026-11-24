@@ -16,14 +16,12 @@ from interpretune.hub.manifest import (
     validate_component_manifest,
 )
 from interpretune.hub.publish import build_component_tree
-from tests.rte_component import rte_entrypoint_src
-
-RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
+from tests.rte_component import rte_component_source, rte_entrypoint_src
 
 
 class TestComponentManifest:
     def test_in_repo_manifest_validates(self):
-        manifest = load_component_manifest(RTE_COMPONENT_DIR / "it_component.yaml")
+        manifest = load_component_manifest(rte_component_source() / "it_component.yaml")
         assert manifest["kinds"] == ["module", "datamodule"]
         assert len(manifest["module"]["configs"]) == 15
 
@@ -102,7 +100,7 @@ class TestOpsKindSpec:
 
 class TestGeneratedCards:
     def test_card_carries_discovery_sentinel_and_dataset_mirror(self):
-        manifest = load_component_manifest(RTE_COMPONENT_DIR / "it_component.yaml")
+        manifest = load_component_manifest(rte_component_source() / "it_component.yaml")
         card = generate_component_card(manifest, "speediedan/rte")
         assert card.data.library_name == "interpretune"
         for expected_tag in ("interpretune", "interpretune-module", "interpretune-datamodule", "task:rte"):
@@ -112,7 +110,7 @@ class TestGeneratedCards:
     def test_every_publish_produces_a_card(self, tmp_path):
         """No publish path may produce a card-less repo — the card IS the discovery sentinel."""
         out = tmp_path / "build"
-        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=rte_entrypoint_src())
+        manifest = build_component_tree(rte_component_source(), out, entrypoint_src=rte_entrypoint_src())
         generate_component_card(manifest, "speediedan/rte").save(out / "README.md")
         assert (out / "README.md").exists()
         assert "library_name: interpretune" in (out / "README.md").read_text(encoding="utf-8")
@@ -123,14 +121,16 @@ class TestPublishTreeParity:
 
     def test_built_tree_mirrors_in_repo_tree(self, tmp_path):
         out = tmp_path / "build"
-        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=rte_entrypoint_src())
+        manifest = build_component_tree(rte_component_source(), out, entrypoint_src=rte_entrypoint_src())
 
         # every in-repo file is copied byte-identical
         for rel in ["it_component.yaml"] + sorted(manifest["module"]["configs"].values()):
-            assert filecmp.cmp(RTE_COMPONENT_DIR / rel, out / rel, shallow=False), f"drift in {rel}"
+            assert filecmp.cmp(rte_component_source() / rel, out / rel, shallow=False), f"drift in {rel}"
         # the generated additions are exactly the declared entrypoint (card is added by publish_component)
         built = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
-        source = {p.relative_to(RTE_COMPONENT_DIR).as_posix() for p in RTE_COMPONENT_DIR.rglob("*") if p.is_file()}
+        source = {
+            p.relative_to(rte_component_source()).as_posix() for p in rte_component_source().rglob("*") if p.is_file()
+        }
         assert built - source == {manifest["module"]["entrypoint"]}
         assert source - built == set()
 
@@ -138,7 +138,7 @@ class TestPublishTreeParity:
         import shutil
 
         src_copy = tmp_path / "component"
-        shutil.copytree(RTE_COMPONENT_DIR, src_copy)
+        shutil.copytree(rte_component_source(), src_copy)
         drifted = src_copy / "configs" / "rte_demo.gpt2.sae_lens.yaml"
         drifted.write_text(
             drifted.read_text(encoding="utf-8").replace("model: gpt2", "model: gpt3000"), encoding="utf-8"
@@ -148,7 +148,7 @@ class TestPublishTreeParity:
 
     def test_missing_entrypoint_refused(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="entrypoint"):
-            build_component_tree(RTE_COMPONENT_DIR, tmp_path / "build", entrypoint_src=tmp_path / "nope.py")
+            build_component_tree(rte_component_source(), tmp_path / "build", entrypoint_src=tmp_path / "nope.py")
 
 
 class TestManifestFirstOffline:
@@ -160,7 +160,7 @@ class TestManifestFirstOffline:
 
     def test_hub_config_body_roundtrips_registry_schema(self):
         """A fetched configuration body is exactly what the local loader consumes — one schema, no adapters."""
-        cfg_path = RTE_COMPONENT_DIR / "configs" / "rte_demo.gemma2.circuit_tracer.yaml"
+        cfg_path = rte_component_source() / "configs" / "rte_demo.gemma2.circuit_tracer.yaml"
         body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         assert {"task_variant", "model", "composition", "reg_info", "shared_config", "registered_cfg"} <= set(body)
 
@@ -180,7 +180,9 @@ class TestLocalPublishBridge:
         from interpretune.hub.components import local_publish, resolve_component_config
 
         cache = tmp_path / "components"
-        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        rev = local_publish(
+            rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
+        )
         assert rev.startswith("local") and len(rev) == 40
         key, body = resolve_component_config("speediedan/rte", "rte_demo.gemma2.circuit_tracer", cache_dir=cache)
         loaded = load_session_cfg(body, expected_key=key)
@@ -191,8 +193,12 @@ class TestLocalPublishBridge:
         from interpretune.hub.components import local_publish
 
         cache = tmp_path / "components"
-        rev1 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
-        rev2 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        rev1 = local_publish(
+            rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
+        )
+        rev2 = local_publish(
+            rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
+        )
         assert rev1 == rev2, "unchanged content must map to the same pseudo-revision"
         snapshots = tmp_path / "components" / "models--speediedan--rte" / "snapshots"
         assert len(list(snapshots.iterdir())) == 1
@@ -212,7 +218,9 @@ class TestLocalPublishBridge:
         from interpretune.hub.components import ComponentFileNotCachedError, local_publish, resolve_component_config
 
         cache = tmp_path / "components"
-        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        rev = local_publish(
+            rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
+        )
         key = "rte_demo.gpt2.core"
         assert resolve_component_config("speediedan/rte", key, cache_dir=cache)[0] == key  # control: cached, resolves
         snapshot = cache / "models--speediedan--rte" / "snapshots" / rev
@@ -231,11 +239,11 @@ def seeded_cache(tmp_path):
     """
     from interpretune.hub.components import local_publish
     from tests.prompt_configs_component import publish_prompt_configs
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
     cache = tmp_path / "components"
     publish_prompt_configs(cache)
-    local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+    local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
@@ -287,7 +295,7 @@ class TestComponentRequires:
         from interpretune.hub.components import local_publish
 
         src_copy = tmp_path / "component"
-        shutil.copytree(RTE_COMPONENT_DIR, src_copy)
+        shutil.copytree(rte_component_source(), src_copy)
         manifest_path = src_copy / "it_component.yaml"
         patched = manifest_path.read_text(encoding="utf-8").replace("interpretune: '>=0.1.dev0'", requires_patch)
         assert patched != manifest_path.read_text(encoding="utf-8"), "requires patch did not apply"
@@ -334,7 +342,7 @@ class TestComponentRequires:
         )
 
         src_copy = tmp_path / "component"
-        shutil.copytree(RTE_COMPONENT_DIR, src_copy)
+        shutil.copytree(rte_component_source(), src_copy)
         manifest_path = src_copy / "it_component.yaml"
         old, new = mutation
         patched = manifest_path.read_text(encoding="utf-8").replace(old, new)
