@@ -73,6 +73,49 @@ A composition on Lightning, today's framework adapter loop, uses Fine-Tuning Sch
 callback with the same schedule. Both interfaces see the same view, so a schedule thaws the same tensors on either (the
 RTE example's tests check this phase by phase). [Phased fine-tuning on the core loop](#phased-fine-tuning-on-the-core-loop) below has the details.
 
+## One schedule across compositions
+
+The `speediedan/rte` component ships one GPT-2 schedule written only in addresses,
+`ft_schedules/rte_ft.gpt2.addresses.yaml`, and a run configuration for each composition that runs it:
+
+```bash
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.core.addresses.yaml
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.transformer_lens.yaml
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.nnsight.yaml
+```
+
+```yaml
+0:
+  params:
+  - "component:ln_final"
+  - "layers:-2: & component:mlp.*"
+1:
+  params:
+  - "layers:-2: & (component:attn.* | component:ln*)"
+2:
+  params:
+  - "layers:-6:-2"
+```
+
+Quote each address: `&` and `*` begin YAML anchors and aliases. The three compositions name the same tensor three ways
+(`model.transformer.h.10.mlp.c_fc.weight` on the core/HF composition, `hf_model.transformer.h.10.mlp.c_fc.weight` on
+nnsight, a bridge path under `blocks.10` on TransformerLens), and each address resolves to the composition's own
+names through GPT-2's component map. The example's test runs all three through the CLI and maps every epoch's thawed
+tensors back to GPT-2's own names: the sets must be equal in every epoch. Two settings make them so:
+
+- **The TransformerLens composition turns `implicit_norm_thaw` off** (`tunable_view` in its session configuration).
+  With the default, thawing any tensor of a block also thaws that block's norms on that composition alone, so phase 0
+  would thaw blocks 10 and 11's norms there and in phase 1 everywhere else.
+- **A TransformerLens bridge reads some fused tensors through splits it makes of them.** GPT-2's bridge computes
+  attention from `q`, `k` and `v` views of the fused `c_attn`, which itself receives no gradient. The view places
+  those splits where the fused tensor is, so `component:attn.qkv` thaws the tensors a step reaches
+  ([#1107](https://github.com/interpretune/interpretune/issues/1107)), and `TransformerBridgeView.wrapped_names()` maps
+  each of its physical names to the wrapped model's name, a split to the tensor it views, for comparisons like this
+  one.
+
+The schedule leaves adapters out: a `lora_cfg` is applied on the core/HF and TransformerLens compositions but not on
+nnsight, so `role:adapter` would select tensors on two of the three.
+
 ## Roles
 
 Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found by venngram's overlay maps and
