@@ -390,17 +390,59 @@ class TestBridgeViewStructure:
     def test_an_address_selects_the_wrapped_models_tensors(self, bridge, address):
         import venngram
 
-        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView, _wrapped_tensor_names
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
 
         # the bridge rewires its wrapped model in place, so the reference is a clean skeleton of the same architecture
         wrapped = bridge.original_model
         with torch.device("meta"):
             reference = type(wrapped)(wrapped.config)
-        tl = compile_schedule({0: {"params": [address]}}, TransformerBridgeView(bridge, implicit_norm_thaw=False))
+        view = TransformerBridgeView(bridge, implicit_norm_thaw=False)
+        tl = compile_schedule({0: {"params": [address]}}, view)
         hf = compile_schedule({0: {"params": [address]}}, venngram.view(reference))
-        originals = _wrapped_tensor_names(bridge)
-        tl_names = {originals[id(bridge.get_parameter(n))] for n in tl.phases[0].physical}
+        originals = view.wrapped_names()
+        tl_names = {originals[n] for n in tl.phases[0].physical}
         assert tl_names and tl_names == set(hf.phases[0].physical)
+
+    def test_an_address_thaws_the_split_projections_the_forward_reads(self, bridge):
+        """``component:attn.qkv`` thaws the splits GPT-2's bridge makes of its fused ``c_attn`` (#1107).
+
+        The bridge's forward reads the ``q``/``k``/``v`` views, so the fused tensor receives no gradient: thawing it
+        alone would leave the projection untrained.
+        """
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+
+        view = TransformerBridgeView(bridge, implicit_norm_thaw=False)
+        thawed = set(compile_schedule({0: {"params": ["layers:11 & component:attn.qkv"]}}, view).phases[0].physical)
+        saved = {n: p.requires_grad for n, p in bridge.named_parameters()}
+        try:
+            for n, p in bridge.named_parameters():
+                p.requires_grad_(n in thawed)
+                p.grad = None
+            bridge(torch.tensor([[50256, 464, 3290, 318]])).float().pow(2).mean().backward()
+            stepped = {n for n, p in bridge.named_parameters() if p.grad is not None and bool(p.grad.abs().sum() > 0)}
+        finally:
+            for n, p in bridge.named_parameters():
+                p.requires_grad_(saved[n])
+                p.grad = None
+        # every tensor of block 11's attention input projection that a step reaches is thawed, and it is not none
+        assert stepped and stepped <= thawed
+        assert {view.wrapped_names()[n] for n in thawed} == {
+            "transformer.h.11.attn.c_attn.weight",
+            "transformer.h.11.attn.c_attn.bias",
+        }
+
+    def test_a_split_view_has_no_unit_axis_of_its_own(self, bridge):
+        from venngram.errors import Refusal
+
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+
+        view = TransformerBridgeView(bridge)
+        suffix = "h.4._original_component.attn.q._original_component.weight"
+        (split,) = [n for n in view.wrapped_names() if n.endswith(suffix)]
+        structure = view.structure()
+        assert (structure.locate(split).layer, structure.locate(split).component) == (4, "attn.qkv")
+        refusal = structure.unit_dim(split, 2)
+        assert isinstance(refusal, Refusal) and "view the bridge makes" in str(refusal)
 
     def test_a_tensor_is_located_by_identity_and_an_unknown_one_nowhere(self, bridge):
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
