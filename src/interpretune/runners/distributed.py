@@ -784,7 +784,8 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
             continue
         _register_forward_methods(submodule, methods, register_fsdp_forward_method)
     declared = {id(submodule) for _, submodule, _ in entries}
-    for latent in (getattr(module, "latent_models", None) or {}).values():
+    held: Mapping[str, torch.nn.Module] = getattr(module, "latent_models", None) or {}
+    for latent in held.values():
         if isinstance(latent, FSDPModule) and id(latent) not in declared:
             _register_forward_methods(latent, ("encode", "decode"), register_fsdp_forward_method)
     if missing:
