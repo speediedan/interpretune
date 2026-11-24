@@ -250,13 +250,16 @@ def visit_index(label: str) -> int:
     return layer if layer < start else layer + 2 * (end - start)
 
 
-def challenge_readouts(rows: Any, ids: list[str]) -> list[dict]:
+def challenge_readouts(rows: Any, ids: list[str], *, allow_several_positions: bool = False) -> list[dict]:
     """Stored ``looped_lens_read`` rows as the Looped Lens Challenge's readouts file, one dict per question.
 
     ``rows`` is anything that yields the op's rows: an :class:`AnalysisStore` (iterated, so a streamed one works) or a
     list of row dicts. Each row is one op call and may hold several prompts; ``ids`` are the questions' ids in prompt
     order, and their number must match. Each readout is ``{"layer": visit, "tokens": [...]}`` for one read site, at most
     ten sites and ten tokens per site, as the challenge allows.
+
+    The challenge takes a prompt's readouts at a single token position, so a prompt whose sites were read at more than
+    one (a book with ``question_end`` sites) is refused, unless ``allow_several_positions``.
     """
     out: list[dict] = []
     for row in rows:
@@ -266,9 +269,19 @@ def challenge_readouts(rows: Any, ids: list[str]) -> list[dict]:
             raise ValueError(
                 f"the challenge takes at most {MAX_CHALLENGE_LAYERS} layers per question, one readout each: {labels}"
             )
-        for prompt in row["looped_lens_tokens"]:
-            if len(prompt) != len(labels):
-                raise ValueError(f"{len(prompt)} token lists for {len(labels)} read sites")
+        if "looped_lens_site_positions" not in row:
+            raise ValueError("the rows have no looped_lens_site_positions, so where their sites were read is unknown")
+        prompts, where = row["looped_lens_tokens"], [[int(p) for p in w] for w in row["looped_lens_site_positions"]]
+        if len(where) != len(prompts):
+            raise ValueError(f"read positions for {len(where)} prompts, and token lists for {len(prompts)}")
+        for prompt, at in zip(prompts, where):
+            if len(prompt) != len(labels) or len(at) != len(labels):
+                raise ValueError(f"{len(prompt)} token lists and {len(at)} positions for {len(labels)} read sites")
+            if len(set(at)) > 1 and not allow_several_positions:
+                raise ValueError(
+                    f"a prompt's sites were read at {len(set(at))} token positions {dict(zip(labels, at))}; the "
+                    "challenge takes a single position per prompt (allow_several_positions=True writes them anyway)"
+                )
             sites = sorted(zip(visits, prompt), key=lambda item: item[0])
             if len(out) == len(ids):
                 raise ValueError(f"the store holds more prompts than the {len(ids)} question ids given")
