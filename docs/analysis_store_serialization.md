@@ -25,6 +25,7 @@ Aliases and composite ops do not create separate storage rules. Aliases resolve 
 - `sequence_type` maps to `Sequence(Value(...))` for variable-length vectors.
 - `non_tensor` marks fields that should remain Python values instead of being tensorized by the formatter.
 - `per_latent` and `per_latent_model_hook` describe nested latent-model dictionaries.
+- `site` declares what the column's values name in the model they were computed on: a layer index, hook-name keys, token ids or positions, latent indices, or values in an activation space. It is published with `col_cfg`, and `AnalysisStore.resolve_on` reads it to decide whether the column carries over to another model (see [Reading a store against another model](finding_analysis_stores.md#reading-a-store-against-another-model)).
 - formatter kwargs can optionally provide an analysis backend that hydrates richer objects from the primitive row data after Arrow decoding.
 
 `OpSchema` is just a validated `dict[str, ColCfg]` wrapper, so the schema remains data-driven and serializable.
@@ -66,6 +67,75 @@ Its role is deliberately narrow:
 - otherwise defer tensor creation to the standard Hugging Face torch formatter.
 
 This means the formatter is not a serialization escape hatch. It does not deserialize opaque Python objects from opaque blobs. It only tensorizes data that Arrow already knows how to decode, and any richer object hydration has to start from those primitive decoded fields.
+
+### Dtype fidelity
+
+A column's dtype is the one its schema declares (`array_dtype`, else `datasets_dtype`). What a reader gets back is
+that dtype, with the values and shape that were written, from all three readers: the store in memory (Arrow),
+`pull_analysis_store` (Parquet, eager) and `pull_analysis_store(streaming=True)` (Parquet, streamed). The table is
+measured over scalar, sequence, 2-D (`Array2D`) and ragged 3-D (nested sequence) columns, and
+`tests/core/test_analysis_store_dtype_fidelity.py` fails if any row changes.
+
+| Declared dtype | Parquet holds | A reader gets |
+| --- | --- | --- |
+| `bool` | `boolean` | `torch.bool` |
+| `int8`, `int16`, `int32`, `int64` | the same integer width | `torch.int8`, `torch.int16`, `torch.int32`, `torch.int64` |
+| `uint8` | `uint8` | `torch.uint8` |
+| `float16` | `halffloat` | `torch.float16` |
+| `float32` | `float` | `torch.float32` |
+| `float64` | `double` | `torch.float64` |
+| `bfloat16` | refused when the schema is built, naming the column: Arrow has no bfloat16 type | |
+
+A **bfloat16 tensor** is written to a `float32` column, which holds every bfloat16 value exactly; it reads back as
+`float32`. A latent-model column (`per_latent_model_hook`) takes its dtype from the latent model's config, and a
+latent model loaded in bfloat16 gets `float32` columns for the same reason.
+
+**Writing a tensor of another dtype** into a column is accepted when casting it to the column's dtype and back
+reproduces every value. A float rounded to a narrower declared float is also accepted, with a warning naming the
+column once per dtype pair: a schema's float dtype is the precision its op stores, and a model run in float64
+produces float64 values for the bundled ops' float32 columns. Anything else is refused with `StoreDtypeError`, which
+names the column, both dtypes and the first value the cast would change. The check runs in `AnalysisOp.process_batch`, which both writers go through (the
+runner's generator and `analysis_store_from_batches`). Measured examples, where "before" is what a store held without
+the check:
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| bfloat16, float16, int8, int16, uint8 or bool into `float32` | values exact | accepted |
+| float64 into `float32`, float32 into `float16` | values rounded, silently | rounded, with a warning naming the column |
+| a float past the declared float's range (1e5 into `float16`) | stored as `inf`, silently | refused |
+| float into `int64` or `int32` | fractions truncated, silently (a generic Arrow error for a 2-D column from the runner) | refused, unless every value is integral |
+| int32 or int64 into `float32` | values past $2^{24}$ rounded, silently, in a scalar column; a generic Arrow error in other shapes | refused, unless every value survives |
+| int64 into `int32` | a generic Arrow overflow error | refused, naming the column |
+| anything but 0 and 1 into `bool` | every non-zero value stored as `True`, silently | refused |
+
+Two reads narrowed silently before this table was measured, and no longer do: a `float64` column read back as
+`float32` (rounding every value, from every reader), and `float16`, `int8`, `int16`, `int32` and `uint8` columns read
+back as `float32` or `int64`. A store written by `analysis_store_from_batches` also carried no column configs, so a
+`dyn_dim` column read back with its dimensions still swapped and its pushed envelope recorded no `col_cfg`; it now
+carries them, as the runner's stores do.
+
+### Text columns
+
+`datasets` encodes whatever a string column is given, so a value of the wrong kind is stored as text that looks like
+data. `AnalysisOp.process_batch` refuses those with `StoreDtypeError`, naming the column and what to declare. `None`
+is a null at any level.
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| a list, dict or tensor into a string column | its Python repr | refused |
+| a number or bool into a string column | its digits or `"True"` | refused |
+| a string into a list-of-strings column (`sequence_type: true`) | the list of its characters | refused |
+| lists nested deeper than the column declares | the inner lists' reprs | refused |
+
+To store structured values, declare their shape or encode them:
+
+- **Nested lists** of strings or numbers: `datasets_dtype` of the element, `non_tensor: true`, `sequence_type: false`
+  and one `array_shape` entry per level (`[null, null]` for a list of lists, whose rows may differ in length).
+- **Anything else:** `json.dumps(value)` into a string column named `<column>_json`, which an op reads back with
+  `load_json_field`.
+
+A column declared `datasets_dtype: object` compiles to a plain string column, so a stored `object` column holds strings
+only. `object` is for `intermediate_only` columns, which are never stored.
 
 ### AnalysisStore access
 
@@ -138,6 +208,39 @@ Two blocks with opposite rules:
 - `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
   detection without identity churn.
 
+`artifacts.interchange` records how the Parquet was written: `files`, the published Parquet paths, and
+`row_group_target_bytes`, the row-group size target of the push. A streamed pull reads exactly the listed `files`
+at the envelope's commit rather than assuming a path layout, and refuses an envelope that lists none. Both fields are
+additive, so they needed no schema bump; see [Streaming a store](finding_analysis_stores.md#streaming-a-store).
+
+### The `subject` block: what the store was computed on
+
+A store's columns mean something only against the model, tokenizer, component map and latent
+dictionaries that produced them, and none of those can be recovered from the columns. So since schema
+version 2 every envelope carries a `subject`:
+
+| key | what it records |
+| --- | --- |
+| `model.id`, `model.revision` | the model the module loaded, and the resolved commit of its weights when the loader reports one |
+| `architecture` | the architecture class name (`config.architectures[0]`) |
+| `tokenizer.id` | the tokenizer's `name_or_path` |
+| `component_map` | the map that resolved the store's sites: its `architecture`, `source` and `schema_version` |
+| `dictionaries` | each attached latent dictionary by `kind` (`sae_lens`: `release`, `sae_id`; `circuit_tracer`: `transcoder_set`) |
+
+`AnalysisCfg.apply` stamps the subject onto the store it writes, from the module the op runs on, for
+the reason it stamps op provenance: only write time knows it. Every key is present, and what
+interpretune cannot read is recorded as `null` rather than filled with a plausible value. Only the
+model id is required.
+
+A store assembled outside an op (with `analysis_store_from_batches`, say) carries no subject, and
+publishing it is refused until one is given:
+
+```python
+it.hub.push_analysis_store(store, repo_id, subject=it.hub.subject_from_module(module))
+```
+
+`it.hub.pull_analysis_store` puts the subject back on the store it returns, as `store.subject`.
+
 ### Checks on push
 
 `Dataset.push_to_hub` writes the parquet, and from `datasets` 4.1.0 (interpretune's floor) every
@@ -158,15 +261,44 @@ Alongside those two, the `interpretune` block carries what a reader needs to reb
 | `col_cfg` | the serialized per-column config the formatter is re-attached from | never |
 | `analysis_backend` | a registered backend **name**, not an instance | no backend attached |
 | `protocol_cls` | the batch protocol's import path, when an op declared a non-default one | it is the default |
+| `protocol_fields` | the field names that protocol declares, its bases' included | it is the default |
 
-All three record a **portable reference resolved on the way back**, never a live object. And all three
-are recorded at write time rather than reconstructed at read time, for the reason op-collection
-provenance is: what a name resolves to later is not necessarily what produced the store.
+The first three record a **portable reference resolved on the way back**, never a live object;
+`protocol_fields` records the protocol's attribute surface as plain data. All four are recorded at
+write time rather than reconstructed at read time, for the reason op-collection provenance is: what a
+name resolves to later is not necessarily what produced the store.
 
 `protocol_cls` closes a gap where a store pushed with a custom protocol came back with the default —
 the columns were intact, but the attribute surface the protocol exists to provide was silently absent.
-An unresolvable protocol now falls back to the default **with a warning** rather than silently, since
-silently serving the default is exactly the failure recording it is meant to prevent.
+Pulling a store resolves `protocol_cls` only from `interpretune` or from a hub component module already
+loaded through the remote-code gate, since importing a path runs its module. Anything else, or a path
+that does not name a batch protocol, is **refused**: serving the default in its place is exactly the
+failure recording the protocol is meant to prevent.
+
+#### Reading a store without its producer's code
+
+A protocol decides only which columns get attribute access (`store.preds`); every column reads and
+decodes through `col_cfg`, which is data. So a reader who wants a third-party store's columns without
+trusting its op collection asks for that explicitly:
+
+```python
+store = it.hub.pull_analysis_store("someone/store", protocol="schema")
+store["preds"]  # decoded exactly as in a resolved pull
+store.preds     # attribute access from the recorded protocol_fields
+```
+
+`protocol="schema"` imports nothing. The store gets a stand-in protocol declaring the names in
+`protocol_fields`, so attribute access matches a resolved pull, a declared column the store lacks
+included (it reads as None). The stand-in carries `recorded_protocol` (the path the envelope names)
+and `fields_from`. An envelope written before `protocol_fields` existed gets the store's own columns
+as its fields (`fields_from == "columns"`), so there a declared column the store lacks raises
+`AttributeError` instead. What a schema read gives up is the protocol's own methods, if it defines any.
+The default, `protocol="resolve"`, never falls back to a schema read: a caller always gets the
+reduced surface by asking for it.
+
+Re-publishing a schema-read store records the original `protocol_cls` path and fields, not the
+stand-in's. For discovery before any pull, `describe_analysis_store` returns the cached envelope
+(`col_cfg`, `protocol_cls`, `protocol_fields`, `subject`) without the network.
 
 ### Schema versioning policy
 
@@ -203,10 +335,15 @@ three different actions:
 | `schema` missing or not an integer | refuse: this is not an Interpretune artifact envelope |
 
 **Raising the floor retires published artifacts**, so it is a deliberate, documented act rather
-than a side effect of a refactor. The floor is currently `1`, the schema is currently `1`, and
-`tests/core/fixtures/it_artifact_schema1.json` pins a literal v1 envelope that the test suite reads
-on every run — the piece that actually catches an accidental mandatory-field change, since every
-other test builds its envelope with the current writer and so drifts along with it.
+than a side effect of a refactor. The floor is currently `1` and the schema is currently `3`: version
+2 made the `subject` block mandatory, and a version-1 envelope is still read, with no subject; version 3 put
+`site` in every `col_cfg` entry and `n_layers` in the subject, and a version-2 reader refuses it as newer. Each
+version in the window has an envelope the writer of that version produced, frozen under
+`tests/core/fixtures/` (`it_artifact_schema1.json`, `it_artifact_schema2.json`, `it_artifact_schema3.json`) and read on every run.
+That is the piece that catches an accidental mandatory-field change, since every other test builds its
+envelope with the current writer and so drifts along with it. The reader matrix runs against those same
+fixtures: a reader one version behind refuses the version-3 envelope as newer, and a floor raised to `2`
+refuses the version-1 envelope.
 
 **Publishing refuses to emit an envelope this build could not read back.** `build_analysis_store_envelope`
 returns its result through the same validator the read paths use, so a schema bumped past the

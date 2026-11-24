@@ -8,12 +8,12 @@ A *latent model* models a site's activations through latents. Examples:
 - a transcoder reads one site (an MLP's input) and rewrites another (that MLP's output);
 - a block-sparse featurizer, or any other dictionary, does either.
 
-`interpretune.tuning.latents` fixes only the seam these models share. Any of them can then be attached at a site, on any backend but circuit-tracer, and scheduled by role. It provides the seam, not a recipe: which latent models tune well, and how, is still being measured, so concrete latent tuning examples will follow that work ([interpretune#812](https://github.com/speediedan/interpretune/issues/812)).
+`interpretune.tuning.latents` fixes only the seam these models share. Any of them can then be attached at a site, on any backend but circuit-tracer, and scheduled by role. It provides the seam, not a recipe: which latent models tune well, and how, is still being measured, so concrete latent tuning examples will follow that work ([interpretune#812](https://github.com/interpretune/interpretune/issues/812)).
 
 ## The seam
 
 - **`LatentModel`**: the protocol, an `nn.Module` with `encode(x)` (activations to latents) and `decode(z)` (latents to activations). sae_lens SAEs and circuit-tracer transcoders already satisfy it.
-- **`LatentSite(read, write=None, read_from="output", op="replace_with_error")`**: where the latent model reads (the `read` module's output, or its first input), which module's output it rewrites (`write`, by default the `read` module), and the op applied there with the reconstruction as the operand. Paths are module names under the interpretune module, so a site is `model.layers.0.mlp` on a core module, `hf_model.model.layers.0.mlp` on an nnsight module, or a TransformerLens bridge's hook point. `read` and `write` may instead be venngram site addresses, one spelling for every backend: `LatentSite("point:mlp.hook_in & layers:3", write="point:mlp.hook_out & layers:3")` places a transcoder on any composition whose architecture interpretune maps. An address names the activation itself, so it decides whether the module's input or output is read or rewritten, and `read_from` applies only to a module path. Either may instead reference an address book's named set (`@mlp3_in`), with the book's sets passed as `attach_latent_model(..., sets=book_sets(book))`.
+- **`LatentSite(read, write=None, read_from="output", op="replace_with_error")`**: where the latent model reads (`read`; for a module path, the module's output, or its first input with `read_from="input"`), which site it rewrites (`write`, by default the `read` site), and the op applied there with the reconstruction as the operand. `read` and `write` are venngram site addresses, one spelling for every backend: `LatentSite("point:mlp.hook_in & layers:3", write="point:mlp.hook_out & layers:3")` places a transcoder on any composition whose architecture interpretune maps. A module name under the interpretune module also works, but names the site on one composition only: `model.layers.0.mlp` on a core module, `hf_model.model.layers.0.mlp` on an nnsight module, or a TransformerLens bridge's hook point. An address names the activation itself, so it decides whether the module's input or output is read or rewritten, and `read_from` applies only to a module path. Either may instead reference an address book's named set (`@mlp3_in`), with the book's sets passed as `attach_latent_model(..., sets=book_sets(book))`.
 - **Ops** (venngram's registry, as every [intervention](tuning_interventions.md) uses):
   - `"replace"`: the output becomes the reconstruction, so the model runs on what the latents capture.
   - `"replace_with_error"`: the straight-through substitution. The output keeps its value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction. It is one of venngram's core ops, defined with the others on [Interpretune Intervention APIs](interpretune_intervention_apis.md).
@@ -35,7 +35,9 @@ from interpretune.tuning.latents import LatentSite, attach_latent_model
 class MyLatentTuningModule(MyModule):
     def register_tunable_modules(self) -> None:
         super().register_tunable_modules()
-        attach_latent_model(self, "mlp3", load_transcoder(), LatentSite("model.model.layers.3.mlp", read_from="input"))
+        # a transcoder: it reads layer 3's MLP input and rewrites that MLP's output, on every backend
+        site = LatentSite("point:mlp.hook_in & layers:3", write="point:mlp.hook_out & layers:3")
+        attach_latent_model(self, "mlp3", load_transcoder(), site)
 ```
 
 ## Schedules: phases as stages
@@ -62,6 +64,8 @@ Attached with `frozen=True`, the same transcoder stays an `artifact`, applied an
   params: ["role:latent:mlp3"]
   promote: {"role:artifact": "latent:mlp3"}
 ```
+
+Splice a latent model the run will tune with `op="replace"`, so the model runs on its reconstruction. Under `"replace_with_error"` the site's value is the original activation whatever the latent model computes, so tuning it against the task loss moves its parameters without changing that loss; the straight-through substitution is for training a latent model to reconstruct its site, with a reconstruction loss of its own. The examples gallery's role-kinds notebook (`tuning/role_kinds_tuning.ipynb`) promotes and tunes a published SAE this way.
 
 `layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them.
 

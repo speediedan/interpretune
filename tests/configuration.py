@@ -53,6 +53,10 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
     test_itdm_cfg = deepcopy(base_itdm_cfg)
     if test_cfg.dm_override_cfg:
         test_itdm_cfg.__dict__.update(test_cfg.dm_override_cfg)
+    # The rte component shuffles its training split by default. Test sessions read it in order unless a test asks
+    # otherwise: the parity expectations fingerprint the first training batch, and the distributed tests compare ranks
+    # with a one-process run, which only holds when both read the same examples.
+    test_itdm_cfg.dataloader_kwargs = {"shuffle": False, **test_itdm_cfg.dataloader_kwargs}
     return test_itdm_cfg
 
 

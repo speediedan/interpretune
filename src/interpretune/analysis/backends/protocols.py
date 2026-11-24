@@ -8,18 +8,25 @@ helpers rather than instantiating them directly.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, TypeAlias, overload, runtime_checkable
 
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    AttributionGraphSupport,
     Capability,
     InterventionSupport,
     LatentModelSupport,
 )
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
+from interpretune.analysis.backends.readouts import Readout
 from interpretune.protocol import NamesFilter
+
+# `bwd_w_intervention`'s result: the gradients at each captured site from the baseline and the intervened pass, and
+# the readout's value; with `capture_activations`, also the activation at each captured site.
+GradientResult: TypeAlias = tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]
+GradientActivationResult: TypeAlias = tuple[
+    dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]
+]
 
 
 @runtime_checkable
@@ -31,6 +38,9 @@ class AnalysisBackendCore(Protocol):
     :class:`~interpretune.analysis.backends.capabilities.Capability` member it implements. A member answers whether
     the backend implements a group; which configurations of the group it honours is the typed support record on that
     protocol, never a member. ``requires`` names what it needs the model backend (or another component) to provide.
+    A technique (``SupportsAttributionGraph``, ``SupportsHeadAttribution``) is not a member: the backend declares it in
+    an optional ``technique_support`` mapping from the technique's name to its typed record
+    (:class:`~interpretune.analysis.backends.capabilities.TechniqueSupport`), and the gate checks the record's protocol.
     An op reaches a gated method only after the gate says the group is declared, and never through a default: a
     method looked up with a fallback is a method whose absence produces a plausible partial result instead of a
     refusal.
@@ -75,26 +85,20 @@ class AnalysisBackendCore(Protocol):
         """Recover the single prompt string an analysis is operating on.
 
         The prompt may have been carried on the analysis batch or only survive as token ids in the encoding, so
-        implementations resolve from whichever source is populated (decoding if needed).
+        implementations resolve from whichever source is populated (decoding if needed). A batch of several prompts is
+        refused rather than resolved to one of them.
         """
         ...
 
 
 @runtime_checkable
 class SupportsAttributionGraph(Protocol):
-    """Methods gated by ``Capability.ATTRIBUTION_GRAPH``: graph construction, storage and scoring.
+    """Methods of the ``attribution_graph`` technique: graph construction, storage and scoring.
 
-    The record says what the construction needs of the model it runs on. Its first measured requirement is the
-    attention implementation: circuit-tracer resolves gemma's attention-pattern location through nnsight's source
-    tracing of the function bound at the attention call site, so the modeling module's own eager attention must be
-    what is bound there. A configured ``eager`` is not that fact: another library can replace the module-level
-    function for the whole process and leave the config reading ``eager``.
+    A provider declares the technique in ``technique_support`` with an
+    :class:`~interpretune.analysis.backends.capabilities.AttributionGraphSupport` record, which says what construction
+    needs of the model it runs on (the modeling module's own eager attention).
     """
-
-    @property
-    def attribution_graph_support(self) -> AttributionGraphSupport:
-        """What graph construction requires of the model, and the refusal when a model does not meet it."""
-        ...
 
     def build_concept_attribution_targets(
         self,
@@ -164,7 +168,7 @@ class SupportsAttributionGraph(Protocol):
 
 @runtime_checkable
 class SupportsHeadAttribution(Protocol):
-    """Methods gated by ``Capability.HEAD_ATTRIBUTION``: credit at the level of attention heads.
+    """Methods of the ``head_attribution`` technique: credit at the level of attention heads.
 
     An attribution graph holds attention patterns constant by default, so it credits no node for changing where
     attention looks, and its edges say nothing about which head carried them. These two reports answer that at
@@ -302,6 +306,12 @@ class ModelBackendCore(Protocol):
     its own handle and reach it from these methods, because nothing else will pass it in. This was unstated
     until the first third-party adapter left the HF model in the slot, kept its engine handle elsewhere, and
     found its ops receiving a handle its wrapper could not take.
+
+    **A batch may carry a prefix key/value cache** (``past_key_values``, with ``use_cache`` and ``cache_position``),
+    so a trace runs only the tokens it scores and reads the rest of the sequence from the cache. A backend either runs
+    every forward of every method from the cache as the caller handed it, or refuses the batch by name
+    (:func:`~interpretune.analysis.backends.prefix_cache.refuse_prefix_cache`). It never drops the cache: the tokens
+    would then run without their context and return plausible, wrong values.
     """
 
     @property
@@ -598,23 +608,49 @@ class SupportsGradientIntervention(Protocol):
     provider of forward edits need not reach the backward pass at all, and a declared flow is a promise this method
     keeps.
 
-    **The gradient at a site** is the gradient of the metric with respect to the activation there, summed over every
+    **The gradient at a site** is the gradient of the readout with respect to the activation there, summed over every
     consumer of that activation, which is what flows on to earlier sites. An edit replaces it before it does, so every
-    site upstream of an edit sees the edit's effect, and the forward pass (and therefore the metric) is unchanged.
+    site upstream of an edit sees the edit's effect, and the forward pass (and therefore the readout) is unchanged.
     """
+
+    @overload
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        readout: Readout | Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+        capture_activations: Literal[False] = False,
+    ) -> GradientResult: ...
+
+    @overload
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        readout: Readout | Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+        *,
+        capture_activations: Literal[True],
+    ) -> GradientActivationResult: ...
 
     def bwd_w_intervention(
         self,
         model: Any,
         batch: dict[str, Any],
         interventions: InterventionDict | Mapping[str, InterventionValue],
-        backward_fn: Callable[[Any], Any],
+        readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        capture_activations: bool = False,
+    ) -> GradientResult | GradientActivationResult:
         """Run two forward and backward passes and return the gradients at the capture sites from each.
 
-        1. **Baseline**: the gradients ``backward_fn`` produces, with nothing edited.
+        1. **Baseline**: the gradients of ``readout``, with nothing edited.
         2. **Intervention**: the same backward pass, with each ``InterventionSpec`` in *interventions* applied to the
            gradient at its site, at the positions its ``position_scope`` names, through the executor its ``op``
            names. Specs at one site apply in declaration order, each to the previous one's result.
@@ -624,16 +660,24 @@ class SupportsGradientIntervention(Protocol):
             batch: Input batch dict.
             interventions: Hook names (or patterns with ``*``) to intervention payloads, as for
                 ``fwd_w_intervention``; each spec acts on the gradient at that site.
-            backward_fn: ``logits -> scalar``, the metric whose gradient is taken. It must use only standard PyTorch
-                ops, so a traced backend can apply it to a proxy.
+            readout: The scalar whose gradient is taken: a
+                :class:`~interpretune.analysis.backends.readouts.Readout`, which also reads the activations at the sites
+                it names from the same forward pass, or a callable of the logits alone. It must use only standard
+                PyTorch ops, so a traced backend can apply it to a proxy. A site it names that the forward pass does not
+                produce is refused by name.
             capture: The sites whose gradients are returned (names or patterns, as for *interventions*). ``None``
                 captures the intervention sites. A captured intervention site reports the gradient after its edit,
                 which is the one that flows on.
             latent_model_handles: Latent models to attach, so their sub-hooks can be edited or captured.
+            capture_activations: Also return the activation at each captured site, read in the baseline pass. The
+                forward pass is never edited, so it is the activation both passes see, and a gradient-times-activation
+                attribution needs no separate forward pass to get it.
 
         Returns:
-            ``(pre_grads, post_grads, metric)``: the gradients at every captured site keyed by concrete hook name, from
-            the baseline and the intervened pass, and the metric's value (the forward pass is the same in both).
+            ``(pre_grads, post_grads, value)``: the gradients at every captured site keyed by concrete hook name, from
+            the baseline and the intervened pass, and the readout's value (the forward pass is the same in both). With
+            ``capture_activations``, ``(pre_grads, post_grads, value, activations)``, the activations keyed as the
+            gradients are.
         """
         ...
 

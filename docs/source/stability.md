@@ -11,7 +11,7 @@ shims, no fallback code paths, and no silent coercions preserving an older calli
 contract changes, every in-tree caller and test is updated to the new contract directly.
 
 What users get instead is predictability: every breaking change lands with a `Breaking` entry in the
-[CHANGELOG](https://github.com/speediedan/interpretune/blob/main/CHANGELOG.md) naming the old and new
+[CHANGELOG](https://github.com/interpretune/interpretune/blob/main/CHANGELOG.md) naming the old and new
 form. That entry is the whole obligation, and it is not optional.
 
 ## A small stable surface gets one release of notice

@@ -52,7 +52,7 @@ class TestDerivedSupport:
         support = _support()
         # every core venngram op has a native mode now, `scale` included
         assert support.ops == frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
-        assert support.tokens == frozenset({"all", "last"})
+        assert support.tokens == frozenset({"all", "last", "positions"})
         assert support.targets == frozenset({"units", "activation"}) and support.values == frozenset(
             {"dose", "doses", "from"}
         )
@@ -105,13 +105,14 @@ class TestCheckRecipe:
         )
         assert check_recipe(recipe, _support()) == []
 
-    def test_untranslatable_ops_refuse_by_name(self):
+    def test_a_unit_replace_is_supported(self):
         unit_replace = _recipe(
-            site="mlp.hook_out", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
+            site="mlp.out.hook_in", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
         )
-        assert any(
-            "a unit-targeted `replace` has no native translation" in r for r in check_recipe(unit_replace, _support())
-        )
+        assert check_recipe(unit_replace, _support(capture=False)) == []
+        require_supported(unit_replace, _support(capture=False))
+
+    def test_untranslatable_ops_are_refused(self):
         layer_free = _recipe(
             operands={"concept": CONCEPT}, site="mlp.hook_out", ops=[{"op": "reject", "operand": "concept"}]
         )
@@ -146,20 +147,17 @@ class TestCheckRecipe:
 
         root = tmp_path / "published"
         root.mkdir()
-        recipe = {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "dose-the-units",
+        # the recipe is a treatment of its address book: venngram retired the standalone recipe document kind
+        treatment = {
             "model": {"id": "m", "revision": "r1"},
-            "book": BOOK,
             "stages": [
                 {"site": "mlp.hook_out", "ops": [{"op": "add", "target": {"set": "chess"}, "value": {"dose": 0.8}}]}
             ],
         }
-        (root / "recipe.yaml").write_text(yaml.safe_dump(recipe))
+        (root / "book.yaml").write_text(yaml.safe_dump({**BOOK, "treatments": {"dose-the-units": treatment}}))
         (root / "support.yaml").write_text(yaml.safe_dump(document))
         store.publish(
-            "local", str(root), root, documents=[("recipe", "recipe.yaml"), ("support_record", "support.yaml")]
+            "local", str(root), root, documents=[("address_book", "book.yaml"), ("support_record", "support.yaml")]
         )
         report = conformance.check(f"local:{root}", supports=[record])
         assert report.ok, [(d.path, d.error, dict(d.refusals)) for d in report.documents]

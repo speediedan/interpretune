@@ -203,7 +203,7 @@ def concept_direction(
         concept_basis (string) (required)
         jlens_layer (int64)
         jlens_kind (string)
-        jlens_provenance (object)
+        jlens_provenance_json (string)
     """
     ...
 
@@ -480,6 +480,7 @@ def intervention_first_order_check(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
@@ -522,7 +523,7 @@ def jlens_concept_probe(
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_kind (string)
-        jlens_provenance (object)
+        jlens_provenance_json (string)
         jlens_basis (string)
     """
     ...
@@ -550,13 +551,13 @@ def jlens_read(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batc
     Output Schema:
         jlens_top_token_ids (int64)
         jlens_top_token_scores (float32)
-        jlens_top_token_strings (object)
+        jlens_top_token_strings (string)
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_include_rms_scale (bool)
         jlens_readout_mask (string)
         jlens_kind (string)
-        jlens_provenance (object)
+        jlens_provenance_json (string)
     """
     ...
 
@@ -582,13 +583,13 @@ def jlens_sparse_inventory(
         jlens_revision (string)
 
     Output Schema:
-        jlens_inventory_token_ids (object)
-        jlens_inventory_coefficients (object)
+        jlens_inventory_token_ids (int64)
+        jlens_inventory_coefficients (float64)
         jlens_inventory_residual_ratio (float32)
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_kind (string)
-        jlens_provenance (object)
+        jlens_provenance_json (string)
         jlens_basis (string)
     """
     ...
@@ -737,13 +738,16 @@ def model_bwd_intervention(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
         direction_scale_factor (float32)
         logit_target_ids (int64)
+        readout (object)
         grad_capture (object)
         grad_capture_sets (object)
+        capture_activations (bool)
 
     Output Schema:
         grad_point_names (string)
@@ -752,6 +756,7 @@ def model_bwd_intervention(
         post_intervention_grad_values (float32)
         bwd_intervention_metric (float32)
         intervention_grad_position_effect (float32)
+        grad_activation_values (float32)
     """
     ...
 
@@ -789,6 +794,7 @@ def model_fwd_intervention(
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         intervention_position_scope (string)
+        intervention_positions (int64)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)

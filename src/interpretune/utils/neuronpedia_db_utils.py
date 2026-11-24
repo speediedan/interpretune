@@ -72,6 +72,9 @@ DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME = "postgres"
 DEFAULT_LOCAL_NEURONPEDIA_HOST = "127.0.0.1"
 DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV = "POSTGRES_HOST_PORT"
 DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS = 5
+#: The URL a Neuronpedia development setup listens on by default, for messages and docs. Never a fallback: an import
+#: writes to the database it resolves, so the database is always named by the caller or the environment.
+EXAMPLE_LOCAL_NEURONPEDIA_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 
 NeuronpediaDBError = NeuronpediaLocalDBImportError
 
@@ -80,6 +83,7 @@ __all__ = [
     "DEFAULT_COLUMNAR_IMPORT_TABLES",
     "DEFAULT_IMPORT_MODE_CONFIGS",
     "DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL",
+    "EXAMPLE_LOCAL_NEURONPEDIA_DB_URL",
     "LocalNeuronpediaServiceStatus",
     "NeuronpediaBundleImportParity",
     "NeuronpediaBundleSummaryParity",
@@ -170,7 +174,8 @@ def resolve_local_neuronpedia_db_url(
                 break
     if not candidate:
         raise NeuronpediaDBError(
-            "Could not resolve a local Neuronpedia DB URL. Set LOCAL_NEURONPEDIA_DB_URL or POSTGRES_URL_NON_POOLING."
+            "Could not resolve a local Neuronpedia DB URL. Set one of "
+            f"{', '.join(DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS)}, e.g. {EXAMPLE_LOCAL_NEURONPEDIA_DB_URL}."
         )
     return rewrite_container_postgres_url_for_host(candidate, env=env_map)
 

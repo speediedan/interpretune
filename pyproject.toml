@@ -38,9 +38,10 @@ dependencies = [
     # (`interpretune.analysis.venngram`, #887) and the default view (`venngram.view`, #900). The floor is the one
     # finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
     "venngram>=0.1.0.dev0,<0.2.0",
-    # CEILING <5.23: transformers 5.23.0 breaks nnsight 0.8.2 model construction ("Impossible to guess which
-    # tokenizer", #1002). Lift it once an nnsight release or a transformers patch constructs gemma-2-2b again.
-    "transformers>=4.57.1,<5.23",
+    # CEILING <5.25: 5.24 is the first release with Inkling 2 Mini's modeling code (`inkling2_loop`, #1180). The
+    # earlier <5.23 ceiling guarded nnsight 0.8.2's model construction under 5.23 (#1002), which nnsight 0.8.3 (the
+    # pin since #1170) no longer fails. Raise it after validating the next minor release.
+    "transformers>=4.57.1,<5.25",
     "tabulate >= 0.9.0",
     # FLOOR >=4.1.0: from 4.1.0 every Parquet write is page-indexed by default (`ParquetDatasetWriter` defaults
     # `write_page_index=True`), and `push_to_hub` writes through it, so a published AnalysisStore is range-readable.
@@ -73,10 +74,10 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/speediedan/interpretune"
-"Bug Tracker" = "https://github.com/speediedan/interpretune/issues"
+"Homepage" = "https://github.com/interpretune/interpretune"
+"Bug Tracker" = "https://github.com/interpretune/interpretune/issues"
 "Documentation" = "https://interpretune.org/en/latest/"
-"Source Code" = "https://github.com/speediedan/interpretune"
+"Source Code" = "https://github.com/interpretune/interpretune"
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
@@ -165,9 +166,10 @@ examples = [
     # the only one interpretune builds. sae-dashboard caps transformer-lens below 3.x (`^2.2.0`), hence
     # the matching entry in [tool.uv] override-dependencies / requirements/ci/overrides.txt.
     "transformer-lens >=4,<5",
-    # sae-lens is temporarily in `git-deps` below rather than here: no sae-lens release imports under
-    # transformer-lens 4.0 yet. Restore the released floor (>= the first release that does) when the
-    # git pin retires.
+    # 6.55.0 is the first release that imports under transformer-lens 4.0 (earlier ones fail on
+    # `transformer_lens.HookedTransformer`). Never install the old fork `speediedan/SAELens@86f90b3d`: 20
+    # duplicate YAML keys in its `pretrained_saes.yaml` bind 10 `-pt-` transcoder entries to the wrong weights.
+    "sae-lens >=6.55.0,<7",
     # The engine the cross-backend parity suite drives directly. Declared here rather than reached
     # through circuit-tracer's own extra, which made its presence depend on which extra a build asked
     # for -- a rebuild silently dropped it and four parity assertions went to skipped. Installs the
@@ -211,8 +213,9 @@ git-deps = [
     #                                       edges are not sqrt(d_model) too small under transformers 5 (#791)
     #   disk offload on Windows             the offload file is neither open during its write nor mapped at
     #                                       its delete, the two things Windows refuses (#909)
-    #   attribution regimes                 `attribute(freeze_attention=, freeze_norms=)`, recorded on the graph
-    #   head reports                        `head_loadings` and `head_conductance` (#781)
+    #   attribution regimes                 `attribute(freeze_attention=, freeze_norms=)`, recorded on the graph,
+    #                                       on the nnsight and interp_engine backends (#781, #933)
+    #   head reports                        `head_loadings` and `head_conductance`, on both backends (#781, #933)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -223,16 +226,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6f7bc8271c2b041a2b1ae985f9db7a8e6cc42047",
-    # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
-    # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
-    # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in
-    # the `examples` extra the moment a release carries that support.
-    # Never substitute the old fork pin (`speediedan/SAELens@86f90b3d`): it carries 20 duplicate YAML keys
-    # in `pretrained_saes.yaml` from a bad rebase, silently binding 10 `-pt-` transcoder entries to the
-    # WRONG weights.
-    "sae-lens @ git+https://github.com/RyanJunejo/SAELens.git@97f241a5d189b7c3b36eafd280f6267ccddb578c",
-    #
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@5ecad1d25ebeda704336dcdf00f67383edb5120e",
     # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
     # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
@@ -256,13 +250,19 @@ git-deps = [
     # support record and registry lookup), which depends on venngram.
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@edad63593dfada88a338ae7c72e17adc09651ffc",
     # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
-    # The SHA is venngram main with #102 (modules registered beside the mapped model, `attached=`, placed at the module
-    # a hook splices them into), #95 (cooperative roles checked against promotions and earlier declarations) and #104
+    # The SHA is venngram main with #129 (a verified execution map for Inkling 2 Mini, so an address names a module by
+    # weight layer and execution pass), over #127 (attention head block sizes, `unit_block`, recorded in schema 6 component maps,
+    # and whole heads selected by address, `units: {heads: [...]}`), #126 (a base map found under a wrapper that
+    # forwards its model's config mounts at the model inside it), #114 (the standalone recipe document kind retired; a
+    # recipe lives in an address book) and #116-#122, over #113 (a view's roles assigned by address as well as by name, `roles={role: address}`),
+    # #108 (fractional layer bounds), #106 (unit sets naming the gradient axis) and #105 (graph subset documents, and
+    # treatments that apply them in another prompt), over #102 (modules registered beside
+    # the mapped model, `attached=`, placed at the module a hook splices them into), #95 (cooperative roles checked against promotions and earlier declarations) and #104
     # (recipe target qualifiers that would be ignored are refused), over #84 (the `instrument` role kind renamed
     # `artifact`, the old name read with a deprecation warning until 0.2), #56 (a reader passes over registry documents newer than it reads, so the
     # default view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner
     # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
-    "venngram @ git+https://github.com/speediedan/venngram@43cd03c957b10aff7026acadc7683ec49d0713f2",
+    "venngram @ git+https://github.com/speediedan/venngram@c49e5f58a6ac9d65f6a40cb06eae35265299f543",
     # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
     # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
     # requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the three differ.
@@ -330,18 +330,18 @@ docs = [
 # --override flag (e.g CI)
 override-dependencies = [
     # force transformer-lens 4.0 over sae-dashboard's cap (`^2.2.0`, i.e. <3.0.0). sae-lens' range
-    # (`>=2.16.1,<5`) and circuit-tracer's floor admit it without an override.
+    # (`>=3.0.0,<5`) and circuit-tracer's floor admit it without an override.
     "transformer-lens==4.0.0",
     # transformer-lens 4.0 requires jaxtyping>=0.3, and sae-dashboard caps it below 0.3 (`^0.2.28`).
     # sae-dashboard imports only the annotation types (`Float`, `Int`, `Bool`) and never type-checks at
     # runtime, and every one of its modules imports under jaxtyping 0.3.
     "jaxtyping>=0.3",
-    # keep transitive nnsight (pulled in by sae-lens) at the validated release. 0.8.1 is the
-    # oldest client the NDIF server accepts (it refuses older clients by name; 0.7.0 cannot
-    # even complete the websocket handshake), and 0.8 moved Barrier to
-    # nnsight.intervention.barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches, which
-    # is why the circuit-tracer git pin carries its 0.8 compat commit.
-    "nnsight==0.8.2",
+    # keep transitive nnsight (pulled in by circuit-tracer) at the validated release. 0.8.3 is the release
+    # NDIF's hosted service runs, and it lets NDIF accept requests over 1 MB. 0.8.1 is the oldest client the
+    # NDIF server accepts (it refuses older clients by name; 0.7.0 cannot even complete the websocket
+    # handshake), and 0.8 moved Barrier to nnsight.intervention.barrier and dropped the
+    # CROSS_INVOKER/TRACE_CACHING switches, which is why the circuit-tracer git pin carries its 0.8 compat commit.
+    "nnsight==0.8.3",
     # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
     # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
@@ -357,7 +357,7 @@ override-dependencies = [
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@edad63593dfada88a338ae7c72e17adc09651ffc",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@43cd03c957b10aff7026acadc7683ec49d0713f2",
+    "venngram @ git+https://github.com/speediedan/venngram@c49e5f58a6ac9d65f6a40cb06eae35265299f543",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
@@ -647,8 +647,8 @@ env = { IT_RESOURCE_DEBUG = "1" }
 # adds. Its rerun and resource-debug flags reach the `run` phases through PYTEST_ADDOPTS and the special-test phases as
 # runner options.
 name = "IT"
-# sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls sys.settrace(None) on trace
-# teardown, which wipes the default settrace-based core for the rest of the process
+# sys.monitoring measurement core (coverage>=7.4, py>=3.12): code that replaces the thread's trace function (debuggers,
+# nnsight before 0.8) wipes the default settrace-based core for the rest of the process
 env = { COVERAGE_CORE = "sysmon", PYTHONFAULTHANDLER = "1" }
 setup = [["-m", "coverage", "erase"]]
 report = [["-m", "coverage", "report", "-m"]]
@@ -710,7 +710,7 @@ special-tests = ["--mark_type=benchmark"]
 # pytest process the phase starts (gpu_phase.sh, through run-env) and reports each phase against its manifest, gated
 # below. The phases are the GPU job's own steps (gpu_phase.sh); a phase's selector is the selection-relevant part of
 # its step, not what only reruns or reports.
-repository = "speediedan/interpretune"
+repository = "interpretune/interpretune"
 # Every selection variable tests/conftest.py reads, stripped before each collection so an inherited one cannot change
 # what a phase is. The memory class goes too, so a two-stage phase's manifest covers both stages.
 selection-vars = [

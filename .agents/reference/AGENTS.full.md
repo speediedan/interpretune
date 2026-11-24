@@ -130,7 +130,7 @@ thing it asserted is not true, and the weakened form carries a false premise for
 | **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
 
 **`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
-like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.8.2` pins live in
+like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.8.3` pins live in
 `[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
 TransformerLens 4.0 over sae-dashboard's `^2.2.0` cap, so pip happily resolves a TL 2.x release
 (**2.16.1** when this was measured), and every
@@ -233,15 +233,14 @@ pins provide. Reconcile this list against `pyproject.toml`'s `git-deps` block be
 | --- | --- | --- |
 | `sae-dashboard` | git-deps pin (SD#74 still open) | yes, while the fork surface is required |
 | `circuit-tracer` | git-deps pin | yes, no release carries the attribution-target surface |
-| `sae-lens` | **temporary git-deps pin: the head of decoderesearch/SAELens#739** | only for SAELens upstream work |
+| `sae-lens` | released floor in the `examples` extra (`>=6.55.0,<7`) | only for SAELens upstream work |
 | `transformer-lens`, `nnsight` | release pins in `[tool.uv] override-dependencies` | only for upstream work |
 
-**sae-lens is git-pinned again, temporarily, and only to decoderesearch/SAELens#739.** No sae-lens
-release imports under transformer-lens 4.0, so the pin carries that PR's head until a release does; the
-retirement condition lives beside the pin in `pyproject.toml`. While it stands, a registry entry recording
-the #739 fork and sha for sae_lens is CORRECT. **The old fork pin (`speediedan/SAELens@86f90b3d`) must never
-come back**: it carries 20 duplicate YAML keys in `pretrained_saes.yaml` from a bad rebase, silently
-binding 10 `-pt-` transcoder entries to the WRONG weights.
+**sae-lens installs from its released floor.** 6.55.0 is the first release that imports under
+transformer-lens 4.0, so the temporary git pin to decoderesearch/SAELens#739's head is retired, and a registry
+entry recording a git fork and sha for sae_lens now means the env is ahead of the pins. **The old fork pin
+(`speediedan/SAELens@86f90b3d`) must never come back**: it carries 20 duplicate YAML keys in
+`pretrained_saes.yaml` from a bad rebase, silently binding 10 `-pt-` transcoder entries to the WRONG weights.
 
 Canonical rebuild for someone developing SAEDashboard and circuit-tracer alongside interpretune:
 
@@ -276,12 +275,12 @@ When a from-source package brings in git-pinned dependencies, UV caches those re
 
 Where pins live and how to refresh them:
 
-- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.8.2`
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.8.3`
   release pins (plus `jaxtyping>=0.3`, which TL 4.0 needs over sae-dashboard's `^0.2.28`), which force
   TransformerLens 4.0 over downstream v2 caps; keep them in sync with
   `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from
   re-resolving TL during `--from-source` installs).
-- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer, sae-lens,
+- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer,
   sae-dashboard, finetuning-scheduler). These are excluded from the universal lock, so every bump needs
   hand validation (dashboard parity gates + core suite in a scratch env) before folding it into `it_latest`.
 - `requirements/ci/requirements.txt` — the CI lock; regenerate with `./requirements/utils/lock_ci_requirements.sh`.
@@ -942,7 +941,7 @@ instructions file rather than in this published one.
 
 ## Important Caveats
 
-- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
+- **Git dependencies** (circuit_tracer, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
 - **Type checking:** Enabled for every module under `src/`, the relocated research and notebook trees included; there is no exclusion list, so a module that cannot be typed is fixed or removed rather than exempted. All `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports

@@ -64,6 +64,14 @@ def stored_gradients(store: Any, index: int, which: str) -> dict[str, torch.Tens
     )
 
 
+def stored_activations(store: Any, index: int) -> dict[str, torch.Tensor]:
+    """Rebuild ``{site: activation}`` for batch ``index`` from ``model_bwd_intervention``'s
+    ``grad_activation_values``, which share the gradients' shape code and names."""
+    return decode_points(
+        store["grad_activation_values"][index], store["grad_shape"][index], store["grad_point_names"][index]
+    )
+
+
 def decode_points(values: Any, shape: Any, names: Any) -> dict[str, torch.Tensor]:
     """Split one flat value sequence into named tensors by its shape code, ``[n, ndim_0, dims_0..., ...]``."""
     values = torch.as_tensor(values, dtype=torch.float32)

@@ -7,7 +7,7 @@ the component's KIND, from which the slot rules follow. Per-row io flags are not
 always the module's first input and ``hook_out`` its output, and the two derived norm tensors are a property
 of every norm rather than of any row.
 
-Sources, in precedence order: a bundled YAML under ``data/`` (seven architectures today), a registration at
+Sources, in precedence order: a bundled YAML under ``data/`` (nine architectures today), a registration at
 runtime (``register``), and, later, a map derived from TransformerLens' own per-architecture component
 mapping when it is installed. Two sources for one architecture must agree, and a test says so.
 """

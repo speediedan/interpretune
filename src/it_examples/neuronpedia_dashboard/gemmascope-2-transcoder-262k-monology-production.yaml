@@ -90,12 +90,8 @@ pipeline:
   # the limit (validated across all layers in the 8,192 backfill). Candidate NP-utils fix: size-aware
   # chunking / lower default for wide sets.
   local_db_import_chunk_size: 16000
-  # REQUIRED for inline import: without an explicit DB URL (or LOCAL_NEURONPEDIA_DB_URL /
-  # POSTGRES_URL_NON_POOLING in the env) the pipeline logs a single startup WARNING and silently
-  # degrades to generation-only, with imports left to be backfilled via --import-only-local-db.
-  # Candidate pipeline fix: import_to_local_db=true + unresolvable DB URL should be a hard error,
-  # not a warning.
-  local_db_url: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  # The inline import needs a database URL: --local-db-url, or LOCAL_NEURONPEDIA_DB_URL in the environment or the
+  # interpretune env file. Without one the run is refused before it generates anything.
   archive_partial_dirs: false
   heartbeat_seconds: 60
   stall_timeout_seconds: 1800

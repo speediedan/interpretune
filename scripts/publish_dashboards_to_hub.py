@@ -81,13 +81,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "the parquet directly and never import.",
     )
     parser.add_argument("--private", action="store_true", help="Create the repo private if it does not exist.")
-    parser.add_argument(
-        "--collection",
-        default=None,
-        help="Hub collection slug to register the published bucket in, once every check passes, so clients discover"
-        " it (bucket store only; the token needs collection.write, or pass --collection-token).",
-    )
-    parser.add_argument("--collection-token", default=None, help="Token for --collection (default: --token).")
     parser.add_argument("--commit-message", default="Publish columnar dashboard artifacts")
     parser.add_argument("--dry-run", action="store_true", help="Report the plan; make no network writes.")
     parser.add_argument(
@@ -151,8 +144,6 @@ def main(argv: list[str] | None = None) -> int:
             add_checks=tuple(args.add_check),
             token=args.token,
             store=args.store,
-            collection=args.collection,
-            collection_token=args.collection_token,
         )
     except UnknownPublishCheckError as exc:
         print(str(exc), file=sys.stderr)

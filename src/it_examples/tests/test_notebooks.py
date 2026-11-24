@@ -578,6 +578,31 @@ def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, 
     _cleanup_notebook_artifacts()
 
 
+# The neuron-communities replication loads Llama-3.1-8B in bf16 (gated; its weights persist on the agent's cache mount
+# from the first run, as tests/gpu_ci/hf_warm_manifest_gpu.yaml explains) and streams FineWeb-Edu prompts and the
+# release's community records from the network, so it runs in the optional tier rather than a pull-request phase.
+# Measured with tests/gpu_ci/calibrate.py: need 17.70 GiB (RTX 4090, CUDA), declared at the calibrator's recommendation.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=20.5, optional=True)
+def test_neuron_communities_notebook(tmp_path: Path):
+    """Execute the neuron-communities notebook on a few prompts and check its controls ran and the community is
+    necessary, not sufficient to ablate, and recovered by attribution."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "neuron_communities" / "neuron_communities_replication.ipynb",
+        parameters={"n_prompts": 16, "table1_communities": ["187321"], "random_draws": 1, "cache_dir": str(tmp_path)},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "captured vs hand-written gradients" in text, "the gradient control did not run"
+    _cleanup_notebook_artifacts()
+
+
 # The notebook's own defaults: Qwen3.5-4B through the NNsight composition with no transcoders, read through both the
 # J-lens and J++. Both defects the default path first met (a module class listed twice among the composed bases, and a
 # multimodal processor needing the torchvision the pins exclude) passed every Gemma case. Measured with
@@ -600,6 +625,48 @@ def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
     assert "J++ defaults verified" in text, "the J-lens and J++ comparison did not run"
     verdicts = [line for line in text.splitlines() if " was readable at layer " in line]
     assert verdicts and "before" in verdicts[-1], f"expected the intermediate before the answer, got: {verdicts}"
+    _cleanup_notebook_artifacts()
+
+
+# The latent-dynamics notebook runs an analysis the concept-direction Hub component publishes, so it needs the live
+# Hub (the component is fetched at the notebook's pinned revision, never warmed: warming would test a cache rather
+# than the pull) and a token that can read it. Measured with tests/gpu_ci/calibrate.py: need 5.11 GiB (RTX 4090, CUDA),
+# declared at the calibrator's recommendation.
+@pytest.mark.hf_live
+@pytest.mark.skipif(
+    not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
+    reason="IT_HF_TOKEN or HF_TOKEN required to fetch the concept-direction component",
+)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=6.0)
+def test_concept_direction_latent_dynamics_notebook(tmp_path: Path, monkeypatch):
+    """Execute the latent-dynamics notebook with the component trusted, and check every section reported."""
+    import json
+
+    # the kernel inherits the token the Hub client reads; the component is private until the seed repositories flip
+    monkeypatch.setenv("HF_TOKEN", os.environ.get("IT_HF_TOKEN") or os.environ["HF_TOKEN"])
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "circuit_tracer_examples" / "concept_direction_latent_dynamics.ipynb",
+        parameters={"TRUST_COMPONENT_CODE": True},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    # the results are notebook UI tables and figures (HTML), so the checks read their titles
+    shown = "".join("".join(out.get("data", {}).get("text/html", "")) for out in outputs)
+    for marker in (
+        "The probe prompts",
+        "probe examples answered as expected",
+        "Readout at unembed.hook_in",
+        "Causal steering at",
+        "features of each stage",
+        "State separation between the groups",
+        "each stage&#x27;s attribution graph targets the last position",
+    ):
+        assert marker in shown, f"the notebook showed no {marker!r} table: a section did not run"
+    # a figure shown as plotly JSON alone is dropped by the docs build, so every figure must be embedded as HTML
+    assert shown.count("Plotly.newPlot") == 4, "the cosine matrix and all three projections must render as HTML figures"
     _cleanup_notebook_artifacts()
 
 
@@ -744,6 +811,97 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+def test_gradient_readouts_notebook(tmp_path: Path):
+    """Gradient readouts (#1032): a probe, an SAE feature and a gradient edit on gpt2, CPU-only.
+
+    No GPU marks, no token gates. The revision pins the local-publish snapshot so the test validates the in-tree config
+    without a hub push; the notebook defaults to the recorded pin. The notebook asserts its own controls (the ablation
+    hook ran, the SAE read directly matches the readout), so an error-free run means they held.
+    """
+    import nbformat
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "gradient_readouts" / "gradient_readouts.ipynb",
+        parameters={"REVISION": rev},
+        output_dir=output_dir,
+    )
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    shown = "".join(
+        "".join(html) if isinstance(html := o.get("data", {}).get("text/html", ""), list) else html
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+        if o.output_type == "display_data"
+    )
+    # the results are notebook UI tables (HTML), so the check reads the last two moves' table titles
+    assert "Rejecting the probe direction from the gradient" in shown, "the notebook did not reach the op path"
+    assert "Declared and callable probe readouts" in shown, "the notebook did not reach the declared readout"
+    _cleanup_notebook_artifacts()
+
+
+# Trains on the train split, whose arrow read fails on Windows runners (as for the runner demo below).
+@RunIf(skip_windows=True)
+def test_role_kinds_tuning_notebook(tmp_path: Path):
+    """The interpretability role kinds in one staged run (#879): CPU-only, against the local-publish snapshot.
+
+    The notebook asserts the guarantees itself (an artifact neither thawed nor optimized until its promotion, the
+    steering vector trained then held, the fitted direction saved and never trained); this checks it ran clean and that
+    the checkpoints it read show the promotion.
+    """
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "tuning" / "role_kinds_tuning.ipynb",
+        parameters={"LIMIT_TRAIN_BATCHES": 2, "LIMIT_VAL_BATCHES": 1, "FIT_BATCHES": 2, "REVISION": rev},
+        output_dir=output_dir,
+    )
+
+    import nbformat
+
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    html = "".join(
+        "".join(o.get("data", {}).get("text/html", ""))
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+    )
+    assert "What each saved checkpoint holds" in html and "latent:sae" in html
+
+    _cleanup_notebook_artifacts()
+
+
 # The train-split arrow read fails on Windows runners (OSError 22 on mmap) while test-split
 # paths pass there; the demo needs the train split for its fit leg, so it skips Windows.
 @RunIf(skip_windows=True)
@@ -839,6 +997,115 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
     _cleanup_notebook_artifacts()
 
 
+# The block-sparse featurizer notebook loads Mistral-7B in bf16 and streams Pile-10k documents for the group gate and
+# the screen's background, so it runs in the optional tier rather than a pull-request phase.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=19.5, optional=True)
+def test_sasa_blocks_notebook(tmp_path: Path):
+    """Execute the SASA blocks notebook on a few prompts and check its payload control ran, the paper's month group
+    was selected, and the frames and charts section reached its functional and native edits."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "sasa_blocks" / "sasa_blocks_frames_charts.ipynb",
+        parameters={"max_edit_prompts": 12, "n_background_docs": 16},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "payload vs hand-written edit" in text, "the payload control did not run"
+    assert "features:sasa &amp; units:[3810]" in tables or "features:sasa & units:[3810]" in tables, "month group"
+    assert "principal cosines, block vs named subspace" in text, "the frames and charts section did not run"
+    assert "Moving a member one step around its ring" in tables, "the chart edits did not run"
+    assert "Control: the native edit is the functional one" in tables, "the native edit control did not run"
+    assert "Moving a member natively" in tables, "the native edits did not run"
+    _cleanup_notebook_artifacts()
+
+
+# fp32 Qwen3-0.6B, a TransformerLens copy of it for the parity check, then two tuning sessions one at a time
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=16.0)
+def test_neuron_finder_notebook(tmp_path: Path):
+    """The neuron-finder example (#869) on Qwen3-0.6B, shortened, against the local-publish snapshot.
+
+    The notebook asserts its own controls (the two backends agree on the book, both tuning stages run, the book reads
+    back as its settings); this checks it ran clean and reached the tuning comparison.
+    """
+    import json
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "neuron_finder" / "neuron_finder.ipynb",
+        parameters={
+            "N_SCREEN": 32,
+            "N_EVAL": 32,
+            "TOP": 2,
+            "DOSES": [8.0],
+            "N_CONTROLS": 4,
+            "BOOK_DOSE": 8.0,
+            "LIMIT_TRAIN_BATCHES": 2,
+            "LIMIT_VAL_BATCHES": 1,
+            "REVISION": rev,
+        },
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "on two backends" in tables, "the book was not steered on both backends"
+    assert "tuned: the found neurons" in tables, "the tuning comparison did not run"
+    _cleanup_notebook_artifacts()
+
+
+# fp32 gemma-3-1b-it, both featurizers and the J-lens, then two tuning sessions one at a time
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=16.0)
+def test_bsf_blocks_notebook(tmp_path: Path):
+    """The block-sparse featurizer blocks example (#866) on gemma-3-1b-it, shortened, against the local-publish
+    snapshot.
+
+    The notebook asserts its own controls (the native edit is the edit written by hand, the untuned splice leaves the
+    model unchanged, both tuning stages run); this checks it ran clean and reached the tuning comparison.
+    """
+    import json
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "bsf_blocks" / "bsf_blocks.ipynb",
+        parameters={
+            "N_SCREEN": 32,
+            "N_EVAL": 32,
+            "DOSES": [4.0],
+            "N_CONTROLS": 2,
+            "LIMIT_TRAIN_BATCHES": 2,
+            "LIMIT_VAL_BATCHES": 1,
+            "REVISION": rev,
+        },
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    tables = "".join("".join(out.get("data", {}).get("text/html", [])) for out in outputs)
+    assert "edited natively at the answer position" in tables, "the native block edits did not run"
+    assert "Tuning two blocks of the frozen featurizer" in tables, "the tuning comparison did not run"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -855,19 +1122,26 @@ def test_notebook_discovery():
     roster = {
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
+        "circuit_tracer_examples/concept_direction_latent_dynamics.ipynb",
         "circuit_tracer_examples/attention_attribution_analysis.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
+        "bsf_blocks/bsf_blocks.ipynb",
         "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
+        "gradient_readouts/gradient_readouts.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
+        "neuron_communities/neuron_communities_replication.ipynb",
+        "neuron_finder/neuron_finder.ipynb",
         "quickstart/cpu_quickstart.ipynb",
         "runners/runner_flexibility_demo.ipynb",
+        "sasa_blocks/sasa_blocks_frames_charts.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
+        "tuning/role_kinds_tuning.ipynb",
     }
 
     missing = sorted(roster - published)

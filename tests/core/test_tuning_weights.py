@@ -25,8 +25,10 @@ from interpretune.tuning.weights import (  # noqa: E402
     bias_patch,
     check_weight_equivalence,
     resolve_weight_targets,
+    weight_edit_role_addresses,
     weight_edit_roles,
 )
+from interpretune.tuning.views import expand_declared_roles  # noqa: E402
 from interpretune.utils import MisconfigurationException  # noqa: E402
 
 D, H, LAYERS, VOCAB = 6, 10, 2, 11
@@ -225,6 +227,13 @@ def test_a_trainable_patch_is_an_adapter_and_a_permanent_one_is_written_into_the
     patch = _patch(tmp_path, model, form="sparse")
     handle = apply_weight_patch(model, patch, name="steer", role="adapter", view=_view(model))
     assert set(weight_edit_roles(model).values()) == {"adapter:steer"}
+    # declared by address (#875): the operands, and not the edit's index buffer, which stays `base`
+    by_address = weight_edit_role_addresses(model)
+    assert by_address == {"adapter:steer": "module:layers.1.mlp.down.parametrizations.weight.0 & leaf:values"}
+    assert expand_declared_roles(model, by_address) == weight_edit_roles(model)
+    assert MappedView(model, from_document(MAP), roles=by_address).roles() == _view(model).roles() | {
+        "layers.1.mlp.down.parametrizations.weight.0.values": "adapter:steer"
+    }
     assert handle.edit.values.requires_grad
     # a view built after the edit schedules its operand by role and still places the base tensor
     view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
@@ -521,6 +530,104 @@ def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
         attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
     with pytest.raises(ValueError, match="names a gradient"):
         attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))
+
+
+FOUR = [1, 2, 5, 7]  # four of the down projection's H columns of D entries: the rank crossover is 4 * 6 / 10 = 2.4
+
+
+def test_a_low_rank_unit_adapter_starts_as_the_identity_and_moves_only_its_units(model):
+    """#868: with ``rank``, the selected slices' delta is (alpha / r) B A, B zero at first, both factors
+    adapters."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base, out = down.weight.detach().clone(), model(IDS).detach()
+    (handle,) = attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2)
+    edit = handle.edit
+    assert edit.lora_B.shape == (4, 2) and edit.lora_A.shape == (2, D) and edit.scale == 1.0  # alpha defaults to r
+    torch.testing.assert_close(model(IDS), out)
+    assert set(weight_edit_roles(model).values()) == {"adapter:hot"}
+    assert {n.rsplit(".", 1)[-1] for n in weight_edit_roles(model)} == {"lora_A", "lora_B"}
+    model(IDS).sum().backward()
+    assert edit.lora_B.grad is not None and edit.lora_B.grad.abs().sum() > 0  # B learns first, as in LoRA
+    with torch.no_grad():
+        edit.lora_B.copy_(torch.arange(8.0).reshape(4, 2) / 8)
+    delta = down.weight - base
+    torch.testing.assert_close(delta[:, FOUR], (edit.lora_B @ edit.lora_A).T)  # unit axis 1: units are columns
+    assert delta[:, [0, 3, 4, 6, 8, 9]].abs().sum() == 0
+    handle.remove()
+    assert torch.equal(down.weight, base)
+
+
+def test_alpha_scales_the_low_rank_delta(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base = down.weight.detach().clone()
+    (handle,) = attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2, alpha=6.0)
+    assert handle.edit.scale == 3.0
+    with torch.no_grad():
+        handle.edit.lora_B.fill_(1.0)
+    torch.testing.assert_close((down.weight - base)[:, FOUR], 3.0 * (handle.edit.lora_B @ handle.edit.lora_A).T)
+
+
+def test_a_rank_that_saves_nothing_is_refused_naming_the_bound(model):
+    """Full slices hold |S| k entries and the factors r (|S| + k): at r >= |S| k / (|S| + k) nothing is saved."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="rank 3 on .* saves nothing .* below 2.4"):
+        attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=3)
+    with pytest.raises(ValueError, match="saves nothing"):
+        attach_unit_adapter(model, DOWN, [2, 7], name="hot", view=_view(model), rank=2)  # bound 1.5
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"rank": 0}, "positive integer"),
+        ({"rank": 1.5}, "positive integer"),
+        ({"rank": True}, "positive integer"),
+        ({"rank": 1, "alpha": 0.0}, "positive number"),
+        ({"alpha": 2.0}, "give `rank` with it"),
+    ],
+)
+def test_an_unusable_rank_or_alpha_is_refused_by_name(model, kwargs, match):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match=match):
+        attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), **kwargs)
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")
+
+
+def test_a_low_rank_site_adapter_factors_the_matrices_and_keeps_a_bias_whole(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    out = model(IDS).detach()
+    handles = attach_unit_adapter(
+        model, "point:mlp.out.hook_in & layers:1", FOUR, name="hot", view=_view(model), rank=1
+    )
+    kinds = {h.target: type(h.edit).__name__ for h in handles}
+    assert kinds["layers.1.mlp.up.weight"] == kinds["layers.1.mlp.down.weight"] == "_UnitLowRank"
+    if model.layers[1].mlp.up.bias is not None:
+        assert kinds["layers.1.mlp.up.bias"] == "_UnitDelta"
+    torch.testing.assert_close(model(IDS), out)
+    for handle in handles:
+        handle.remove()
+
+
+def test_a_schedule_thaws_both_low_rank_factors_by_role(model):
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2)
+    view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
+    compiled = compile_schedule({0: {"params": ["role:adapter"]}}, view)
+    assert sorted(compiled.phases[0].physical) == [
+        "layers.1.mlp.down.parametrizations.weight.0.lora_A",
+        "layers.1.mlp.down.parametrizations.weight.0.lora_B",
+    ]
 
 
 SPAN = torch.tensor([[1.0, 0.5, -0.25, 0.0, 2.0, 1.0], [0.0, 1.0, 1.0, -1.0, 0.5, 0.0]])

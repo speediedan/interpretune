@@ -20,20 +20,33 @@ from interpretune.analysis.backends import (
     InterventionSupport,
     AttributionGraphSupport,
     FeatureTargetSupport,
+    HeadAttributionSupport,
     PositionScope,
+    TechniqueSupport,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
+
+
+def _require_single_prompt(batch_size: int) -> None:
+    if batch_size != 1:
+        raise ValueError(
+            f"circuit-tracer analysis attributes one prompt per call, but this batch carries {batch_size} prompts; "
+            "run it at batch size 1 so that no prompt is dropped"
+        )
 
 
 class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
 
     @property
-    def attribution_graph_support(self) -> AttributionGraphSupport:
-        """Graph construction resolves gemma's attention location through source tracing of the bound eager
-        function."""
-        return AttributionGraphSupport(requires_own_eager_attention=True)
+    def technique_support(self) -> dict[str, TechniqueSupport]:
+        """Attribution graphs, whose construction resolves gemma's attention location through source tracing of the
+        bound eager function, and head attribution."""
+        return {
+            "attribution_graph": AttributionGraphSupport(requires_own_eager_attention=True),
+            "head_attribution": HeadAttributionSupport(),
+        }
 
     @property
     def intervention_support(self) -> InterventionSupport:
@@ -71,14 +84,8 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        """Attribution graphs, head attribution and interventions on transcoder features."""
-        return frozenset(
-            {
-                Capability.ATTRIBUTION_GRAPH,
-                Capability.INTERVENTION,
-                Capability.HEAD_ATTRIBUTION,
-            }
-        )
+        """Interventions on transcoder features; its techniques are declared in :attr:`technique_support`."""
+        return frozenset({Capability.INTERVENTION})
 
     @property
     def requires(self) -> frozenset[Capability]:
@@ -185,18 +192,26 @@ class CircuitTracerAnalysisBackend:
         return token_ids
 
     def resolve_prompt(self, module: Any, analysis_batch: AnalysisBatch, batch: BatchEncoding | None) -> str:
-        """Recover the prompt from the analysis batch if present, else decode it back from the encoding."""
+        """Recover the batch's one prompt from the analysis batch, else decode it back from the encoding.
+
+        Circuit-tracer attributes one prompt per call, so a batch of several is refused rather than resolved to its
+        first row: the rest would be dropped, and every graph, feature set and intervention built on it would look
+        complete.
+        """
         prompts = getattr(analysis_batch, "prompts", None)
         if isinstance(prompts, str):
             return prompts
         if isinstance(prompts, list) and prompts:
+            _require_single_prompt(len(prompts))
             return str(prompts[0])
         if batch is None:
             raise ValueError("compute_attribution_graph requires batch input or prompts in analysis_batch")
         tokenizer = self.get_tokenizer(module)
         input_ids = get_batch_input(batch)
-        prompt_tokens = input_ids[0] if input_ids.dim() > 1 else input_ids
-        return str(tokenizer.decode(prompt_tokens.detach().cpu().tolist(), skip_special_tokens=True))
+        if input_ids.dim() > 1:
+            _require_single_prompt(input_ids.shape[0])
+            input_ids = input_ids[0]
+        return str(tokenizer.decode(input_ids.detach().cpu().tolist(), skip_special_tokens=True))
 
     def build_concept_attribution_targets(
         self,
@@ -747,10 +762,10 @@ class CircuitTracerAnalysisBackend:
         """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
 
         A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
-        same way as the edges together. The nnsight backend alone can do this, and circuit-tracer refuses others by
-        name, along with a layer no path into the target passes.
+        same way as the edges together. Circuit-tracer selects the backend's implementation and refuses unsupported
+        backends, along with a layer no path into the target passes.
         """
-        from circuit_tracer.attribution.head_loadings_nnsight import head_loadings
+        from circuit_tracer.attribution.head_loadings import head_loadings
 
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
@@ -799,9 +814,13 @@ class CircuitTracerAnalysisBackend:
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
         model = module.replacement_model
-        with attribution_frozen(model, module):
+        # A backend with permanent replacement hooks supplies a context that suspends them. Trace-scoped hooks
+        # are already inactive outside their trace, so the underlying causal LM needs no suspension there.
+        real_model = getattr(model, "real_model", None)
+        causal_lm_context = real_model() if real_model is not None else contextlib.nullcontext(model._module)
+        with attribution_frozen(model, module), causal_lm_context as causal_lm:
             report = head_conductance(
-                model._module,  # the raw causal LM: conductance hooks its modules directly and reads its logits
+                causal_lm,
                 model.ensure_tokenized(prompt_from),
                 model.ensure_tokenized(prompt_to),
                 torch.as_tensor(target_weights),

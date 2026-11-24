@@ -75,13 +75,13 @@ registered_cfg:
       sae_cfgs:
         - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:
-            release: gpt2-small-res-jb
-            sae_id: blocks.0.hook_resid_pre
+            release: gpt2-small-resid-post-v5-32k
+            sae_id: blocks.0.hook_resid_post
             device: cuda
         - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:
-            release: gpt2-small-res-jb
-            sae_id: blocks.1.hook_resid_pre
+            release: gpt2-small-resid-post-v5-32k
+            sae_id: blocks.1.hook_resid_post
             device: cuda
       # materialized example defaults (was example_itmodule_defaults)
       optimizer_init:

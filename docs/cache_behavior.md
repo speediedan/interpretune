@@ -1,7 +1,7 @@
 # Interpretune AnalysisStore caching
 
 This document describes the current AnalysisStore caching behavior (MVP)
-and the planned future behavior (see https://github.com/speediedan/interpretune/issues/183).
+and the planned future behavior (see https://github.com/interpretune/interpretune/issues/183).
 
 Current behavior (MVP)
 - Interpretune ships a toggle `enable_analysisstore_caching()` which is
@@ -71,11 +71,11 @@ Relevant hashing internals (HuggingFace `datasets` BuilderConfig)
   `create_config_id` (see the stack below):
 
 ```text
-create_config_id (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/builder.py:196)
-_create_builder_config (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/builder.py:573)
-__init__ (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/builder.py:343)
-__init__ (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/io/generator.py:29)
-from_generator (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/arrow_dataset.py:1178)
+create_config_id (<venv>/lib/python3.12/site-packages/datasets/builder.py:196)
+_create_builder_config (<venv>/lib/python3.12/site-packages/datasets/builder.py:573)
+__init__ (<venv>/lib/python3.12/site-packages/datasets/builder.py:343)
+__init__ (<venv>/lib/python3.12/site-packages/datasets/io/generator.py:29)
+from_generator (<venv>/lib/python3.12/site-packages/datasets/arrow_dataset.py:1178)
 save_reload_results_dataset (tests/orchestration.py:264)
 _op_serialization_fixt (tests/core/conftest.py:86)
 test_op_serialization (tests/core/test_analysis_ops_definitions.py:1178)

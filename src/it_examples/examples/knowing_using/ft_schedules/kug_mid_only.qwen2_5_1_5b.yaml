@@ -1,0 +1,7 @@
+# #931 Part 2, placement in place of a loss. One phase that trains only the LoRA adapters of the mid band, 0.25L to
+# 0.75L by a venngram address over depth fractions (blocks 7 to 20 of Qwen2.5-1.5B's 28, 4 to 11 of Llama-3.2-1B's 16),
+# on cross-entropy alone (run with `lrsd_lambda: 0.0`), for the core loop's whole `max_epochs`. Every other adapter
+# stays frozen at its initial value, so its block computes the base model's function.
+0:
+  params:
+  - role:adapter & layers:0.25d:0.75d

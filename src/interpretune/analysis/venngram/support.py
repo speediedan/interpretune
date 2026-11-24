@@ -32,11 +32,20 @@ backend already publishes, never restated by hand:
   alone has a recipe acting on a gradient refused here. Declaring both flows does not let one translation apply both:
   :func:`check_recipe` checks the ops for the one flow its caller applies, as the apply path does
   (:func:`~interpretune.analysis.venngram.apply.op_refusal`).
+- **readouts**: the reductions a gradient stage's readout may use, those
+  :mod:`~interpretune.analysis.venngram.readouts` executes, declared where the record declares ``grad``, since only a
+  consumer acting on gradients takes them of a readout.
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
 ``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
 feature tuples express, and a feature ``add`` and ``scale`` where the target's detail declares a clean capture to
-compute them from.
+compute them from. :func:`venngram_feature_subsets` derives, from the same record, the graph-subset treatments that
+path applies (venngram's ``circuits.subsets`` section): ``replace``, and ``add`` with a clean capture, on transcoder
+and CLT nodes with scalar values, by any anchor, through the transforms that act on each value alone, and no
+restriction. :func:`venngram_subsets` is the model-backend surface's graph-subset declaration, derived from
+:func:`venngram_support`'s record: ``replace`` and ``add`` at an attached latent model's sub-hook, and a restriction
+(the complement in a finite feature set), on SAE, transcoder and block-sparse nodes with scalar or vector values, where
+feature targets and explicit positions are declared.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -47,7 +56,18 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
-from interpretune.analysis.venngram.apply import APPLIED_OPS, FEATURE_TUPLE_OPS, feature_op_refusal, op_refusal
+from interpretune.analysis.venngram.apply import (
+    APPLIED_OPS,
+    FEATURE_TUPLE_OPS,
+    GRAPH_LATENT_FEATURIZERS,
+    GRAPH_TUPLE_FEATURIZERS,
+    GRAPH_TUPLE_OPS,
+    GRAPH_TUPLE_TRANSFORMS,
+    feature_op_refusal,
+    graph_layout_refusal,
+    op_refusal,
+)
+from interpretune.analysis.venngram.readouts import executed_readouts
 from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
 
@@ -127,6 +147,7 @@ def venngram_support(
         sites=None if capture is None else _sites(capture.capturable),
         bases=intervention.bases if intervention.bases is not None else bases,
         of=frozenset(intervention.of),
+        readouts=executed_readouts() if "grad" in intervention.of else frozenset(),
         name=name,
     )
 
@@ -172,6 +193,75 @@ def venngram_feature_support(
     )
 
 
+def venngram_feature_subsets(intervention: InterventionSupport) -> Any:
+    """Derive a ``venngram.support.SubsetSupport`` for the analysis-backend path: the treatments over graph subsets
+    that :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` applies.
+
+    Its ops are those of :func:`venngram_feature_support` a graph target admits, so a backend that does not honour
+    ``constant`` applies none, and ``add`` needs the clean capture. Every anchor kind is resolved, by venngram's
+    ``GraphSubset.plan``.
+
+    Args:
+        intervention: The provider's record, as :func:`venngram_feature_support` takes it.
+
+    Returns:
+        A ``venngram.support.SubsetSupport``. Typed ``Any`` so importing this module needs no venngram install.
+
+    Raises:
+        MisconfigurationException: If venngram is not installed.
+    """
+    return _feature_subsets(venngram_feature_support(intervention))
+
+
+def _feature_subsets(features: Any) -> Any:
+    """The graph-subset declaration of the analysis-backend path whose feature declaration is ``features``."""
+    graphs = importlib.import_module("venngram.graphs")
+    return importlib.import_module("venngram.support").SubsetSupport(
+        ops=frozenset(features.ops & GRAPH_TUPLE_OPS) if features.values else frozenset(),
+        anchors=frozenset(graphs.ANCHORS),
+        featurizers=GRAPH_TUPLE_FEATURIZERS,
+        values=frozenset({"scalar"}),
+        transforms=GRAPH_TUPLE_TRANSFORMS,
+        complement=False,
+    )
+
+
+def venngram_subsets(intervention: InterventionSupport, *, latent_models: bool = False) -> Any:
+    """Derive a ``venngram.support.SubsetSupport`` for the model-backend surface: the treatments over graph subsets
+    that :func:`~interpretune.analysis.venngram.apply.recipe_interventions` writes at an attached latent model's
+    sub-hook.
+
+    A graph node is a feature at one position, so the surface needs the ``features`` target (a latent model attached,
+    ``latent_models``) and the ``positions`` token scope; without either it applies no graph op.
+
+    Args:
+        intervention: The provider's intervention record, as :func:`venngram_support` takes it.
+        latent_models: Whether a latent model is attached, as :func:`venngram_support` takes it.
+
+    Returns:
+        A ``venngram.support.SubsetSupport``. Typed ``Any`` so importing this module needs no venngram install.
+
+    Raises:
+        MisconfigurationException: If venngram is not installed.
+    """
+    return _latent_subsets(venngram_support(intervention, latent_models=latent_models))
+
+
+def _latent_subsets(support: Any) -> Any:
+    """The graph-subset declaration of the model-backend surface whose declaration is ``support``."""
+    graphs = importlib.import_module("venngram.graphs")
+    places = "features" in support.targets and "positions" in support.tokens
+    return importlib.import_module("venngram.support").SubsetSupport(
+        ops=frozenset(support.ops & GRAPH_TUPLE_OPS) if places else frozenset(),
+        anchors=frozenset(graphs.ANCHORS),
+        featurizers=GRAPH_LATENT_FEATURIZERS,
+        values=frozenset({"scalar", "vector"}),
+        transforms=GRAPH_TUPLE_TRANSFORMS,
+        complement=bool(places and "replace" in support.ops),
+        sites=None if support.sites is None or callable(support.sites) else frozenset(support.sites),
+    )
+
+
 def support_mapping(support: Any) -> dict[str, Any]:
     """A derived ``venngram.ops.Support`` as its publishable ``support_record`` document.
 
@@ -201,15 +291,25 @@ def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False, f
     parameter no native translation expresses yet. With ``analysis_backend``, the refusals are those of
     :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` instead. ``flow`` is the flow the
     caller will apply (``value`` through ``fwd_w_intervention``, ``grad`` through ``bwd_w_intervention``), and an op on
-    the other flow is a refusal.
+    the other flow is a refusal. An op on a graph subset is checked against the derived graph-subset declaration
+    (:func:`venngram_feature_subsets` on the analysis backend, :func:`venngram_subsets` on the model backend), which
+    venngram's ``check_support`` leaves to it; on the model backend, also against the layout one latent model's columns
+    admit (:func:`~interpretune.analysis.venngram.apply.graph_layout_refusal`).
 
     Evidence is supplied when the recipe is applied, so whether it has what a value reads is decided then.
     """
     vg_ops = _require_venngram()
     refusals = list(vg_ops.check_support(recipe, support))
+    refusals += (_feature_subsets(support) if analysis_backend else _latent_subsets(support)).check_recipe(recipe)
     for i, stage in enumerate(recipe.stages):
         for j, op in enumerate(stage.ops):
-            refusal = feature_op_refusal(recipe, stage, op) if analysis_backend else op_refusal(recipe, stage, op, flow)
+            if getattr(op, "graph", None) is not None:
+                # the declaration above checks what it can express; the model backend adds its columns' layout
+                refusal = None if analysis_backend else graph_layout_refusal(recipe, stage, op, flow)
+            elif analysis_backend:
+                refusal = feature_op_refusal(recipe, stage, op)
+            else:
+                refusal = op_refusal(recipe, stage, op, flow)
             if refusal is not None:
                 refusals.append(f"stage {i} ({stage.site}) op {j} (`{op.op}`): {refusal}")
     return refusals

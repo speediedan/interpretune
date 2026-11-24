@@ -56,7 +56,7 @@ def test_a_unit_outside_the_supplied_width_and_a_missing_width_refuse_by_name():
         recipe_interventions(_recipe(), site_widths={})
 
 
-def test_an_unapplied_op_refuses_rather_than_narrowing():
+def test_a_unit_replace_changes_only_the_named_units_and_positions():
     doc = {
         **RECIPE,
         "stages": [
@@ -66,8 +66,14 @@ def test_an_unapplied_op_refuses_rather_than_narrowing():
             }
         ],
     }
-    with pytest.raises(MisconfigurationException, match="a unit-targeted `replace` has no native translation"):
-        recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    value = torch.arange(2 * 3 * 8192, dtype=torch.float32).reshape(2, 3, 8192)
+    expected = value.clone()
+    expected[:, 1, 7] = 2.0
+    actual = apply_intervention(value.clone(), spec, last_pos=1)
+    assert torch.equal(actual, expected)
+    assert not torch.equal(actual, value)
 
 
 BASIS = "jlens_folded"
@@ -316,3 +322,13 @@ def test_a_composed_gradient_target_is_refused_like_a_single_one():
     }
     with pytest.raises(MisconfigurationException, match="addresses the gradient"):
         recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 16})
+
+
+def test_position_scoped_recipe_repeats_its_operand_without_touching_other_positions():
+    doc = {**RECIPE, "stages": [{**RECIPE["stages"][0], "tokens": {"positions": [2, 0]}}]}
+    payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    assert spec.positions == (2, 0)
+    result = apply_intervention(torch.zeros(1, 4, 8192), spec, last_pos=3)
+    assert result[0, 2, 7] == result[0, 0, 7] == 0.5
+    assert torch.count_nonzero(result) == 2

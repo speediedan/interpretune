@@ -133,7 +133,7 @@ Only three install flows exist:
 | Bare pip | `pip install .` | **not supported** |
 
 `pip install .` fails in a way that looks like an application bug: pip ignores `[tool.uv] override-dependencies` (the
-`transformer-lens==4.0.0` and `nnsight==0.8.2` pins), so it resolves a TransformerLens 2.x, and every downstream
+`transformer-lens==4.0.0` and `nnsight==0.8.3` pins), so it resolves a TransformerLens 2.x, and every downstream
 failure (a `sae_dashboard` import error, `BertForPreTraining`) is a symptom of that resolution, not a defect to file.
 
 Rules that must not be missed:
@@ -153,11 +153,11 @@ Rules that must not be missed:
   CPU-only adds `--torch-backend=cpu`, and the whole torch ecosystem must share that backend (a torchvision from the
   default index is CUDA-linked and fails later with `operator torchvision::nms does not exist`).
 - **From-source directives** (`--from-source="pkg:path:extras:ENVVAR=..."`) are for a repository you are actually
-  developing: they take the package out of the pins' governance. `sae-lens` is git-pinned temporarily to
-  decoderesearch/SAELens#739; the old fork pin `speediedan/SAELens@86f90b3d` must never come back (20 duplicate YAML
-  keys bind 10 transcoder entries to the wrong weights). `UV_EXCLUDE` (the excludes file) is required on the
-  sae_dashboard and circuit-tracer directives; install nnsight first; after every rebuild validate with
-  `python requirements/utils/collect_env_details.py`.
+  developing: they take the package out of the pins' governance. `sae-lens` installs from its released floor
+  (`>=6.55.0`, the first release that imports under transformer-lens 4.0); the old fork pin
+  `speediedan/SAELens@86f90b3d` must never come back (20 duplicate YAML keys bind 10 transcoder entries to the wrong
+  weights). `UV_EXCLUDE` (the excludes file) is required on the sae_dashboard and circuit-tracer directives; install
+  nnsight first; after every rebuild validate with `python requirements/utils/collect_env_details.py`.
 - **Pins:** `pyproject.toml` `[tool.uv] override-dependencies` (keep in sync with `requirements/ci/overrides.txt` and
   `excludes.txt`) and `[dependency-groups] git-deps` (excluded from the universal lock, so every bump needs hand
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
@@ -610,7 +610,7 @@ instructions file rather than in this published one.
 
 ## Important Caveats
 
-- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
+- **Git dependencies** (circuit_tracer, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
 - **Type checking:** Enabled for every module under `src/`, the relocated research and notebook trees included; there is no exclusion list, so a module that cannot be typed is fixed or removed rather than exempted. All `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports

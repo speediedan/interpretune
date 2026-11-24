@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
+import sys
 from typing import Sequence
 from unittest.mock import patch
 
@@ -74,6 +75,7 @@ class TestNNsightConfig:
         assert config.default_padding_side == "left"
         assert config.remote is False
         assert config.api_key is None
+        assert config.task == "text-generation"
 
     def test_nnsight_config_dtype_resolution(self):
         """Verify torch dtype string resolution works correctly."""
@@ -126,6 +128,35 @@ class TestNNsightConfig:
         assert kwargs["trust_remote_code"] is True
         assert kwargs["attn_implementation"] == "sdpa"
         assert "tokenizer_kwargs" in kwargs
+
+    def test_init_builds_the_model_for_the_configured_task(self):
+        """The model is built for ``nnsight_cfg.task``, so a checkpoint registered only under a multimodal task
+        (Inkling 2 Mini's ``Inkling2LoopConfig`` is ``image-text-to-text``) loads rather than failing in
+        ``AutoModelForCausalLM``."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.nnsight.adapter import BaseNNsightModule
+
+        built: dict = {}
+
+        class _Recorder:
+            tokenizer = SimpleNamespace()
+
+            def __init__(self, name, **kwargs):
+                built.update(name=name, **kwargs)
+
+        cfg = NNsightConfig(model_name="org/multimodal", task="image-text-to-text", dispatch=False)
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(
+                nnsight_cfg=cfg, model_name_or_path=None, os_env_model_auth_key=None, tokenizer=object()
+            ),
+            _apply_generation_config=lambda: None,
+            _model_backend=object(),
+        )
+        with patch("nnsight.TransformersModel", _Recorder):
+            BaseNNsightModule._init_nnsight_model(module)  # type: ignore[arg-type]
+        assert built["name"] == "org/multimodal"
+        assert built["task"] == "image-text-to-text"
 
     def test_get_nnsight_kwargs_remote(self):
         """Verify get_nnsight_kwargs includes remote settings when enabled."""
@@ -297,6 +328,57 @@ class TestNNsightSession:
             assert "input_ids" in tokens
 
 
+class TestNNsightPlainModelBackend:
+    """A plain (core, nnsight) composition is its own model backend: the ops that run the model reach it without a
+    latent adapter composed."""
+
+    def test_the_composition_exposes_the_nnsight_backend(self, get_it_session__ns_gpt2__setup):
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
+        from interpretune.analysis.optools import require_model_backend
+
+        assert isinstance(require_model_backend(get_it_session__ns_gpt2__setup.it_session.module), NNsightModelBackend)
+
+    def test_an_unmapped_architecture_gets_no_backend_unless_strict(self):
+        from transformers import GPT2Config, GPT2LMHeadModel
+
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
+
+        model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_embd=8, n_head=2, vocab_size=16, n_positions=8))
+        model.config.architectures = ["NotAMappedArchitecture"]
+        assert NNsightModelBackend.for_model(model, strict=False) is None
+        with pytest.raises(ValueError, match="Unsupported model architecture"):
+            NNsightModelBackend.for_model(model)
+
+    def test_an_interchange_of_every_write_reproduces_the_other_prompt(self, get_it_session__ns_gpt2__setup):
+        """GPT-2's attention returns a tuple, so this also checks that a write to a tuple output replaces its first
+        element rather than failing on the immutable tuple."""
+        from interpretune.analysis.backends.interventions import InterventionSpec
+        from interpretune.analysis.optools import require_model_backend
+        from interpretune.analysis.venngram import resolve_sites
+
+        module = get_it_session__ns_gpt2__setup.it_session.module
+        backend = require_model_backend(module)
+        tokenizer = module.model.tokenizer
+        first, second = (
+            dict(tokenizer(p, return_tensors="pt")) for p in ("The capital of France is", "The capital of Spain is")
+        )
+        assert first["input_ids"].shape == second["input_ids"].shape
+        sites = list(
+            resolve_sites("point:hook_attn_out | point:hook_mlp_out", n_layers=module.model.config.n_layer).sites
+        )
+        second_logits, cache = backend.fwd_w_cache(model=module.model, batch=second, names_filter=sites)
+        specs = {
+            site: InterventionSpec(intervention_tensor=torch.as_tensor(cache[site])[0, -1], op="replace")
+            for site in sites
+        }
+        pre, post = backend.fwd_w_intervention(model=module.model, batch=first, interventions=specs)
+        target = torch.as_tensor(second_logits).reshape(-1, torch.as_tensor(second_logits).shape[-1])[-1]
+        post = torch.as_tensor(post).reshape(-1, target.shape[-1])[-1]
+        pre = torch.as_tensor(pre).reshape(-1, target.shape[-1])[-1]
+        assert not torch.allclose(pre, target, atol=1e-3), "the two prompts must differ at the last position"
+        torch.testing.assert_close(post, target, atol=1e-3, rtol=1e-4)
+
+
 class TestNNsightMixinAttributes:
     """Tests for NNsightAttributeMixin property access patterns."""
 
@@ -374,15 +456,30 @@ class TestNNsightLightningIntegration:
 class TestNNsightTracing:
     """Basic tests for NNsight tracing functionality."""
 
-    # standalone for the trace/coverage clash, not for a device (#731)
-    @RunIf(standalone_cpu=True)
-    def test_nnsight_trace_context(self, get_it_session__ns_gpt2__setup):
-        """Verify NNsight trace context manager works.
+    def test_a_trace_restores_the_trace_function_it_displaced(self, get_it_session__ns_gpt2__setup):
+        """Nnsight installs a trace function to skip a block's body, and hands back the one it displaced.
 
-        Note: Marked standalone because NNsight's trace() uses sys.settrace() which
-        interferes with coverage.py's trace function, causing coverage data loss for
-        all tests that run after this one in the same process.
+        Coverage's settrace core and debuggers live in that function, so a trace that cleared it (nnsight before 0.8)
+        lost coverage for the rest of the process.
         """
+        model = get_it_session__ns_gpt2__setup.it_session.module.model
+        previous = sys.gettrace()
+
+        def displaced(frame, event, arg):
+            return None
+
+        sys.settrace(displaced)
+        try:
+            with model.trace("Hello, world!"):
+                logits = nnsight.save(model.lm_head.output)
+            restored = sys.gettrace()
+        finally:
+            sys.settrace(previous)
+        assert logits.ndim == 3
+        assert restored is displaced
+
+    def test_nnsight_trace_context(self, get_it_session__ns_gpt2__setup):
+        """Verify NNsight trace context manager works."""
         fixture = get_it_session__ns_gpt2__setup
         module = fixture.it_session.module
 
@@ -414,6 +511,44 @@ class TestNNsightTracing:
             except Exception as e:
                 # Some NNsight configurations may not support direct forward
                 pytest.skip(f"Direct forward not supported in this config: {e}")
+
+
+class TestNNsightRemoteSimulation:
+    """The remote path without the service: ``remote="local"`` serializes a trace exactly as a request to NDIF would,
+    deserializes it with non-installed modules hidden (as on the server), and runs it here.
+
+    A composition's model that fails this would fail on NDIF too, and this needs neither an API key nor the network.
+    """
+
+    PROMPT = "The capital of France is"
+
+    def test_remote_local_trace_matches_a_local_trace(self, get_it_session__ns_gpt2__setup):
+        model = get_it_session__ns_gpt2__setup.it_session.module.model
+        from nnsight.intervention.backends.local import LocalSimulationBackend
+
+        with model.trace(self.PROMPT):
+            local_logits = nnsight.save(model.lm_head.output)
+        simulate = LocalSimulationBackend.__call__
+        with patch.object(LocalSimulationBackend, "__call__", autospec=True, side_effect=simulate) as simulated:
+            with model.trace(self.PROMPT, remote="local"):
+                simulated_logits = nnsight.save(model.lm_head.output)
+        # a trace that ignored `remote` would match the local one trivially
+        assert simulated.call_count == 1
+        torch.testing.assert_close(simulated_logits, local_logits)
+
+    def test_remote_local_intervention_matches_a_local_intervention(self, get_it_session__ns_gpt2__setup):
+        model = get_it_session__ns_gpt2__setup.it_session.module.model
+        with model.trace(self.PROMPT):
+            clean_logits = nnsight.save(model.lm_head.output)
+        with model.trace(self.PROMPT):
+            model.transformer.h[0].mlp.output[:] = 0
+            local_logits = nnsight.save(model.lm_head.output)
+        with model.trace(self.PROMPT, remote="local"):
+            model.transformer.h[0].mlp.output[:] = 0
+            simulated_logits = nnsight.save(model.lm_head.output)
+        # the ablation must have reached the forward, or both runs would match for no reason
+        assert not torch.allclose(local_logits, clean_logits)
+        torch.testing.assert_close(simulated_logits, local_logits)
 
 
 # =============================================================================

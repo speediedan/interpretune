@@ -8,6 +8,16 @@ src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_noteb
   torch: 2.15.0+rocm10.0
   seconds: 26.68
   date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook:
+  outcome: passed
+  need_gb: 5.106
+  allocator_peak_gb: 0.0
+  device_peak_gb: 5.106
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.15.0+cu132
+  seconds: 154.1
+  date: '2026-11-19'
 src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook_local[ct_analysis_backend_nnsight_local]:
   outcome: passed
   need_gb: 10.168
@@ -48,6 +58,16 @@ src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook_default_
   torch: 2.15.0+cu132
   seconds: 68.51
   date: '2026-11-12'
+src/it_examples/tests/test_notebooks.py::test_neuron_communities_notebook:
+  outcome: passed
+  need_gb: 17.7
+  allocator_peak_gb: 0.0
+  device_peak_gb: 17.7
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.15.0+cu132
+  seconds: 116.05
+  date: '2026-11-19'
 src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks[sae_lens_nnsight]:
   outcome: passed
   need_gb: 6.389
@@ -68,6 +88,16 @@ src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks[sae_lens_tl]:
   torch: 2.15.0+rocm10.0
   seconds: 20.62
   date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_sasa_blocks_notebook:
+  outcome: passed
+  need_gb: 16.784
+  allocator_peak_gb: 0.0
+  device_peak_gb: 16.784
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.15.0+cu132
+  seconds: 99.24
+  date: '2026-11-19'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_ct_ns]:
   outcome: passed
   need_gb: 5.557

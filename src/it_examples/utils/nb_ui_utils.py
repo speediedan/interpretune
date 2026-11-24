@@ -8,13 +8,19 @@ notebooks keep their imports until they move to the examples repository. Adapted
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
 from typing import Any, Mapping, NamedTuple, Sequence
-from urllib.parse import urlsplit
 
-import torch
 from IPython.display import HTML, display
 from interpretune.harness.notebook_ui import (  # noqa: F401 - promoted; re-exported for the notebooks until they move
+    NEGATIVE_COLOUR,
+    POSITIVE_COLOUR,
+    SIGN_LEGEND,
+    NotebookLink,
+    Signed,
+    build_notebook_table_html,
+    display_notebook_table,
+    display_plotly_figure,
+    display_topk_token_predictions,
     display_target_gap,
     resolve_feature_explanations,
     display_top_features_comparison,
@@ -30,8 +36,7 @@ from interpretune.harness.notebook_ui import (  # noqa: F401 - promoted; re-expo
 )
 
 # what the single-tutorial displays below build on
-from interpretune.harness.display import format_score
-from interpretune.harness.notebook_ui import _ensure_1d_logits, _plotly_figure_html, format_prob
+from interpretune.harness.notebook_ui import _plotly_figure_html
 
 
 # ---------------------------------------------------------------------------
@@ -39,87 +44,57 @@ from interpretune.harness.notebook_ui import _ensure_1d_logits, _plotly_figure_h
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class NotebookLink:
-    """A labelled HTTP(S) link in a notebook table; both label and URL are escaped on rendering."""
-
-    label: str
-    url: str
+def _token_text(token: str) -> str:
+    """A tokenizer piece as a reader sees it: the SentencePiece space marker as a space, a newline as a return sign."""
+    return token.replace("\u2581", " ").replace("\n", "\u23ce")
 
 
-def build_notebook_table_html(
-    rows: Sequence[Sequence[Any]],
-    columns: Sequence[str],
+def build_token_positions_html(
+    tokens: Sequence[str],
+    marks: Mapping[int, tuple[str, str]],
     *,
     title: str,
     caption: str = "",
 ) -> str:
-    """Build a scrollable, accessible report table from already formatted cells.
+    """One prompt as a strip of token chips, the marked positions coloured and labelled beneath.
 
-    Callers own numerical precision and units, so the same helper can show probabilities, logits, checks or
-    configuration. Ordinary cells are escaped text, never HTML; use :class:`NotebookLink` for a feature reference.
-    A caption can state the denominator or limitation alongside the measurement. No notebook kernel is required.
+    ``marks`` maps a position to ``(label, colour)``; positions sharing a label (a word's span) share its colour, and
+    the legend lists each label once. Every chip carries its position on hover. Token text is escaped; nothing is HTML.
     """
-
-    def cell(value: Any) -> str:
-        if isinstance(value, NotebookLink):
-            parsed = urlsplit(value.url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError("notebook table links require an absolute HTTP(S) URL")
-            return f'<a href="{html.escape(value.url, quote=True)}">{html.escape(value.label)}</a>'
-        return html.escape(str(value))
-
-    if not columns:
-        raise ValueError("a notebook table needs at least one column")
-    if any(len(row) != len(columns) for row in rows):
-        raise ValueError("every notebook table row must match the column count")
-    header = "".join(f'<th scope="col">{html.escape(c)}</th>' for c in columns)
-    body = "".join("<tr>" + "".join(f"<td>{cell(v)}</td>" for v in row) + "</tr>" for row in rows)
+    if bad := sorted(pos for pos in marks if not 0 <= pos < len(tokens)):
+        raise ValueError(f"marked positions {bad} are outside the prompt's {len(tokens)} tokens")
+    chips = []
+    for pos, token in enumerate(tokens):
+        label, colour = marks.get(pos, ("", ""))
+        style = f"background:{html.escape(colour, quote=True)};color:white;font-weight:600" if label else ""
+        under = f'<span class="lab">{html.escape(label)}</span>' if label else ""
+        chips.append(
+            f'<span class="tok" title="position {pos}{": " + html.escape(label) if label else ""}">'
+            f'<span class="txt" style="{style}">{html.escape(_token_text(token)) or "&nbsp;"}</span>{under}</span>'
+        )
+    legend = dict.fromkeys(marks.values())
+    swatches = "".join(
+        f'<span class="sw"><span style="background:{html.escape(colour, quote=True)}"></span>'
+        f"{html.escape(label)}</span>"
+        for label, colour in legend
+    )
     return f"""<style>
-    .it-report {{font-family:system-ui,sans-serif; font-size:14px; margin:12px 0; overflow-x:auto;}}
-    .it-report table {{border-collapse:collapse; width:max-content; min-width:55%; max-width:none;}}
-    .it-report caption {{text-align:left; caption-side:top; padding:8px 0; color:inherit;}}
-    .it-report th {{background:#2471a3; color:white; text-align:left;}}
-    .it-report th,.it-report td {{padding:7px 10px; border:1px solid #aaa6; vertical-align:top;}}
-    .it-report tr:nth-child(even) {{background:#78b4f018;}}
-    .it-report td {{font-variant-numeric:tabular-nums; max-width:36em; white-space:pre-wrap;}}
-    </style><div class="it-report"><table>
-    <caption><strong>{html.escape(title)}</strong><br>{html.escape(caption)}</caption>
-    <thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"""
+    .it-tokens {{font-family:system-ui,sans-serif; font-size:13px; margin:12px 0;}}
+    .it-tokens .tok {{display:inline-flex; flex-direction:column; align-items:center; margin:1px; vertical-align:top;}}
+    .it-tokens .txt {{font-family:monospace; padding:2px 4px; border-radius:3px; background:#78b4f018;
+    white-space:pre;}}
+    .it-tokens .lab {{font-size:10px; margin-top:1px;}}
+    .it-tokens .sw {{margin-right:14px; white-space:nowrap; font-size:12px;}}
+    .it-tokens .sw span {{display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle;}}
+    </style><div class="it-tokens"><div><strong>{html.escape(title)}</strong></div>
+    <div>{html.escape(caption)}</div><div style="line-height:2.2">{"".join(chips)}</div><div>{swatches}</div></div>"""
 
 
-def display_notebook_table(
-    rows: Sequence[Sequence[Any]], columns: Sequence[str], *, title: str, caption: str = ""
+def display_token_positions(
+    tokens: Sequence[str], marks: Mapping[int, tuple[str, str]], *, title: str, caption: str = ""
 ) -> None:
-    """Display :func:`build_notebook_table_html` in a notebook or its rendered documentation."""
-    display(HTML(build_notebook_table_html(rows, columns, title=title, caption=caption)))
-
-
-def get_topk(
-    logits: torch.Tensor,
-    tokenizer,
-    k: int = 5,
-) -> list[tuple[str, float]]:
-    """Return the top-*k* ``(token_str, probability)`` pairs.
-
-    Accepts logits of any shape — 1-D ``(vocab,)``, 2-D ``(seq, vocab)``, or 3-D ``(batch, seq, vocab)`` — and always
-    resolves to the final position.
-    """
-
-    def _token_to_display(token_id: int) -> str:
-        if hasattr(tokenizer, "convert_ids_to_tokens"):
-            token = tokenizer.convert_ids_to_tokens(int(token_id))
-            if isinstance(token, list):
-                if len(token) == 1:
-                    return str(token[0])
-                return str(token[-1])
-            if token is not None:
-                return str(token)
-        return tokenizer.decode([int(token_id)], skip_special_tokens=False)
-
-    probs = torch.softmax(_ensure_1d_logits(logits), dim=-1)
-    topk = torch.topk(probs, k)
-    return [(_token_to_display(int(topk.indices[i])), topk.values[i].item()) for i in range(k)]
+    """Display :func:`build_token_positions_html` in a notebook or its rendered documentation."""
+    display(HTML(build_token_positions_html(tokens, marks, title=title, caption=caption)))
 
 
 # ---------------------------------------------------------------------------
@@ -276,221 +251,6 @@ def display_jlens_direction_validation(
 # ---------------------------------------------------------------------------
 
 
-def display_topk_token_predictions(
-    sentence: str,
-    original_logits: torch.Tensor,
-    new_logits: torch.Tensor,
-    tokenizer,
-    k: int = 5,
-    key_tokens: list[tuple[str, int]] | None = None,
-) -> None:
-    """Display top-*k* token predictions before and after an intervention.
-
-    Renders side-by-side probability bars, and optionally a *Key Tokens*
-    table tracking specific tokens of interest across both distributions.
-
-    Accepts logits of any shape (1-D through 3-D).
-
-    Args:
-        sentence: Input prompt string.
-        original_logits: Logits before the intervention.
-        new_logits: Logits after the intervention.
-        tokenizer: Tokenizer for decoding token IDs.
-        k: Number of top tokens to show per section.
-        key_tokens: Optional list of ``(token_label, token_id)`` pairs for the
-            Key Tokens comparison.
-    """
-    original_tokens = get_topk(original_logits, tokenizer, k)
-    new_tokens = get_topk(new_logits, tokenizer, k)
-
-    max_prob = max(
-        max(prob for _, prob in original_tokens),
-        max(prob for _, prob in new_tokens),
-    )
-
-    markup = f"""
-    <style>
-    .token-viz {{
-        font-family: system-ui, -apple-system,
-            BlinkMacSystemFont, 'Segoe UI', Roboto,
-            Oxygen, Ubuntu, Cantarell, sans-serif;
-        margin-bottom: 10px;
-        max-width: 700px;
-    }}
-    .token-viz .header {{
-        font-weight: bold;
-        font-size: 14px;
-        margin-bottom: 3px;
-        padding: 4px 6px;
-        border-radius: 3px;
-        color: white;
-        display: inline-block;
-    }}
-    .token-viz .sentence {{
-        background-color: rgba(200, 200, 200, 0.2);
-        padding: 4px 6px;
-        border-radius: 3px;
-        border: 1px solid rgba(100, 100, 100, 0.5);
-        font-family: monospace;
-        margin-bottom: 8px;
-        font-weight: 500;
-        font-size: 14px;
-    }}
-    .token-viz table {{
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 8px;
-        font-size: 13px;
-        table-layout: fixed;
-    }}
-    .token-viz th {{
-        text-align: left;
-        padding: 4px 6px;
-        font-weight: bold;
-        border: 1px solid rgba(150, 150, 150, 0.5);
-        background-color: rgba(200, 200, 200, 0.3);
-    }}
-    .token-viz td {{
-        padding: 3px 6px;
-        border: 1px solid rgba(150, 150, 150, 0.5);
-        font-weight: 500;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }}
-    .token-viz .token-col {{ width: 20%; }}
-    .token-viz .prob-col {{ width: 15%; }}
-    .token-viz .dist-col {{ width: 65%; }}
-    .token-viz .monospace {{ font-family: monospace; }}
-    .token-viz .bar-container {{ display: flex; align-items: center; }}
-    .token-viz .bar {{ height: 12px; min-width: 2px; }}
-    .token-viz .bar-text {{ margin-left: 6px; font-weight: 500; font-size: 12px; }}
-    .token-viz .even-row {{ background-color: rgba(240, 240, 240, 0.1); }}
-    .token-viz .odd-row {{ background-color: rgba(255, 255, 255, 0.1); }}
-    </style>
-
-    <div class="token-viz">
-        <div class="header" style="background-color: #555555;">Input Sentence:</div>
-        <div class="sentence">{html.escape(sentence)}</div>
-
-        <div>
-            <div class="header" style="background-color: #2471A3;">Original Top {k} Tokens</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th class="token-col">Token</th>
-                        <th class="prob-col" style="text-align: right;">Probability</th>
-                        <th class="dist-col">Distribution</th>
-                    </tr>
-                </thead>
-                <tbody>
-    """
-
-    for i, (token, prob) in enumerate(original_tokens):
-        bar_width = int(prob / max_prob * 100)
-        row_class = "even-row" if i % 2 == 0 else "odd-row"
-        markup += (
-            f'<tr class="{row_class}">'
-            f'<td class="monospace token-col" title="{html.escape(token)}">{html.escape(token)}</td>'
-            f'<td class="prob-col" style="text-align: right;">{format_prob(prob, precision=3)}</td>'
-            f'<td class="dist-col"><div class="bar-container">'
-            f'<div class="bar" style="background-color: #2471A3; width: {bar_width}%;"></div>'
-            f'<span class="bar-text">{prob * 100:.1f}%</span>'
-            f"</div></td></tr>\n"
-        )
-
-    markup += f"""
-                </tbody>
-            </table>
-
-            <div class="header" style="background-color: #27AE60;">New Top {k} Tokens</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th class="token-col">Token</th>
-                        <th class="prob-col" style="text-align: right;">Probability</th>
-                        <th class="dist-col">Distribution</th>
-                    </tr>
-                </thead>
-                <tbody>
-    """
-
-    for i, (token, prob) in enumerate(new_tokens):
-        bar_width = int(prob / max_prob * 100)
-        row_class = "even-row" if i % 2 == 0 else "odd-row"
-        markup += (
-            f'<tr class="{row_class}">'
-            f'<td class="monospace token-col" title="{html.escape(token)}">{html.escape(token)}</td>'
-            f'<td class="prob-col" style="text-align: right;">{format_prob(prob, precision=3)}</td>'
-            f'<td class="dist-col"><div class="bar-container">'
-            f'<div class="bar" style="background-color: #27AE60; width: {bar_width}%;"></div>'
-            f'<span class="bar-text">{prob * 100:.1f}%</span>'
-            f"</div></td></tr>\n"
-        )
-
-    markup += """
-                </tbody>
-            </table>
-        </div>
-    """
-
-    # Optional key-tokens section
-    if key_tokens:
-        orig_probs = torch.softmax(_ensure_1d_logits(original_logits), dim=-1)
-        new_probs = torch.softmax(_ensure_1d_logits(new_logits), dim=-1)
-
-        # Sort key tokens by influence: most positive change first, most negative last
-        key_token_data = []
-        for label, tid in key_tokens:
-            p_orig = orig_probs[tid].item()
-            p_new = new_probs[tid].item()
-            change = p_new - p_orig
-            key_token_data.append((label, tid, p_orig, p_new, change))
-        key_token_data.sort(key=lambda x: x[4], reverse=True)
-        max_change = max((abs(change) for *_prefix, change in key_token_data), default=0.0)
-
-        markup += """
-        <div>
-            <div class="header" style="background-color: #8E44AD;">Key Tokens</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th class="token-col">Token</th>
-                        <th class="prob-col" style="text-align: right;">Original</th>
-                        <th class="prob-col" style="text-align: right;">New</th>
-                        <th class="dist-col">Change</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-        for i, (label, tid, p_orig, p_new, change) in enumerate(key_token_data):
-            sign = "+" if change >= 0 else ""
-            bar_color = "#27AE60" if change >= 0 else "#C0392B"
-            bar_width = 0 if max_change <= 0 else int(abs(change) / max(max_change, 1e-9) * 100)
-            row_class = "even-row" if i % 2 == 0 else "odd-row"
-            markup += (
-                f'<tr class="{row_class}">'
-                f'<td class="monospace token-col" title="{html.escape(label)}">{html.escape(label)}</td>'
-                f'<td class="prob-col" style="text-align: right;">{format_prob(p_orig)}</td>'
-                f'<td class="prob-col" style="text-align: right;">{format_prob(p_new)}</td>'
-                f'<td class="dist-col"><div class="bar-container">'
-                f'<div class="bar" style="background-color: {bar_color}; width: {bar_width}%;"></div>'
-                f'<span class="bar-text">{sign}{format_score(abs(change))}</span>'
-                f"</div></td></tr>\n"
-            )
-        markup += """
-                </tbody>
-            </table>
-        </div>
-        """
-
-    markup += """
-    </div>
-    """
-
-    display(HTML(markup))
-
-
 # ---------------------------------------------------------------------------
 # Ablation chart
 # ---------------------------------------------------------------------------
@@ -504,16 +264,6 @@ def display_topk_token_predictions(
 # ---------------------------------------------------------------------------
 # Input/output decoupling displays (feature IO profiles)
 # ---------------------------------------------------------------------------
-
-
-def display_plotly_figure(fig: Any, id_prefix: str = "it-figure") -> None:
-    """Show a plotly figure so it renders on the docs site as well as in a live notebook.
-
-    ``fig.show()`` writes only the ``application/vnd.plotly.v1+json`` output, which Jupyter renders and the docs build
-    drops without a warning, so a figure shown that way is missing from every rendered page. This embeds the figure as
-    HTML instead (see ``_plotly_figure_html``), which both render.
-    """
-    display(HTML(_plotly_figure_html(fig, id_prefix)))
 
 
 def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequence[str]) -> str:

@@ -1,0 +1,17 @@
+# #931 Part 2, phases as experimental stages.
+# Phase 0 trains every block's LoRA adapters on cross-entropy alone, named by regex as PEFT names an interpretune
+# module's adapters (`model.` is the PEFT-wrapped HF model). `MetricThresholdTransition` (configured in the run) opens
+# phase 1 in the epoch memorization (`mem_em`) first reaches 0.9: phase 1 refreezes the adapters outside the mid band
+# and `PhaseLRSD` turns the LRSD term on. The band is a venngram address over depth fractions, 0.25L to 0.75L, so this
+# schedule serves any depth: blocks 7 to 20 of Qwen2.5-1.5B's 28 and 4 to 11 of Llama-3.2-1B's 16.
+0:
+  params:
+  - model\..*\.lora_[AB]\..*
+  phase_config:
+    lrsd_lambda: 0.0
+1:
+  params: []
+  refreeze:
+  - role:adapter - layers:0.25d:0.75d
+  phase_config:
+    lrsd_lambda: 1.0

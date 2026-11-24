@@ -26,6 +26,7 @@ from interpretune.tuning.views import (  # noqa: E402
     attach_tunable_view,
     adapter_roles,
     default_view,
+    expand_declared_roles,
     identity_view,
 )
 
@@ -123,7 +124,7 @@ class TestAttachment:
 
         remote = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=True)))
         local = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=False)))
-        assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
+        assert "run_remote_chunk" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
         assert "no local HF module" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
 
     def test_an_undispatched_nnsight_composition_is_refused(self, request):
@@ -242,7 +243,7 @@ class TestConfiguredView:
         overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        assert roles and roles == {**adapter_roles(module), **module.tunable_roles()}
+        assert roles and roles == {**adapter_roles(module), **expand_declared_roles(module, module.tunable_roles())}
         assert any(r.startswith("latent") for r in roles.values())
 
     def test_init_args_roles_are_used_as_given(self, request):
@@ -412,6 +413,42 @@ class TestBridgeViewStructure:
         assert (location.layer, location.component) == (3, "attn.o")
         assert structure.locate("not_a_module.weight").layer is None
 
+    def test_a_weight_takes_its_unit_axis_from_the_wrapped_models_map_row(self, bridge):
+        """``mlp.out``'s weight has the unit axis its map row's ``layout`` gives the wrapped model's own tensor, so
+        a unit op's weight form resolves on a TransformerLens composition (#1055).
+
+        An edited (parametrized) weight keeps it under the name the model holds it by; a module attached beside the
+        bridge, or a tensor of no wrapped module, has none.
+        """
+        import venngram
+        from torch.nn.utils import parametrize
+        from venngram.errors import Refusal
+
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView, _WrappedModelStructure
+
+        wrapped = bridge.original_model
+        with torch.device("meta"):
+            reference = venngram.view(type(wrapped)(wrapped.config)).structure()
+        expected = reference.unit_dim("transformer.h.5.mlp.c_proj.weight", 2)
+        assert isinstance(expected, int)
+        # the bridge rewires the wrapped model in place: its `c_proj` is the bridge component, holding the Conv1D
+        bridge_c_proj = wrapped.transformer.h[5].mlp.c_proj
+        (held,) = [n for n, p in bridge.named_parameters() if p is bridge_c_proj._original_component.weight]
+        c_proj = bridge.get_submodule(held.rpartition(".")[0])
+        assert TransformerBridgeView(bridge).structure().unit_dim(held, 2) == expected
+        parametrize.register_parametrization(c_proj, "weight", nn.Identity())
+        try:
+            assert held not in dict(bridge.named_parameters())
+            structure = TransformerBridgeView(bridge).structure()
+            assert structure.unit_dim(held, 2) == expected
+            assert (structure.locate(held).layer, structure.locate(held).component) == (5, "mlp.out")
+        finally:
+            parametrize.remove_parametrizations(c_proj, "weight")
+        assert isinstance(TransformerBridgeView(bridge).structure().unit_dim("not_a_module.weight", 2), Refusal)
+        attached = _WrappedModelStructure(reference, {}, {"latent_models.sae": "transformer.h.3"})
+        refusal = attached.unit_dim("latent_models.sae.enc.weight", 2)
+        assert isinstance(refusal, Refusal) and "attached beside the bridge" in str(refusal)
+
     def test_without_a_map_the_view_falls_back_to_the_physical_structure(self, bridge, monkeypatch):
         import venngram
         from venngram.physical import PhysicalStructure
@@ -478,14 +515,21 @@ class _Holder(nn.Module):
         self.model = model
 
 
-def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter():
+@pytest.mark.parametrize("architectures", [None, ["GPT2LMHeadModel"]], ids=["unrecorded", "recorded"])
+def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter(architectures):
     """GPT-2 with LoRA under a module of its own: the base map mounts through PEFT's wrappers, and each adapter tensor
-    takes its adapter's name from venngram's overlay (#900)."""
+    takes its adapter's name from venngram's overlay (#900).
+
+    A checkpoint's config records its ``architectures``, and a ``PeftModel`` reports its base model's config, so the
+    wrapper itself names the mapped architecture; the map still mounts at the model it wraps (#1142).
+    """
     peft = pytest.importorskip("peft")
     transformers = pytest.importorskip("transformers")
     from venngram.maps import MappedView
 
-    config = transformers.GPT2Config(vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32)
+    config = transformers.GPT2Config(
+        vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32, architectures=architectures
+    )
     model = peft.get_peft_model(transformers.GPT2LMHeadModel(config), peft.LoraConfig(r=2, target_modules=["c_attn"]))
     model.add_adapter("probe", peft.LoraConfig(r=2, target_modules=["c_attn"]))
     holder = _Holder(model)

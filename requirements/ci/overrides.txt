@@ -1,6 +1,6 @@
-transformer-lens==4.0.0  # overrides sae-dashboard's ^2.2.0 cap; sae-lens (>=2.16.1,<5) and circuit-tracer admit it as declared
+transformer-lens==4.0.0  # overrides sae-dashboard's ^2.2.0 cap; sae-lens (>=3.0.0,<5) and circuit-tracer admit it as declared
 jaxtyping>=0.3  # required by transformer-lens 4.0; overrides sae-dashboard's ^0.2.28 cap (annotation-only use)
-nnsight==0.8.2  # released pin; 0.8.1 is the oldest client the NDIF server accepts, and 0.8 moved Barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches (circuit-tracer git pin carries the matching compat commit)
+nnsight==0.8.3  # released pin, the release NDIF runs; 0.8.1 is the oldest client the NDIF server accepts, and 0.8 moved Barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches (circuit-tracer git pin carries the matching compat commit)
 # Exactly what torch 2.15.0 requires on Linux. The marker is load-bearing, not decoration: a uv
 # override replaces the target requirement *including its markers*, so an unmarked `triton==3.9.0`
 # overwrites torch's own `triton~=3.9.0; platform_system == "Linux" and python_version < "3.16"` with an
@@ -14,13 +14,14 @@ triton==3.9.0 ; platform_system == "Linux" and python_version < "3.16"
 # pull from installing a torchaudio built against a different torch (CUDA-ABI import failure); no
 # dependency in the current tree declares torchaudio, so there is nothing left to guard against.
 torch==2.15.0  # source of truth for the stable torch pin; torch-override.txt is generated from this line
-transformers>=5.5.0,<5.23  # the ceiling restates pyproject's (#1002): an override replaces every requirement on the package
+transformers>=5.5.0,<5.25  # the ceiling restates pyproject's (#1180): an override replaces every requirement on the package
 datasets>=5.0.0
-# An override replaces EVERY requirement on the package, transformers' own `<2.0` ceiling included, so the ceiling
-# is restated here: without it a fresh build_it_env.sh resolved huggingface-hub 2.0.0 and `import transformers`
-# refused it. The floor matches pyproject's `huggingface_hub[hf_xet] >= 1.9.0`, which this line also replaces.
-huggingface-hub>=1.9.0,<2.0
+# An override replaces EVERY requirement on the package, transformers' own ceiling included, so the ceiling is
+# restated here and must follow the locked transformers' (`<3.0` as of 5.22): when it lagged at `<2.0`, every
+# build that applied this file ran a huggingface-hub 1.x that hosted CI, on the lock's 2.x, never tested. The floor
+# matches pyproject's `huggingface_hub[hf_xet] >= 1.9.0`, which this line also replaces.
+huggingface-hub>=1.9.0,<3.0
 accelerate>=1.12.0  # for SAELens from source
-pyright==1.1.411  # match the CI lock; SAELens' exported reqs pin 1.1.365, whose TOML parser cannot read PEP 735 groups (unscoped type checks)
+pyright==1.1.414  # match the CI lock; SAELens' exported reqs pin 1.1.365, whose TOML parser cannot read PEP 735 groups (unscoped type checks)
 dictionary-learning>=0.1.0
 eai-sparsify>=1.3.0

@@ -219,9 +219,12 @@ def load_experiment_config(
         )
 
     merged_payload = deep_merge_mappings(merged_payload, payload)
-    merged_payload.setdefault("EXPERIMENT_NAME", resolved_path.stem)
-    merged_payload.setdefault("EXPERIMENT_CONFIG_NAME", resolved_path.stem)
-    merged_payload["EXPERIMENT_CONFIG_PATH"] = str(resolved_path)
+    # Named and located by the path the caller gave, not the one symlinks resolve to: a Hub snapshot's files link into
+    # the cache's content-addressed blobs, so the resolved name is a hash and its directory holds no sibling configs.
+    merged_payload.setdefault("EXPERIMENT_NAME", logical_path.stem)
+    # the config's own identity is the loaded file's, never inherited: a base's name would otherwise win
+    merged_payload["EXPERIMENT_CONFIG_NAME"] = payload.get("EXPERIMENT_CONFIG_NAME", logical_path.stem)
+    merged_payload["EXPERIMENT_CONFIG_PATH"] = str(logical_path)
     return merged_payload
 
 

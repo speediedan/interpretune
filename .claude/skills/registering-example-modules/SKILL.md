@@ -209,8 +209,8 @@ FIXTURE_CFGS = {
 Test that the registry lookup works:
 
 ```bash
-cd /home/speediedan/repos/interpretune && \
-source /mnt/cache/speediedan/.venvs/it_latest/bin/activate && \
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 python -c "
 from tests.module_registry import TEST_MODULE_REGISTRY
 from interpretune.protocol import Adapter
@@ -341,7 +341,7 @@ class CoreSLBridgeGPT2LogitDiffsLatent(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens, Adapter.transformer_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"  # ITLensBridgeConfig is bridge-native
+            model_name="gpt2-small"  # ITLensBridgeConfig is bridge-native
         )
     )
     analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_latent"]))

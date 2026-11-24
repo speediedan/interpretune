@@ -67,14 +67,12 @@ registered_cfg:
         class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
         init_args:
           model_name: gemma-2-2b
-          default_padding_side: left  # to pad on left
       circuit_tracer_cfg:
         class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:
           backend: "transformerlens"  # Explicitly use TransformerLens backend
           transcoder_set: "gemma"
           max_n_logits: 10
-          analysis_target_tokens: ['▁Dallas','▁Austin']
           # target_token_ids: entailment_mapping_indices  # alternate approach to specifying specific target tokens
           desired_logit_prob: 0.95
           max_feature_nodes: 8192

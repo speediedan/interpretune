@@ -24,7 +24,7 @@ SEED_REPO = "speediedan/rte"
 #: The republished self-contained revision (single-segment class paths): refs/main roulette across
 #: cached revisions resolves whatever revision was written last, so every seed resolution below pins
 #: this explicitly rather than inheriting whatever the cache holds.
-SEED_REVISION = "7d0bbe4d887cfbb3844111305d24ffb15eae9a9e"
+SEED_REVISION = "b1a920fc1400837a62bc7a2b155e39e5da206b86"
 SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",
@@ -139,14 +139,15 @@ class LatentModelSpec:
 
 
 #: The latent model the LATENT_MODELS and GRADIENTS cases run over: one gpt2 residual SAE at the first block,
-#: from the release core's own adapter tests load, plus one Gemma Scope 2 residual SAE for the gemma-3-1b-it
+#: trained on GPT-2's raw weights (it declares no weight processing, so it fits the raw-weight targets; an SAE
+#: declaring processing the model lacks is refused at attach), plus one Gemma Scope 2 residual SAE for the gemma-3-1b-it
 #: circuit-tracer target (layer 13, 16k width: the SAE the shared host's Hub cache already carries, so the
 #: hosted matrix warms it from ``tests/hf_warm_manifest.yaml`` rather than downloading it). A target that
 #: declares LATENT_MODELS attaches ``inputs.latent_models`` in its session config (the seed path does so
 #: whenever the module config carries ``sae_cfgs``); a declaration with no handle attached fails those cases
 #: by name rather than skipping them.
 LATENT_MODELS = (
-    LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),
+    LatentModelSpec(release="gpt2-small-resid-post-v5-32k", sae_id="blocks.0.hook_resid_post"),
     LatentModelSpec(
         release="gemma-scope-2-1b-it-res",
         sae_id="layer_13_width_16k_l0_big",

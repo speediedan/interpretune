@@ -542,6 +542,7 @@ class TestOpDefCacheRoundTrip:
             "protocol_cls",
             "required_tensor_ops",
             "required_position_scopes",
+            "required_techniques",
             "conformance",
         }
 
@@ -552,14 +553,16 @@ class TestOpDefCacheRoundTrip:
             OpDef,
             OpDefinitionsCacheManager,
         )
+        from interpretune.analysis.site_bindings import SiteBinding
 
         spec = OpStateSpec(fields=("alpha",), reset_each_epoch=True)
+        site = (SiteBinding("layer", slot=0, point="hook_mlp_out"), SiteBinding("tokens", slot=1))
         op_def = OpDef(
             name="x",
             description="",
             implementation="m.f",
             input_schema=OpSchema({}),
-            output_schema=OpSchema({}),
+            output_schema=OpSchema({"bound": ColCfg(datasets_dtype="int64", site=site)}),
             op_state=spec,
             source="hub:user.repo",
             collection_name="user/repo",
@@ -570,6 +573,7 @@ class TestOpDefCacheRoundTrip:
             protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol",
             required_tensor_ops=["patch"],
             required_position_scopes=["all_positions"],
+            required_techniques=["attribution_graph"],
             conformance={"run_inputs": {"alpha": 1}},
         )
         serialized = OpDefinitionsCacheManager.__dict__["_serialize_op_def"](
@@ -577,9 +581,18 @@ class TestOpDefCacheRoundTrip:
         )
         restored = eval(  # - the cache module is generated Python by design
             serialized,
-            {"OpDef": OpDef, "OpSchema": OpSchema, "ColCfg": ColCfg, "OpStateSpec": OpStateSpec},
+            {
+                "OpDef": OpDef,
+                "OpSchema": OpSchema,
+                "ColCfg": ColCfg,
+                "OpStateSpec": OpStateSpec,
+                "SiteBinding": SiteBinding,
+            },
         )
         assert restored.op_state == spec
+        # A cached op that lost its column's site bindings would write stores `resolve_on` refuses, where a cold load
+        # of the same declaration writes stores that resolve.
+        assert restored.output_schema["bound"].site == site
         assert restored.source == "hub:user.repo"
         # Collection identity must survive: unlike the declaration-site path it is wanted at RUNTIME
         # (op_info reports it), which is what earned it a place on OpDef and a cache-format bump.
@@ -595,6 +608,8 @@ class TestOpDefCacheRoundTrip:
             ["all_positions"],
         )
         assert restored.conformance == {"run_inputs": {"alpha": 1}}
+        # Likewise the techniques: a cached op without them would run its implementation with no provider gate.
+        assert restored.required_techniques == ["attribution_graph"]
         # Defaults stay out of the serialized form so the cache does not grow for every new trait.
         plain = OpDef(
             name="y", description="", implementation="m.f", input_schema=OpSchema({}), output_schema=OpSchema({})
@@ -606,13 +621,14 @@ class TestOpDefCacheRoundTrip:
         assert "protocol_cls" not in plain_serialized
         assert "collection_name" not in plain_serialized
         assert "required_tensor_ops" not in plain_serialized and "conformance" not in plain_serialized
+        assert "required_techniques" not in plain_serialized
         # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
         # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
         # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
         # not part of the cache fingerprint at all.
-        assert CACHE_FORMAT_VERSION == "9"
+        assert CACHE_FORMAT_VERSION == "11"
 
 
 class TestOpStateIsNotSerialized:

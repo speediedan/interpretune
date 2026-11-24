@@ -74,3 +74,60 @@ def only_token_zero_special(model) -> Iterator[None]:
         yield
     finally:
         tokenizer_class.all_special_ids = original  # type: ignore[assignment]
+
+
+def tiny_gemma2_backend_twins(n_layers: int = 2, seed: int = 933):
+    """The same tiny Gemma 2 and transcoders on circuit-tracer's nnsight and interp_engine backends, as ``(nnsight,
+    interp_engine)``, for checking that a technique gives one answer whichever backend carries it.
+
+    The vocabulary is the tokenizer's, because interp_engine probes each model at load with its tokenizer's BOS token,
+    which the 16-token toy vocabulary above cannot embed.
+    """
+    import copy
+
+    from circuit_tracer import ReplacementModel
+    from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
+    from circuit_tracer.transcoder.activation_functions import JumpReLU
+    from transformers import Gemma2Config
+
+    cfg = Gemma2Config(
+        architectures=["Gemma2ForCausalLM"],
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=n_layers,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=4,
+        vocab_size=50257,
+        query_pre_attn_scalar=4,
+        final_logit_softcapping=None,
+        torch_dtype="float32",
+    )
+    cfg._name_or_path = "openai-community/gpt2"
+    torch.manual_seed(seed)
+    transcoders = {
+        layer: SingleLayerTranscoder(cfg.hidden_size, cfg.hidden_size * 4, JumpReLU(torch.tensor(0.0), 0.1), layer)
+        for layer in range(n_layers)
+    }
+    for transcoder in transcoders.values():
+        for param in transcoder.parameters():
+            torch.nn.init.uniform_(param, a=-1, b=1)
+        torch.nn.init.uniform_(transcoder.activation_function.threshold, a=0, b=1)
+    transcoder_set = TranscoderSet(transcoders, feature_input_hook="hook_resid_mid", feature_output_hook="hook_mlp_out")
+    nnsight = ReplacementModel.from_config(copy.deepcopy(cfg), copy.deepcopy(transcoder_set), backend="nnsight")
+    interp_engine = ReplacementModel.from_config(copy.deepcopy(cfg), transcoder_set, backend="interp_engine")
+    for param in interp_engine.hf_model.parameters():
+        torch.nn.init.uniform_(param, a=-1, b=1)
+    # strict: every causal-LM weight is copied. nnsight registers its transcoders under the causal LM, and they are
+    # already identical copies of interp_engine's.
+    own_transcoders = {k: v for k, v in nnsight._module.state_dict().items() if k.startswith("transcoders.")}
+    nnsight._module.load_state_dict({**own_transcoders, **interp_engine.hf_model.state_dict()})
+    # one precision on both sides, or the comparison measures rounding rather than the backends
+    dtypes = {
+        next(nnsight._module.parameters()).dtype,
+        next(nnsight.transcoders._module.parameters()).dtype,
+        next(interp_engine.hf_model.parameters()).dtype,
+        next(interp_engine.transcoders.parameters()).dtype,
+    }
+    assert dtypes == {torch.float32}, dtypes
+    return nnsight, interp_engine

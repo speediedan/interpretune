@@ -41,6 +41,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+import torch
+
 from interpretune.utils import MisconfigurationException
 
 #: The transforms :func:`member_values` evaluates without a statistic from the caller.
@@ -59,12 +61,66 @@ Member = tuple[int, int]
 Statistic = float | Mapping[int, float] | Mapping[Member, float]
 
 
+def normalized_unit_doses(
+    dose: float | torch.Tensor,
+    *,
+    units: tuple[int, ...],
+    down_projection: torch.Tensor,
+    unit_dim: int,
+    median_residual_norm: float,
+) -> torch.Tensor:
+    r"""Convert normalized doses to activation units: $d_u m / \lVert W_u \rVert_2$.
+
+    Args:
+        dose: A scalar, or one normalized dose per selected unit in ``units`` order.
+        units: The selected unit indices.
+        down_projection: The down-projection weight matrix in its stored layout.
+        unit_dim: Its unit axis, 1 for an ``nn.Linear`` down projection and 0 for a GPT-2 ``Conv1D`` one.
+            Read it from the measured component-map layout; shape alone cannot identify it.
+        median_residual_norm: The measured median residual norm $m$, from the caller's reference data.
+
+    Raises:
+        MisconfigurationException: A unit is out of bounds, an axis or shape is unsupported, a selected weight has
+            zero norm, or a dose, norm or weight is nonfinite.
+    """
+    from interpretune.analysis.backends.interventions import _validate_unit_indices
+
+    if down_projection.ndim != 2 or unit_dim not in (0, 1):
+        raise MisconfigurationException("normalized unit doses need a matrix and unit_dim 0 or 1")
+    _validate_unit_indices(units, down_projection.shape[unit_dim])
+    weights = (
+        down_projection.detach()
+        .float()
+        .index_select(unit_dim, torch.tensor(units, dtype=torch.long, device=down_projection.device))
+    )
+    norms = torch.linalg.vector_norm(weights, dim=1 - unit_dim)
+    values = torch.as_tensor(dose, device=norms.device, dtype=norms.dtype)
+    if values.shape not in (torch.Size(), torch.Size([len(units)])):
+        raise MisconfigurationException(f"dose shape {tuple(values.shape)} needs a scalar or {len(units)} values")
+    median = torch.as_tensor(median_residual_norm, device=norms.device)
+    if (
+        median.ndim != 0
+        or not bool(torch.isfinite(median))
+        or bool(median < 0)
+        or not bool(torch.isfinite(values).all())
+        or not bool(torch.isfinite(norms).all())
+        or bool((norms == 0).any())
+    ):
+        raise MisconfigurationException(
+            "normalized unit doses need finite doses, a nonnegative median and nonzero finite column norms"
+        )
+    return values * median / norms
+
+
 def target_kind(recipe: Any, op: Any) -> str:
     """``activation``, ``units`` or ``features``, the last for any set naming ``features``.
 
     Venngram's ``Op.target_kind`` reads a set with both ``features`` and ``units`` as units. Here it is a feature
-    target whose ``units`` list the features, so its members are never scattered into the site's own activation.
+    target whose ``units`` list the features, so its members are never scattered into the site's own activation. An op
+    on a graph subset keeps venngram's kind (``graph_nodes``, or ``graph_complement`` for a restriction).
     """
+    if getattr(op, "graph", None) is not None:
+        return op.target_kind(recipe.book)
     if op.target is None:
         return "activation"
     from venngram.address import Term
