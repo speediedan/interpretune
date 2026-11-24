@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -172,7 +173,7 @@ def _remap_ar(src: Path, scratch: Path) -> Path:
         part = Path(tmp) / "adapter"
         part.mkdir()
         save_file(out, str(part / "adapter_model.safetensors"))
-        (part / "adapter_config.json").write_text((src / "adapter_config.json").read_text())
+        shutil.copyfile(src / "adapter_config.json", part / "adapter_config.json")
         try:
             part.rename(dst)
         except OSError:
@@ -340,4 +341,4 @@ def joint_fve(D: torch.Tensor, y: torch.Tensor) -> tuple[float, torch.Tensor]:
 def adapter_config(root: Path, name: str) -> dict:
     """The released adapter config, for the card and for checks that read it directly."""
     sub = root / ("ar_ptag_pooled/lora" if name == AR_NAME else check_adapter(name)["dir"])
-    return json.loads((sub / "adapter_config.json").read_text())
+    return json.loads((sub / "adapter_config.json").read_text(encoding="utf-8"))

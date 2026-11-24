@@ -10,8 +10,10 @@ lens reads well is measured on the real weights (interpretune#1202, step 1).
 from __future__ import annotations
 
 import importlib.util
+import math
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -243,7 +245,7 @@ def test_the_ar_keys_are_remapped_and_a_collision_is_refused(root, tmp_path):
     assert keys and all(k.startswith("base_model.model.model.layers.") and "_orig_mod" not in k for k in keys)
     bad = tmp_path / "collide"
     bad.mkdir()
-    (bad / "adapter_config.json").write_text("{}")
+    (bad / "adapter_config.json").write_text("{}", encoding="utf-8")
     save_file(
         {"base_model.model.layers.0._orig_mod.x": torch.zeros(1), "base_model.model.model.layers.0.x": torch.ones(1)},
         str(bad / "adapter_model.safetensors"),
@@ -326,6 +328,54 @@ def test_the_op_reads_each_prompt_at_its_position_and_fits_the_bullets(tok, text
     first_ids = enc.input_ids[0][enc.attention_mask[0].bool()]
     assert torch.equal(seen[0][2][0], R.capture(model, first_ids, (20,))[20][lens[0] - 1])
     assert '"adapter": "space"' in out["oracle_lens_sampling"]
+
+
+@pytest.mark.parametrize("use_ar", [True, False])
+def test_the_result_reads_back_from_an_analysis_store(tok, text_cfg, root, monkeypatch, tmp_path, use_ar):
+    # written through the op's own compiled schema, which holds nothing but what the declared columns can
+    from interpretune.analysis import AnalysisBatch, analysis_store_from_batches
+    from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+    dispatcher = AnalysisOpDispatcher(yaml_paths=[COMPONENT], enable_hub_ops=False)
+    dispatcher._cache_manager.cache_dir = tmp_path
+    dispatcher.load_definitions()
+    op = dispatcher.get_op("oracle_lens_read")
+    ops = _ops()
+    monkeypatch.setattr(ops, "_scratch", lambda revision: tmp_path / revision)
+    # readouts of different lengths, one without a bullet: the columns are ragged, and that fit is absent, not zero
+    texts = iter([["- alpha\n- beta", "no bullets"], ["- gamma", "- a\n- b\n- c"]])
+    monkeypatch.setattr(ops.R, "read", lambda *a, **k: [next(texts)])
+    enc = tok(["The capital of France is Paris.", "Roses are red"], padding=True, return_tensors="pt")
+    out = ops.oracle_lens_read_impl(
+        _Module(_model(text_cfg), tok),
+        AnalysisBatch(),
+        {"input_ids": enc.input_ids, "attention_mask": enc.attention_mask},
+        0,
+        oracle_lens_root=str(root),
+        oracle_lens_layers=[20],
+        oracle_lens_ar=use_ar,
+        oracle_lens_samples=2,
+    )
+    dims = SimpleNamespace(
+        datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=2)),
+        it_cfg=SimpleNamespace(),
+        model=SimpleNamespace(tokenizer=SimpleNamespace(vocab_size=32, model_max_length=32)),
+    )
+    row = analysis_store_from_batches(dims, [out], op=op).dataset[0]
+    assert row["oracle_lens_readouts"] == [[["- alpha\n- beta", "no bullets"]], [["- gamma", "- a\n- b\n- c"]]]
+    assert row["oracle_lens_bullets"] == [[[["alpha", "beta"], []]], [[["gamma"], ["a", "b", "c"]]]]
+    assert row["oracle_lens_layers"].tolist() == [20]
+    assert torch.equal(row["oracle_lens_positions"], out["oracle_lens_positions"])
+    assert row["oracle_lens_sampling"] == out["oracle_lens_sampling"]
+    if use_ar:
+        (a, absent), b = out["oracle_lens_fve"][0][0], out["oracle_lens_fve"][1][0]
+        assert absent is None, "a readout with no bullets has no fit, which is not a fit of zero"
+        (a_row, absent_row), b_row = row["oracle_lens_fve"][0][0], row["oracle_lens_fve"][1][0]
+        assert [a_row, *b_row] == [a, *b] and math.isnan(absent_row)
+        assert row["oracle_lens_coefs"] == out["oracle_lens_coefs"]
+        assert [len(c) for c in row["oracle_lens_coefs"][1][0]] == [1, 3]
+    else:
+        assert row["oracle_lens_fve"] is None and row["oracle_lens_coefs"] is None
 
 
 def test_the_op_refuses_a_position_outside_the_prompt(tok, text_cfg, root, monkeypatch, tmp_path):

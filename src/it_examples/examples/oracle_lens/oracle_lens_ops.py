@@ -126,16 +126,16 @@ def oracle_lens_read_impl(module, analysis_batch, batch, batch_idx: int, **kwarg
                 per_layer_coef.append(c_row)
         readouts.append(per_layer_text)
         bullets.append(per_layer_bullets)
-        fves.append(per_layer_fve if ar is not None else None)
-        coefs.append(per_layer_coef if ar is not None else None)
+        fves.append(per_layer_fve)
+        coefs.append(per_layer_coef)
         positions.append(pos)
     analysis_batch.update(
         oracle_lens_readouts=readouts,
         oracle_lens_bullets=bullets,
-        oracle_lens_fve=fves,
-        oracle_lens_coefs=coefs,
         oracle_lens_layers=torch.tensor(layers),
         oracle_lens_positions=torch.tensor(positions),
         oracle_lens_sampling=json.dumps({"adapter": name, "revision": revision, **sampling}, sort_keys=True),
     )
+    if ar is not None:
+        analysis_batch.update(oracle_lens_fve=fves, oracle_lens_coefs=coefs)
     return analysis_batch

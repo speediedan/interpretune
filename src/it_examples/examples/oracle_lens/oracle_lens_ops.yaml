@@ -74,32 +74,42 @@ oracle_lens_read:
   output_schema:
     oracle_lens_readouts:
       # [prompt][layer][sample] readout text
-      datasets_dtype: object
+      datasets_dtype: string
+      array_shape: [null, null, null]
       non_tensor: true
       sequence_type: false
     oracle_lens_bullets:
-      # [prompt][layer][sample] the readout's '- ' bullets
-      datasets_dtype: object
+      # [prompt][layer][sample][bullet] the readout's '- ' bullets
+      datasets_dtype: string
+      array_shape: [null, null, null, null]
       non_tensor: true
       sequence_type: false
     oracle_lens_fve:
-      # [prompt][layer][sample] fraction of the whitened activation the bullets explain (None: no bullets, or no AR)
-      datasets_dtype: object
+      # [prompt][layer][sample] fraction of the whitened activation the bullets explain; None where a readout had no
+      # bullets (NaN when read back from a store). Absent unless `oracle_lens_ar` was asked for
+      datasets_dtype: float64
+      array_shape: [null, null, null]
+      required: false
       non_tensor: true
       sequence_type: false
     oracle_lens_coefs:
-      # [prompt][layer][sample] one non-negative coefficient per bullet (None without the AR)
-      datasets_dtype: object
+      # [prompt][layer][sample][bullet] one non-negative coefficient per bullet; absent like `oracle_lens_fve`
+      datasets_dtype: float64
+      array_shape: [null, null, null, null]
+      required: false
       non_tensor: true
       sequence_type: false
     oracle_lens_layers:
+      # the blocks whose output was read
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: layer, point: hook_resid_post}
     oracle_lens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     oracle_lens_sampling:
       # adapter, checkpoint revision and sampling settings, as JSON: sampling is part of the result
       datasets_dtype: string
