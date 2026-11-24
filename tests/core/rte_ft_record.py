@@ -70,6 +70,45 @@ class CoreEpochRecorder:
         )
 
 
+def wrapped_model_names(module: torch.nn.Module) -> dict[str, str]:
+    """Each of ``module``'s parameter names mapped to the name of the same tensor in the pretrained model the
+    composition wraps, so thawed sets can be compared across compositions of one model.
+
+    A TransformerLens view supplies the mapping itself (its bridge rewires the wrapped model, and splits a fused tensor
+    into views); otherwise the wrapped model is the first ``transformers.PreTrainedModel`` under ``module`` and its
+    tensors are matched by identity.
+    """
+    from transformers import PreTrainedModel
+    from venngram.tuning import VIEW_ATTR
+
+    view = getattr(module, VIEW_ATTR, None)
+    if callable(getattr(view, "wrapped_names", None)):
+        return view.wrapped_names()
+    wrapped = next(m for m in module.modules() if isinstance(m, PreTrainedModel))
+    by_id = {id(p): n for n, p in wrapped.named_parameters(remove_duplicate=False)}
+    return {n: by_id[id(p)] for n, p in module.named_parameters() if id(p) in by_id}
+
+
+class AddressedEpochRecorder(CoreEpochRecorder):
+    """A ``CoreEpochRecorder`` that also records, by the wrapped model's names, each epoch's thawed tensors and the
+    thawed tensors whose values the epoch changed: a thawed tensor no step reaches is thawed but never trained."""
+
+    def on_train_epoch_start(self, ctx: Any) -> None:
+        super().on_train_epoch_start(ctx)
+        self._names = wrapped_model_names(ctx.module)
+        self.epochs[-1]["wrapped"] = sorted({self._wrapped(n) for n in self.epochs[-1]["thawed"]})
+        self._start = {n: p.detach().clone() for n, p in ctx.module.named_parameters() if p.requires_grad}
+
+    def on_train_epoch_end(self, ctx: Any, metrics: dict[str, Any]) -> None:
+        super().on_train_epoch_end(ctx, metrics)
+        params = dict(ctx.module.named_parameters())
+        changed = {n for n, before in self._start.items() if not torch.equal(before, params[n].detach())}
+        self.epochs[-1]["stepped"] = sorted({self._wrapped(n) for n in changed})
+
+    def _wrapped(self, name: str) -> str:
+        return self._names.get(name, f"<unwrapped>{name}")
+
+
 try:
     from lightning.pytorch import Callback
 except ImportError:  # pragma: no cover - the CLI test skips without Lightning
