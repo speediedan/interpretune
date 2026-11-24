@@ -34,6 +34,7 @@ extract_concept_latent_state:
       datasets_dtype: float32
       array_shape: [null, null]
       sequence_type: false
+      site: {binds: frame}
     concept_cache_key:
       datasets_dtype: string
       required: false
@@ -44,6 +45,7 @@ extract_concept_latent_state:
       required: false
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
 
 extract_concept_latent_examples:
   description: Filter and annotate latent rows for concept-direction aggregation
@@ -121,6 +123,7 @@ extract_concept_latent_examples:
       datasets_dtype: float32
       array_shape: [null, null]
       sequence_type: false
+      site: {binds: frame}
     concept_group_id:
       datasets_dtype: int64
       array_shape: [null]
@@ -142,6 +145,7 @@ extract_concept_latent_examples:
       required: false
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     concept_cache_key:
       datasets_dtype: string
       required: false
@@ -208,6 +212,7 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_a:
       required: false
       datasets_dtype: string
@@ -260,20 +265,24 @@ concept_direction:
       dyn_dim: 0
       dyn_dim_ceil: vocab_size
       sequence_type: true
+      site: {binds: frame}
     concept_label:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_a_token_ids:
       datasets_dtype: int64
       required: false
       non_tensor: true
       sequence_type: true
+      site: {binds: tokens}
     concept_group_b_token_ids:
       datasets_dtype: int64
       required: false
       non_tensor: true
       sequence_type: true
+      site: {binds: tokens}
     concept_group_a_name:
       datasets_dtype: string
       required: false
@@ -299,14 +308,15 @@ concept_direction:
       required: false
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_kind:
       # Which lens kind built a `jlens_*` basis direction; absent for the other bases.
       datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
-    jlens_provenance:
-      datasets_dtype: object
+    jlens_provenance_json:
+      datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
@@ -506,6 +516,7 @@ model_bwd_intervention:
       datasets_dtype: string
       sequence_type: true
       non_tensor: true
+      site: {binds: layer}
     grad_shape:
       datasets_dtype: int64
       sequence_type: true

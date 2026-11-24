@@ -15,6 +15,8 @@ lens, warmed into the offline cache by tests/hf_warm_manifest.yaml.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import torch
 
@@ -216,7 +218,7 @@ class TestBasesAreRecorded:
             assert out.concept_basis == basis
             assert out.jlens_layer == 4
             # the lens that built the direction travels with it, so a J++ direction cannot pass for a J-lens one
-            assert out.jlens_kind == "jlens" and out.jlens_provenance == {}
+            assert out.jlens_kind == "jlens" and json.loads(out.jlens_provenance_json) == {}
 
 
 class TestSyntheticGuard:

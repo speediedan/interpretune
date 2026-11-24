@@ -551,7 +551,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         # Initialize the NNsight model (TransformersModel: see the nnsight adapter for why
         # the deprecated LanguageModel name and its vision fallback are gone)
         tokenizer_kwargs = nnsight_kwargs.pop("tokenizer_kwargs", None)
-        self.model = TransformersModel(model_name, task="text-generation", **nnsight_kwargs)
+        self.model = TransformersModel(model_name, task=nnsight_cfg.task, **nnsight_kwargs)
         for key, value in (tokenizer_kwargs or {}).items():
             setattr(self.model.tokenizer, key, value)
 

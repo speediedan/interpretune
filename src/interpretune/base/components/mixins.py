@@ -38,6 +38,16 @@ if TYPE_CHECKING:
         def compute(self, *, predictions: Any = ..., references: Any = ...) -> dict[str, Any]: ...
 
 
+def enable_activation_checkpointing(model: PreTrainedModel) -> None:
+    """Enable activation checkpointing on ``model`` under the name the installed transformers provides.
+
+    transformers 5.24 renamed ``gradient_checkpointing_enable`` to ``activation_checkpointing_enable`` and deprecated
+    the old name (removal in v6), while the releases from interpretune's floor up to 5.24 have only the old one.
+    """
+    enable = getattr(model, "activation_checkpointing_enable", None) or model.gradient_checkpointing_enable
+    enable()
+
+
 class ITStateMixin:
     """Initializes the module's interpretune state, also exposed statically for early composition.
 
@@ -647,12 +657,12 @@ class HFFromPretrainedMixin:
     def _configure_gradient_checkpointing(self) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_gradient_checkpointing"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            enable_activation_checkpointing(self.model)
 
     def _configure_peft(self, quantized: bool = True) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_peft"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            enable_activation_checkpointing(self.model)
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
         if quantized:

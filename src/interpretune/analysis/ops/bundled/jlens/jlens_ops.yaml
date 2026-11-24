@@ -91,24 +91,28 @@ jlens_read:
   output_schema:
     jlens_top_token_ids:
       datasets_dtype: int64
-      array_shape: [null, null]
+      array_shape: [null, null, null]  # (example, position, rank)
       sequence_type: false
+      site: {binds: tokens}
     jlens_top_token_scores:
       datasets_dtype: float32
-      array_shape: [null, null]
+      array_shape: [null, null, null]
       sequence_type: false
     jlens_top_token_strings:
-      datasets_dtype: object
+      datasets_dtype: string
+      array_shape: [null, null, null]
       non_tensor: true
       sequence_type: false
     jlens_layer:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_include_rms_scale:
       datasets_dtype: bool
       non_tensor: true
@@ -124,8 +128,8 @@ jlens_read:
       datasets_dtype: string
       non_tensor: true
       sequence_type: false
-    jlens_provenance:
-      datasets_dtype: object
+    jlens_provenance_json:
+      datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
@@ -199,20 +203,23 @@ jlens_concept_probe:
   output_schema:
     jlens_concept_cosine:
       datasets_dtype: float32
-      array_shape: [null, null]
+      array_shape: [null, null, null]  # (example, position, concept)
       sequence_type: false
     jlens_concept_token_ids:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_layer:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_kind:
       # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
       # readout recall, so results differing only in lens kind are not comparable, and without this field they are
@@ -220,13 +227,15 @@ jlens_concept_probe:
       datasets_dtype: string
       non_tensor: true
       sequence_type: false
-    jlens_provenance:
-      datasets_dtype: object
+    jlens_provenance_json:
+      datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
     jlens_basis:
       datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
       # Which named basis produced this result. Recorded because the folded and unfolded bases
       # are not related by a coefficient, so two results differing only in that choice are not
       # comparable -- and without this field they are indistinguishable after the fact.
@@ -299,11 +308,15 @@ jlens_sparse_inventory:
       sequence_type: false
   output_schema:
     jlens_inventory_token_ids:
-      datasets_dtype: object
+      # One list per (example, position), as long as the atoms the pursuit chose there.
+      datasets_dtype: int64
+      array_shape: [null, null]
       non_tensor: true
       sequence_type: false
+      site: {binds: tokens}
     jlens_inventory_coefficients:
-      datasets_dtype: object
+      datasets_dtype: float64
+      array_shape: [null, null]
       non_tensor: true
       sequence_type: false
     jlens_inventory_residual_ratio:
@@ -314,10 +327,12 @@ jlens_sparse_inventory:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_kind:
       # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
       # readout recall, so results differing only in lens kind are not comparable, and without this field they are
@@ -325,13 +340,15 @@ jlens_sparse_inventory:
       datasets_dtype: string
       non_tensor: true
       sequence_type: false
-    jlens_provenance:
-      datasets_dtype: object
+    jlens_provenance_json:
+      datasets_dtype: string
       required: false
       non_tensor: true
       sequence_type: false
     jlens_basis:
       datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
       # Which named basis produced this result. Recorded because the folded and unfolded bases
       # are not related by a coefficient, so two results differing only in that choice are not
       # comparable -- and without this field they are indistinguishable after the fact.

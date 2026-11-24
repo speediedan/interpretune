@@ -43,7 +43,7 @@ class TestStoreSubject:
     def test_every_field_is_present_so_an_unknown_reads_as_none(self):
         record = StoreSubject(model_id="gpt2").to_dict()
         assert record == {
-            "model": {"id": "gpt2", "revision": None},
+            "model": {"id": "gpt2", "revision": None, "n_layers": None},
             "architecture": None,
             "tokenizer": {"id": None},
             "component_map": None,

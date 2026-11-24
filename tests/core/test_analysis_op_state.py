@@ -553,14 +553,16 @@ class TestOpDefCacheRoundTrip:
             OpDef,
             OpDefinitionsCacheManager,
         )
+        from interpretune.analysis.site_bindings import SiteBinding
 
         spec = OpStateSpec(fields=("alpha",), reset_each_epoch=True)
+        site = (SiteBinding("layer", slot=0, point="hook_mlp_out"), SiteBinding("tokens", slot=1))
         op_def = OpDef(
             name="x",
             description="",
             implementation="m.f",
             input_schema=OpSchema({}),
-            output_schema=OpSchema({}),
+            output_schema=OpSchema({"bound": ColCfg(datasets_dtype="int64", site=site)}),
             op_state=spec,
             source="hub:user.repo",
             collection_name="user/repo",
@@ -579,9 +581,18 @@ class TestOpDefCacheRoundTrip:
         )
         restored = eval(  # - the cache module is generated Python by design
             serialized,
-            {"OpDef": OpDef, "OpSchema": OpSchema, "ColCfg": ColCfg, "OpStateSpec": OpStateSpec},
+            {
+                "OpDef": OpDef,
+                "OpSchema": OpSchema,
+                "ColCfg": ColCfg,
+                "OpStateSpec": OpStateSpec,
+                "SiteBinding": SiteBinding,
+            },
         )
         assert restored.op_state == spec
+        # A cached op that lost its column's site bindings would write stores `resolve_on` refuses, where a cold load
+        # of the same declaration writes stores that resolve.
+        assert restored.output_schema["bound"].site == site
         assert restored.source == "hub:user.repo"
         # Collection identity must survive: unlike the declaration-site path it is wanted at RUNTIME
         # (op_info reports it), which is what earned it a place on OpDef and a cache-format bump.
@@ -617,7 +628,7 @@ class TestOpDefCacheRoundTrip:
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
         # not part of the cache fingerprint at all.
-        assert CACHE_FORMAT_VERSION == "10"
+        assert CACHE_FORMAT_VERSION == "11"
 
 
 class TestOpStateIsNotSerialized:
