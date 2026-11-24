@@ -108,7 +108,8 @@ tune = [
     # until then the git-deps group and the `override-dependencies` entry install it by SHA.
     "finetuning-scheduler >= 2.13.0",
     "bitsandbytes; platform_system != 'Darwin'",
-    "peft>=0.18",
+    # transformers 5.24's `load_adapter`, which mounts a pretrained adapter, refuses an older peft.
+    "peft>=0.22",
 ]
 # Lightning by name rather than only through finetuning-scheduler, which drops it from its base dependencies no earlier
 # than 2.17 (speediedan/finetuning-scheduler#59). The range is finetuning-scheduler's own.
