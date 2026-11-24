@@ -334,12 +334,14 @@ def test_the_op_reads_each_prompt_at_its_position_and_fits_the_bullets(tok, text
 def test_the_result_reads_back_from_an_analysis_store(tok, text_cfg, root, monkeypatch, tmp_path, use_ar):
     # written through the op's own compiled schema, which holds nothing but what the declared columns can
     from interpretune.analysis import AnalysisBatch, analysis_store_from_batches
+    from interpretune.analysis.ops.base import AnalysisOp
     from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 
     dispatcher = AnalysisOpDispatcher(yaml_paths=[COMPONENT], enable_hub_ops=False)
     dispatcher._cache_manager.cache_dir = tmp_path
     dispatcher.load_definitions()
     op = dispatcher.get_op("oracle_lens_read")
+    assert isinstance(op, AnalysisOp)
     ops = _ops()
     monkeypatch.setattr(ops, "_scratch", lambda revision: tmp_path / revision)
     # readouts of different lengths, one without a bullet: the columns are ragged, and that fit is absent, not zero
@@ -361,7 +363,9 @@ def test_the_result_reads_back_from_an_analysis_store(tok, text_cfg, root, monke
         it_cfg=SimpleNamespace(),
         model=SimpleNamespace(tokenizer=SimpleNamespace(vocab_size=32, model_max_length=32)),
     )
-    row = analysis_store_from_batches(dims, [out], op=op).dataset[0]
+    dataset = analysis_store_from_batches(dims, [out], op=op).dataset
+    assert dataset is not None
+    row = dataset[0]
     assert row["oracle_lens_readouts"] == [[["- alpha\n- beta", "no bullets"]], [["- gamma", "- a\n- b\n- c"]]]
     assert row["oracle_lens_bullets"] == [[[["alpha", "beta"], []]], [[["gamma"], ["a", "b", "c"]]]]
     assert row["oracle_lens_layers"].tolist() == [20]
