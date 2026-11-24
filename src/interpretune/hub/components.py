@@ -235,9 +235,9 @@ def declared_component_payloads(manifest: dict) -> list[str]:
     verb, so those are not listed. What IS listed is every payload a cache-only loader reads whole: the
     adapters entrypoint (``load_hub_adapter``), the promptconfigs entrypoint (``import_cached_entrypoint``),
     the module and datamodule entrypoints (snapshot class resolution), the datamodule standalone configs
-    (``resolve_datamodule_config``), and the hookmaps documents (``load_hub_hookmaps``). A manifest-only pull
-    of such a component used to leave a snapshot those loaders could not complete, with an error blaming a
-    partial download.
+    (``resolve_datamodule_config``), the hookmaps documents (``load_hub_hookmaps``) and the helper modules
+    (``load_helpers``). A manifest-only pull of such a component used to leave a snapshot those loaders could
+    not complete, with an error blaming a partial download.
     """
     rels: list[str] = []
     for section in ("adapters", "promptconfigs"):
@@ -255,6 +255,9 @@ def declared_component_payloads(manifest: dict) -> list[str]:
         if entry.get("config") and entry["config"] not in rels:
             rels.append(entry["config"])
     for rel in (manifest.get("hookmaps") or {}).get("files") or []:
+        if rel not in rels:
+            rels.append(rel)
+    for rel in ((manifest.get("helpers") or {}).get("modules") or {}).values():
         if rel not in rels:
             rels.append(rel)
     return rels

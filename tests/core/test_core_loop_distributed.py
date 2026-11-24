@@ -1201,24 +1201,29 @@ def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add
     return out
 
 
-def launch_latent_worker(out_dir: Path, *, devices: str = "") -> list[dict]:
-    """Run ``distributed_latent_worker.py`` on two ranks (``devices`` is ``CUDA_VISIBLE_DEVICES``) and read their
-    records."""
+def launch_latent_worker(out_dir: Path, *extra: str, placement: str = "fsdp2", devices: str = "") -> list[dict]:
+    """Run ``distributed_latent_worker.py`` on two ranks, or as one process with ``placement="single"``
+    (``devices`` is ``CUDA_VISIBLE_DEVICES``), and read their records."""
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(REPO_ROOT), str(REPO_ROOT / "tests"), env.get("PYTHONPATH")) if p
     )
     env["CUDA_VISIBLE_DEVICES"] = devices
     env["IT_TRUST_REMOTE_CODE"] = "1"
-    # one unit per transformer block; the spliced SAEs stay in the root unit, which is gathered whenever the blocks
-    # run, because the bridge calls an SAE's encode and decode directly rather than through its forward
-    plan = json.dumps({"class:BlockBridge": {}})
-    worker = [str(LATENT_WORKER), "--out-dir", str(out_dir), "--fsdp-plan", plan]
+    worker = [str(LATENT_WORKER), "--out-dir", str(out_dir), "--placement", placement, *extra]
+    if placement == "fsdp2":
+        # one unit per transformer block; the spliced SAEs stay in the root unit, which is gathered whenever the
+        # blocks run, because the bridge calls an SAE's encode and decode directly rather than through its forward
+        worker += ["--fsdp-plan", json.dumps({"class:BlockBridge": {}})]
     worker += ["--device-type", "cuda"] if devices else []
-    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    if placement == "single":
+        cmd = [sys.executable, *worker]
+    else:
+        cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"latent run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+    ranks = 1 if placement == "single" else 2
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(ranks)]
 
 
 def check_latent_phases(records: list[dict]) -> None:
@@ -1229,7 +1234,8 @@ def check_latent_phases(records: list[dict]) -> None:
         saes = set(record["sae_params"])
         assert saes and not saes & set(epochs[0]) and epochs[0] == epochs[1]
         assert set(epochs[2]) == set(epochs[0]) | saes and epochs[2] == epochs[3]
-        assert all(".blocks.1." in n for n in epochs[0])
+        # every tensor of the last block, its split ones included: a view that loses one leaves it frozen
+        assert epochs[0] == record["last_block_params"]
         losses = record["losses"]
         assert all(math.isfinite(x) for x in losses)
         # the same batches each epoch, so each batch's loss falls from its first epoch to its last
@@ -1245,6 +1251,46 @@ def test_two_rank_fsdp2_tuning_thaws_spliced_saes_by_latent_role(tmp_path):
     """A phased schedule thaws a latent role after a first phase, on two FSDP2 ranks through the core loop
     (#834)."""
     check_latent_phases(launch_latent_worker(tmp_path))
+
+
+# each block's MLP split by its hidden features; the SAE reads the activation between the two projections
+_SPLIT_MLP = r"model\.blocks\.\d+\._original_component\.mlp\._original_component"
+SAE_TP_PLAN = {
+    rf"{_SPLIT_MLP}\.fc_in\._original_component": {"style": "colwise", "use_local_output": False},
+    rf"{_SPLIT_MLP}\.fc_out\._original_component": {"style": "rowwise"},
+}
+SPLIT_SAE_HOOK = "blocks.0.mlp.hook_post"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_tp_tunes_an_sae_spliced_inside_a_split_layer_like_one_process(tmp_path):
+    """An SAE that SAE Lens splices into a bridge inside a split MLP reads the whole activation and rewrites each
+    rank's shard, so two tensor-parallel ranks tune it in phases like one process, step for step (#853).
+
+    The first projection keeps its split output as a ``DTensor`` (``use_local_output: false``), which the splice
+    gathers; an SAE encoding one rank's shard would fail on its width. With the default local output, the splice is
+    refused, naming the hook and the fix.
+    """
+    sae = ("--sae-hook", SPLIT_SAE_HOOK)
+    (reference,) = launch_latent_worker(tmp_path / "single", *sae, placement="single")
+    check_latent_phases([reference, reference])
+    # positive control: the SAE is on the loss's path, so tuning moved every one of its tensors
+    assert all(reference["sae_values"][n] != pytest.approx(reference["sae_init"][n]) for n in reference["sae_init"])
+    records = launch_latent_worker(tmp_path / "tp", *sae, "--tp-plan", json.dumps(SAE_TP_PLAN), placement="tp")
+    check_latent_phases(records)
+    for record in records:
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["trainable_by_epoch"] == reference["trainable_by_epoch"]
+        assert any(".mlp._original_component.fc_in." in n for n in record["split_params"])
+        assert record["sae_values"].keys() == reference["sae_values"].keys()
+        for name, values in record["sae_values"].items():
+            assert values == pytest.approx(reference["sae_values"][name], rel=1e-4, abs=1e-6), name
+    local = {k: {**v, "use_local_output": True} for k, v in SAE_TP_PLAN.items()}
+    for record in launch_latent_worker(tmp_path / "local", *sae, "--tp-plan", json.dumps(local), placement="tp"):
+        assert f"spliced at {SPLIT_SAE_HOOK} reads activations of width 10" in record["refused"]
+        assert "use_local_output: false" in record["refused"]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
