@@ -73,23 +73,35 @@ def latent_model_column_dtype(handle_dtype: str | None, default: str = "float32"
     return "float32" if normalized in ("bfloat16", "bf16") else normalized
 
 
-def _values_survive(tensor: torch.Tensor, target: torch.dtype) -> bool:
-    """Whether casting ``tensor`` to ``target`` and back reproduces every value (NaN matches NaN)."""
-    back = tensor.to(target).to(tensor.dtype)
+def _within(values: torch.Tensor, integer: torch.dtype) -> torch.Tensor:
+    """Where floating ``values`` lie in the range of an integer dtype (float64 holds every bound exactly)."""
+    limits, wide = torch.iinfo(integer), values.double()
+    return (wide >= float(limits.min)) & (wide < float(limits.max + 1))
+
+
+def _kept(tensor: torch.Tensor, target: torch.dtype) -> torch.Tensor:
+    """Where casting ``tensor`` to ``target`` and back reproduces the value (NaN matches NaN).
+
+    A float outside an integer dtype's range has no defined conversion: x86 gives the minimum, ARM saturates. The
+    maximum of an int32 rounds up to 2**31 as a float32, and saturating that back gives the original, so a round trip
+    alone accepts a changed value on ARM. Whatever the trip passes through is therefore range-checked as well.
+    """
+    stored = tensor.to(target)
+    back = stored.to(tensor.dtype)
     same = back == tensor
-    if tensor.is_floating_point() and target.is_floating_point:
-        same = same | (back.isnan() & tensor.isnan())
-    return bool(same.all())
+    if tensor.is_floating_point():
+        if target.is_floating_point:
+            return same | (back.isnan() & tensor.isnan())
+        return same if target == torch.bool else same & _within(tensor, target)
+    if target.is_floating_point and tensor.dtype != torch.bool:
+        return same & _within(stored, tensor.dtype)
+    return same
 
 
 def _first_changed(tensor: torch.Tensor, target: torch.dtype) -> str:
     """The first value the cast changes, as ``a -> b``, so the refusal shows what would have been stored."""
     flat = tensor.reshape(-1)
-    back = flat.to(target).to(tensor.dtype)
-    changed = back != flat
-    if tensor.is_floating_point() and target.is_floating_point:
-        changed = changed & ~(back.isnan() & flat.isnan())
-    idx = int(changed.nonzero()[0, 0])
+    idx = int((~_kept(flat, target)).nonzero()[0, 0])
     return f"{flat[idx].item()!r} -> {flat[idx].to(target).item()!r}"
 
 
@@ -141,7 +153,7 @@ def check_storable(col_name: str, value: Any, stored_dtype: str) -> None:
                 f"Column {col_name!r} is declared {stored_dtype} and was given a {_torch_name(value.dtype)} tensor: an"
                 " AnalysisStore has no complex type. Store the real and imaginary parts as separate columns."
             )
-        if value.numel() and not _values_survive(value, target):
+        if value.numel() and not bool(_kept(value, target).all()):
             given = _torch_name(value.dtype)
             if _is_float_rounding(value, target):
                 _warn_rounding_once(col_name, given, stored_dtype)

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from interpretune.analysis.store_dtypes import STORE_TORCH_DTYPES, StoreDtypeError
+from interpretune.analysis.store_dtypes import STORE_TORCH_DTYPES, StoreDtypeError, check_storable
 
 COMMIT = "c" * 40
 REPO = "someorg/dtype-store"
@@ -189,6 +189,54 @@ def test_a_value_the_column_cannot_hold_is_refused_by_name(source, declared, sho
     written = [_values(source, _row_shape(kind, 1), 1)]
     with pytest.raises(StoreDtypeError, match=rf"Column 'x' is declared {declared} and was given a {shown}"):
         _write(_op(declared, kind), written)
+
+
+@pytest.fixture
+def saturating_casts(monkeypatch):
+    """Float to integer conversions that saturate, as ARM's do; x86 gives the integer minimum instead."""
+    convert = torch.Tensor.to
+
+    def to(self, *args, **kwargs):
+        out = convert(self, *args, **kwargs)
+        if self.is_floating_point() and not out.is_floating_point() and out.dtype != torch.bool:
+            limits = torch.iinfo(out.dtype)
+            out = out.masked_fill(self >= float(limits.max + 1), limits.max)
+            out = out.masked_fill(self < float(limits.min), limits.min)
+        return out
+
+    monkeypatch.setattr(torch.Tensor, "to", to)
+
+
+AT_THE_LIMITS = [
+    (torch.tensor(2**31 - 1, dtype=torch.int32), "float32"),
+    (torch.tensor(2**63 - 1, dtype=torch.int64), "float64"),
+    (torch.tensor(2**15 - 1, dtype=torch.int16), "float16"),
+    (torch.tensor(2.0**31, dtype=torch.float32), "int32"),
+    (torch.tensor(2.0**63, dtype=torch.float64), "int64"),
+]
+
+
+@pytest.mark.parametrize("value, declared", AT_THE_LIMITS, ids=lambda v: str(getattr(v, "dtype", v)))
+def test_a_value_changed_at_an_integer_limit_is_refused_where_casts_saturate(value, declared, saturating_casts):
+    """The cast back saturates to the original, so a round trip alone accepts the changed value."""
+    target = STORE_TORCH_DTYPES[declared]
+    assert value.to(target).to(value.dtype) == value  # positive control: the trip does reproduce it here
+    with pytest.raises(StoreDtypeError, match=f"whose values {declared} cannot hold"):
+        check_storable("x", value, declared)
+
+
+@pytest.mark.parametrize(
+    "value, declared",
+    [
+        (torch.tensor([-(2**31), 2**24], dtype=torch.int32), "float32"),
+        (torch.tensor([-(2**63)], dtype=torch.int64), "float64"),
+        (torch.tensor([-(2.0**31), 2.0**31 - 128], dtype=torch.float32), "int32"),
+        (torch.tensor([-(2**15)], dtype=torch.int16), "float16"),
+    ],
+    ids=lambda v: str(getattr(v, "dtype", v)),
+)
+def test_an_exactly_held_integer_limit_is_accepted(value, declared):
+    check_storable("x", value, declared)
 
 
 @pytest.mark.parametrize("source, declared", [(torch.float64, "float32"), (torch.float32, "float16")])
