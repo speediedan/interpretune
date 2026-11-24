@@ -36,6 +36,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- An evidence-sourced value (`from: {evidence, column}`) applies on a composed unit target (`@a & @b`, `@a - @control`) as on a single set: each member venngram lists for the composition reads its value from the column, a row for a unit outside the composition doses nothing, and a member the column has no row for is refused. It was refused for any composed target before. venngram is pinned at `26258252`, its main with `Op.unit_members` (speediedan/venngram#131) ([#905](https://github.com/interpretune/interpretune/issues/905))
+
 - The looped lens for Inkling 2 Mini, an in-repo ops component (`src/it_examples/examples/looped_lens`): lenses as venngram address books, a runtime that reads them locally or on NDIF in one trace per prompt (a coda readout as an extra batch row), the `looped_lens_read` op, model specs for an `experiment_session` on NDIF or with local weights, a card with the lenses' scores, and readouts that may be read at the question's end (`position: question_end`), where the challenge's chat questions still hold their answer. Read through a session, the first book scores 30 of 33 held-out items on NDIF and 31 of 33 locally, as its runtime does ([#1168](https://github.com/interpretune/interpretune/issues/1168))
 - `NNsightConfig.task` names the transformers pipeline task an nnsight model is built for (default `text-generation`, as before), so a checkpoint registered only under a multimodal task builds: Inkling 2 Mini's `Inkling2LoopConfig` is `image-text-to-text`. The nnsight adapter and the SAE Lens adapter's nnsight path both pass it ([#1190](https://github.com/interpretune/interpretune/issues/1190))
 
