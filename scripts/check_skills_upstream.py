@@ -57,7 +57,7 @@ def vendored_skills(skills_dir: Path) -> list[str]:
     if not manifest.is_file():
         raise Unreadable(f"{skills_dir / MANIFEST} is missing, so the vendored skills there are unknown")
     names: list[str] = []
-    for line in manifest.read_text().splitlines():
+    for line in manifest.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue

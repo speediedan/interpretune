@@ -297,7 +297,7 @@ def unpack_objs_from_pt_dict(tensor_dict):
 
 
 def load_graph_json(json_path):
-    with open(json_path, "r") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 

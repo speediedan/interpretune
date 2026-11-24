@@ -17,7 +17,8 @@ class TestAnalysisOpDispatcherHub:
 
         # Create a test YAML file
         self.test_yaml = self.temp_dir / "test_ops.yaml"
-        self.test_yaml.write_text("""
+        self.test_yaml.write_text(
+            """
 test_op:
   description: A test operation
   implementation: test.module.test_function
@@ -28,7 +29,9 @@ test_op:
   output_schema:
     output_data:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
 
     def teardown_method(self):
         """Clean up test environment after each test."""
@@ -119,7 +122,7 @@ test_op:
     def test_load_empty_yaml_file(self):
         """Test loading empty YAML file."""
         empty_yaml = self.temp_dir / "empty.yaml"
-        empty_yaml.write_text("")
+        empty_yaml.write_text("", encoding="utf-8")
 
         dispatcher = AnalysisOpDispatcher(yaml_paths=[empty_yaml])
         dispatcher.load_definitions()
@@ -153,9 +156,9 @@ class TestOpDefinitionsCacheManagerHub:
         hub_cache = self.temp_dir / "hub"
         snapshot_dir = hub_cache / "models--username--repo" / "snapshots" / "abc123"
         snapshot_dir.mkdir(parents=True)
-        (snapshot_dir / "ops.yaml").write_text("test: {}")
+        (snapshot_dir / "ops.yaml").write_text("test: {}", encoding="utf-8")
         (snapshot_dir / "it_component.yaml").write_text(
-            "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [ops.yaml]\n"
+            "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [ops.yaml]\n", encoding="utf-8"
         )
 
         cache_manager = OpDefinitionsCacheManager(self.temp_dir)
@@ -196,7 +199,7 @@ class TestOpDefinitionsCacheManagerHub:
 
         # Create test file
         test_file = self.temp_dir / "test.yaml"
-        test_file.write_text("test: {}")
+        test_file.write_text("test: {}", encoding="utf-8")
 
         with patch.object(cache_manager, "discover_hub_yaml_files", return_value=[test_file]):
             cache_manager.add_hub_yaml_files()

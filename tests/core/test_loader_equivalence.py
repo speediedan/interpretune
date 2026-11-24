@@ -22,7 +22,9 @@ from tests.core.loader_equivalence import (
 )
 
 CONFIGS = cli_experiment_configs()
-BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text())
+BASELINE_SPECS = json.loads(
+    (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text(encoding="utf-8")
+)
 
 
 def _baseline_for(config_path):
@@ -302,6 +304,6 @@ class TestFixtureNormalizationRules:
         """No absolute filesystem path may survive into the committed fixture."""
         import re
 
-        raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text()
+        raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text(encoding="utf-8")
         offenders = re.findall(r'"(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:(?:\\\\|/))[^"]*"', raw)
         assert not offenders, offenders[:5]

@@ -36,7 +36,7 @@ def _collection(root, dir_name: str, yaml_text: str):
     """Write a one-file op collection and return its directory."""
     op_dir = root / dir_name
     op_dir.mkdir()
-    (op_dir / f"{dir_name}.yaml").write_text(yaml_text)
+    (op_dir / f"{dir_name}.yaml").write_text(yaml_text, encoding="utf-8")
     return op_dir
 
 
@@ -205,7 +205,7 @@ class TestNonOpYamlIsNotParsedAsOps:
     def test_a_collection_dir_with_its_manifest_loads_cleanly(self, tmp_path, cache_dir, recwarn):
         """The ordinary local-authoring shape: one manifest plus the op YAMLs it declares, same directory."""
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
 
         dispatcher = _dispatcher(cache_dir, op_dir)
         dispatcher.load_definitions()
@@ -218,7 +218,7 @@ class TestNonOpYamlIsNotParsedAsOps:
 
     def test_manifest_is_excluded_from_discovery(self, tmp_path, cache_dir):
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
 
         discovered = _dispatcher(cache_dir, op_dir)._discover_yaml_files([op_dir])
         assert [p.name for p in discovered] == ["collection.yaml"]

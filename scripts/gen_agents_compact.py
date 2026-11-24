@@ -107,11 +107,11 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--update-hashes", action="store_true")
     a = ap.parse_args()
-    full = FULL.read_text()
-    st_text = STANDINS.read_text()
+    full = FULL.read_text(encoding="utf-8")
+    st_text = STANDINS.read_text(encoding="utf-8")
     if a.update_hashes:
         st_text = update_hashes(st_text, full)
-        STANDINS.write_text(st_text)
+        STANDINS.write_text(st_text, encoding="utf-8")
     header, standins = parse_standins(st_text)
     if not header:
         print(f"{STANDINS}: no `<!-- header -->` block", file=sys.stderr)
@@ -122,7 +122,7 @@ def main() -> int:
     if problems:
         return 1
     if a.check:
-        if not OUT.exists() or OUT.read_text() != text:
+        if not OUT.exists() or OUT.read_text(encoding="utf-8") != text:
             print(
                 "gen_agents_compact: AGENTS.md is not what the generator writes from "
                 f"{FULL_REF}; run `python scripts/gen_agents_compact.py` and commit it",
@@ -130,7 +130,7 @@ def main() -> int:
             )
             return 1
         return 0
-    OUT.write_text(text)
+    OUT.write_text(text, encoding="utf-8")
     print(f"wrote {OUT.relative_to(ROOT)}: {len(text.encode())} bytes (full text {len(full.encode())})")
     return 0
 

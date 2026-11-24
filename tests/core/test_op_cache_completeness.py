@@ -48,7 +48,7 @@ def cache_dir(tmp_path) -> Path:
 def op_dir(tmp_path) -> Path:
     path = tmp_path / "ops"
     path.mkdir()
-    (path / "ops.yaml").write_text(OPS_YAML)
+    (path / "ops.yaml").write_text(OPS_YAML, encoding="utf-8")
     return path
 
 
@@ -100,23 +100,23 @@ def test_an_intact_cache_is_served(cache_dir, op_dir, recwarn):
 def test_a_cache_missing_an_op_is_compiled_again(cache_dir, op_dir, removed):
     _compiled(cache_dir, op_dir)
     (cache_file,) = _cache_files(cache_dir)
-    complete = cache_file.read_text()
-    cache_file.write_text(_without_op(complete, removed))
+    complete = cache_file.read_text(encoding="utf-8")
+    cache_file.write_text(_without_op(complete, removed), encoding="utf-8")
 
     with pytest.warns(UserWarning, match=rf"compiled op cache does not hold.*missing \['{removed}'\]"):
         repaired = _compiled(cache_dir, op_dir)
 
     assert removed in _canonical(repaired)
-    assert cache_file.read_text() == complete, "the recompiled set should replace the subset"
+    assert cache_file.read_text(encoding="utf-8") == complete, "the recompiled set should replace the subset"
 
 
 def test_a_cache_holding_an_undeclared_op_is_compiled_again(cache_dir, op_dir):
     _compiled(cache_dir, op_dir)
     (cache_file,) = _cache_files(cache_dir)
-    source = cache_file.read_text()
+    source = cache_file.read_text(encoding="utf-8")
     (first,) = [line for line in source.splitlines() if line.startswith('    "first_op": ')]
     planted = first.replace("first_op", "planted_op").replace("first_alias", "planted_alias")
-    cache_file.write_text(source.replace(first, f"{first}\n{planted}"))
+    cache_file.write_text(source.replace(first, f"{first}\n{planted}"), encoding="utf-8")
 
     with pytest.warns(UserWarning, match=r"not declared by any source \['planted_op'\]"):
         repaired = _compiled(cache_dir, op_dir)
@@ -166,7 +166,7 @@ class TestAnIncompleteCompileIsNotCached:
             _compiled(cache_dir, op_dir)
 
     def test_an_unreadable_file_is_reported_and_not_cached(self, cache_dir, op_dir):
-        (op_dir / "broken.yaml").write_text("broken_op: [unclosed\n")
+        (op_dir / "broken.yaml").write_text("broken_op: [unclosed\n", encoding="utf-8")
         with pytest.warns(UserWarning, match=r"Failed to load op definitions from .*broken\.yaml"):
             dispatcher = _compiled(cache_dir, op_dir)
         assert DECLARED <= _canonical(dispatcher)
@@ -174,7 +174,10 @@ class TestAnIncompleteCompileIsNotCached:
 
     def test_an_unresolved_required_op_is_not_cached(self, cache_dir, op_dir):
         path = op_dir / "ops.yaml"
-        path.write_text(path.read_text().replace("required_ops: [first_op]", "required_ops: [absent_op]"))
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("required_ops: [first_op]", "required_ops: [absent_op]"),
+            encoding="utf-8",
+        )
         with pytest.warns(UserWarning, match="Required operation 'absent_op' not found"):
             _compiled(cache_dir, op_dir)
         assert not _cache_files(cache_dir)
@@ -184,7 +187,8 @@ class TestAnIncompleteCompileIsNotCached:
         (op_dir / "future.yaml").write_text(
             "collection:\n  name: future\n  version: 1.0.0\n  requires:\n    interpretune: '>=999'\n"
             "future_op:\n  implementation: tests.core.test_analysis_ops_base.op_impl_test\n"
-            "  input_schema: {}\n  output_schema: {}\n"
+            "  input_schema: {}\n  output_schema: {}\n",
+            encoding="utf-8",
         )
         _compiled(cache_dir, op_dir)
         assert [w for w in recwarn if "Skipping op collection 'future'" in str(w.message)]
@@ -200,7 +204,7 @@ class TestTheCacheIsReplacedWhole:
     def test_an_interrupted_write_leaves_the_previous_file(self, cache_dir, op_dir, monkeypatch):
         dispatcher = _compiled(cache_dir, op_dir)
         (cache_file,) = _cache_files(cache_dir)
-        complete = cache_file.read_text()
+        complete = cache_file.read_text(encoding="utf-8")
         write_text = Path.write_text
 
         def interrupted(self, data, *args, **kwargs):
@@ -211,7 +215,7 @@ class TestTheCacheIsReplacedWhole:
         with pytest.raises(KeyboardInterrupt):
             dispatcher._cache_manager.save_cache(dispatcher._op_definitions)
 
-        assert cache_file.read_text() == complete
+        assert cache_file.read_text(encoding="utf-8") == complete
         assert [path.name for path in cache_dir.iterdir() if path.suffix == ".tmp"] == []
 
     def test_a_file_another_process_holds_open_is_reported(self, cache_dir, op_dir, monkeypatch):

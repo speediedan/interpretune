@@ -45,8 +45,12 @@ def _code(text):
 def _repo(tmp_path: Path, table: str = "", *, header: str = "[tool.nbpress]") -> Path:
     root = tmp_path / "adapter"
     (root / "examples" / "dev").mkdir(parents=True)
-    (root / "pyproject.toml").write_text(f'[project]\nname = "x"\nversion = "0"\n\n{header}\n' + BASE_TABLE + table)
-    (root / "examples" / "dev" / "demo.ipynb").write_text(json.dumps(_notebook(_code("import json\n"))))
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "x"\nversion = "0"\n\n{header}\n' + BASE_TABLE + table, encoding="utf-8"
+    )
+    (root / "examples" / "dev" / "demo.ipynb").write_text(
+        json.dumps(_notebook(_code("import json\n"))), encoding="utf-8"
+    )
     return root
 
 
@@ -84,7 +88,7 @@ class TestReaderAgreesWithNbpress:
         assert nbpress_publish.main(["--root", str(root)]) == 0
         cfg = PublisherConfig.from_pyproject(root)
         assert changed_files(cfg, load_notebook_hashes(cfg.publish_dir)) == []
-        (cfg.dev_dir / "demo.ipynb").write_text(json.dumps(_notebook(_code("import os\n"))))
+        (cfg.dev_dir / "demo.ipynb").write_text(json.dumps(_notebook(_code("import os\n"))), encoding="utf-8")
         assert changed_files(cfg, load_notebook_hashes(cfg.publish_dir)) == [cfg.dev_dir / "demo.ipynb"]
 
 
@@ -101,10 +105,10 @@ class TestReaderTable:
             PublisherConfig.from_pyproject(root)
 
     def test_no_table_and_a_missing_key_are_refused_by_name(self, tmp_path):
-        (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
         with pytest.raises(NotebookConfigError, match=r"no \[tool.nbpress\] table"):
             PublisherConfig.from_pyproject(tmp_path)
-        (tmp_path / "pyproject.toml").write_text('[tool.nbpress]\ndev_dir = "d"\npublish_dir = "p"\n')
+        (tmp_path / "pyproject.toml").write_text('[tool.nbpress]\ndev_dir = "d"\npublish_dir = "p"\n', encoding="utf-8")
         with pytest.raises(NotebookConfigError, match="colab_repo"):
             PublisherConfig.from_pyproject(tmp_path)
 
@@ -115,10 +119,12 @@ class TestNbpressPin:
     @staticmethod
     def _commits() -> dict[str, list[str]]:
         url = r"nbpress @ git\+https://github\.com/speediedan/nbpress@([0-9a-f]{40})"
-        precommit = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+        precommit = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
         return {
-            "pyproject.toml git-deps": re.findall(url, (REPO_ROOT / "pyproject.toml").read_text()),
-            "requirements/docs.txt": re.findall(url, (REPO_ROOT / "requirements" / "docs.txt").read_text()),
+            "pyproject.toml git-deps": re.findall(url, (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")),
+            "requirements/docs.txt": re.findall(
+                url, (REPO_ROOT / "requirements" / "docs.txt").read_text(encoding="utf-8")
+            ),
             ".pre-commit-config.yaml rev": re.findall(
                 r"repo: https://github\.com/speediedan/nbpress\n\s+rev: ([0-9a-f]{40})\b", precommit
             ),

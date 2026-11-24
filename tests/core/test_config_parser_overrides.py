@@ -59,7 +59,7 @@ def test_merge_config_dict_supports_simple_recursive_merge(tmp_path: Path) -> No
 
 def test_parse_config_resolves_module_path(tmp_path: Path) -> None:
     module_path = tmp_path / "analysis_points.py"
-    module_path.write_text("AP_FUNCTIONS = {}\n")
+    module_path.write_text("AP_FUNCTIONS = {}\n", encoding="utf-8")
 
     raw_config = {
         "settings": {

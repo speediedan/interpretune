@@ -34,11 +34,13 @@ def scratch_collection(tmp_path):
                 preds:
                   datasets_dtype: int64
             """
-        )
+        ),
+        encoding="utf-8",
     )
     (tmp_path / "scratch_reload_defs.py").write_text(
         "def scratch_reload_probe_impl(module, analysis_batch, batch, batch_idx, **kwargs):\n"
-        "    return analysis_batch\n"
+        "    return analysis_batch\n",
+        encoding="utf-8",
     )
     return tmp_path
 

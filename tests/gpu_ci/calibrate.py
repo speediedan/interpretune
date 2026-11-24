@@ -71,7 +71,7 @@ def collect_gpu_items(extra: list[str] | None = None) -> list[dict]:
             raise RuntimeError(
                 f"collection wrote no declaration report (exit {proc.returncode}):\n{proc.stdout[-2000:]}"
             )
-        return json.loads(report.read_text())
+        return json.loads(report.read_text(encoding="utf-8"))
 
 
 def _tier_env(item: dict) -> dict[str, str]:
@@ -83,7 +83,7 @@ def _tier_env(item: dict) -> dict[str, str]:
 
 def measure(args) -> int:
     items = collect_gpu_items(["-k", args.k] if args.k else None)
-    data = yaml.safe_load(MEASUREMENTS.read_text()) if MEASUREMENTS.exists() else {}
+    data = yaml.safe_load(MEASUREMENTS.read_text(encoding="utf-8")) if MEASUREMENTS.exists() else {}
     print(f"measuring {len(items)} GPU tests on {args.device}", flush=True)
     for item in items:
         with tempfile.TemporaryDirectory() as d:
@@ -106,7 +106,11 @@ def measure(args) -> int:
             except subprocess.TimeoutExpired:
                 print(f"TIMEOUT {item['nodeid']}", flush=True)
                 continue
-            rows = [json.loads(line) for line in report.read_text().splitlines()] if report.exists() else []
+            rows = (
+                [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()]
+                if report.exists()
+                else []
+            )
         if not rows:
             print(f"NO-REPORT {item['nodeid']} (did not run: deselected, skipped before setup, or crashed)", flush=True)
             continue
@@ -130,12 +134,12 @@ def measure(args) -> int:
             f"recommend={recommended_gb(row['need_gb']):5.1f}  {item['nodeid']}",
             flush=True,
         )
-        MEASUREMENTS.write_text(yaml.safe_dump(dict(sorted(data.items())), sort_keys=False))
+        MEASUREMENTS.write_text(yaml.safe_dump(dict(sorted(data.items())), sort_keys=False), encoding="utf-8")
     return 0
 
 
 def check(args) -> int:
-    data = yaml.safe_load(MEASUREMENTS.read_text()) if MEASUREMENTS.exists() else {}
+    data = yaml.safe_load(MEASUREMENTS.read_text(encoding="utf-8")) if MEASUREMENTS.exists() else {}
     items = {i["nodeid"]: i for i in collect_gpu_items()}
     bad = []
     for nodeid, m in sorted(data.items()):

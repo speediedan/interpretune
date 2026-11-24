@@ -170,7 +170,7 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
         },
         "stages": [{"site": "blocks.1.hook_resid_post", "tokens": "all", "ops": [{"op": "add", "operand": "concept"}]}],
     }
-    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(doc))
+    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
     payload = recipe_interventions(load_recipe(tmp_path / "recipe.yaml").recipe, site_widths={})
     (spec,) = payload["blocks.1.hook_resid_post"]
     assert torch.equal(spec.intervention_tensor, torch.tensor([0.0, 2.0, 0.0, 0.0]))

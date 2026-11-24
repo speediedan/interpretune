@@ -34,9 +34,9 @@ def _snapshot(root: Path, repo: str = "models--username--repo", manifest: str | 
     snapshot = root / repo / "snapshots" / "abc123"
     snapshot.mkdir(parents=True)
     if manifest is not None:
-        (snapshot / "it_component.yaml").write_text(manifest)
+        (snapshot / "it_component.yaml").write_text(manifest, encoding="utf-8")
     for name, body in files.items():
-        (snapshot / name.replace("__", ".")).write_text(body)
+        (snapshot / name.replace("__", ".")).write_text(body, encoding="utf-8")
     return snapshot
 
 
@@ -154,8 +154,8 @@ class TestPullIsManifestFirstAndPinned:
         listed: list[str | None] = []
         snapshot = tmp_path / "models--u--r" / "snapshots" / ("d" * 40)
         snapshot.mkdir(parents=True)
-        (snapshot / "it_component.yaml").write_text(manifest_body)
-        (snapshot / "ops.yaml").write_text(OP_YAML)
+        (snapshot / "it_component.yaml").write_text(manifest_body, encoding="utf-8")
+        (snapshot / "ops.yaml").write_text(OP_YAML, encoding="utf-8")
 
         def fake_download(repo_id, filename, revision=None, **kwargs):
             calls.append((filename, revision))

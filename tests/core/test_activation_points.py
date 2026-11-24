@@ -205,16 +205,16 @@ class TestDocumentsAreVersioned:
 
         doc = {"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}}
         path = tmp_path / "x.yaml"
-        path.write_text(yaml.safe_dump(doc))
+        path.write_text(yaml.safe_dump(doc), encoding="utf-8")
         with pytest.raises(
             ValueError, match=rf"lacks an integer `schema_version` \(current: {COMPONENT_MAP_SCHEMA_VERSION}\)"
         ):
             load_component_map_file(path)
         for bad in ("1", 1.0, True):
-            path.write_text(yaml.safe_dump({**doc, "schema_version": bad}))
+            path.write_text(yaml.safe_dump({**doc, "schema_version": bad}), encoding="utf-8")
             with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
                 load_component_map_file(path)
-        path.write_text(yaml.safe_dump({**doc, "schema_version": 1}))
+        path.write_text(yaml.safe_dump({**doc, "schema_version": 1}), encoding="utf-8")
         assert load_component_map_file(path).schema_version == 1
 
     def test_every_bundled_document_is_inside_the_readable_window(self):
@@ -244,10 +244,12 @@ class TestDocumentsAreVersioned:
         root = tmp_path / "component"
         (root / "maps").mkdir(parents=True)
         (root / "it_component.yaml").write_text(
-            yaml.safe_dump({"it_schema_version": 1, "kinds": ["hookmaps"], "hookmaps": {"files": ["maps/x.yaml"]}})
+            yaml.safe_dump({"it_schema_version": 1, "kinds": ["hookmaps"], "hookmaps": {"files": ["maps/x.yaml"]}}),
+            encoding="utf-8",
         )
         (root / "maps" / "x.yaml").write_text(
-            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}})
+            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}}),
+            encoding="utf-8",
         )
         with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
             build_component_tree(root, tmp_path / "out")

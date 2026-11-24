@@ -50,7 +50,7 @@ def _artifact_dir(tmp_path: Path) -> Path:
 
 
 def _frozen(vendor: str, composition: str) -> dict | None:
-    bounds = yaml.safe_load(BOUNDS_FILE.read_text()) or {}
+    bounds = yaml.safe_load(BOUNDS_FILE.read_text(encoding="utf-8")) or {}
     return (bounds.get(vendor) or {}).get(composition)
 
 
@@ -87,7 +87,7 @@ def test_harness_detects_planted_defects(tmp_path):
 def test_delta_pair(tmp_path, composition):
     out_dir = _artifact_dir(tmp_path)
     pair = measure_pair(composition, out_dir / "arms")
-    (out_dir / f"{composition}.pair.json").write_text(json.dumps(pair.to_json(), indent=1))
+    (out_dir / f"{composition}.pair.json").write_text(json.dumps(pair.to_json(), indent=1), encoding="utf-8")
 
     for arm in (pair.it, pair.upstream):
         assert all(r["available"] for r in arm["repeats"]), f"{arm['arm']} arm saw no accelerator statistics"
