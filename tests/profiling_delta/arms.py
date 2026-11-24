@@ -360,7 +360,8 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
     if spec.generation_config is not None:
         model.generation_config = spec.generation_config
     if spec.activation_checkpointing:
-        model.gradient_checkpointing_enable()
+        # transformers 5.24 renamed `gradient_checkpointing_enable` and deprecated the old name
+        (getattr(model, "activation_checkpointing_enable", None) or model.gradient_checkpointing_enable)()
     if spec.enable_input_require_grads:
         model.enable_input_require_grads()
     return model.to(dev)

@@ -878,7 +878,7 @@ transformer-lens==4.1.0
     #   --override (workspace)
     #   interpretune (pyproject.toml)
     #   sae-lens
-transformers==5.22.1
+transformers==5.24.0
     # via
     #   interpretune (pyproject.toml)
     #   interp-engine

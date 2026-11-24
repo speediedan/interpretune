@@ -1,0 +1,26 @@
+# A looped lens for Inkling 2 Mini as a venngram address book: the sets are its read sites, the `lens` section what it
+# does with them. Six plain readouts, no coda sites: the best majority configuration on the gated development set
+# without coda-lens sites (leave one family out 0.860; held out 0.875, 31 of 33), chosen at K=5 with the content filter.
+schema_version: 12
+name: inkling2-mini-looped-lens-nocoda6
+description: Read sites of a six-site looped lens for Inkling 2 Mini (plain readouts only; runs remotely).
+portability: family
+applies_to: {architectures: [Inkling2LoopForConditionalGeneration]}
+sets:
+  l21: "point:state.active & layers:21"
+  l19: "point:state.active & layers:19"
+  l18_moe: "point:mlp.mix & layers:18"
+  l22: "point:state.active & layers:22"
+  l11p2: "point:state.active & layers:11 & passes:2"
+lens:
+  model: thinkingmachines/Inkling-2-Mini
+  K: 5
+  variant: plain
+  filters: [content]
+  readouts:
+    - {set: l21, readout: plain}
+    - {set: l19, readout: plain}
+    - {set: l18_moe, readout: plain}
+    - {set: l21, readout: final_input_mix}
+    - {set: l22, readout: plain}
+    - {set: l11p2, readout: plain}

@@ -38,9 +38,10 @@ dependencies = [
     # (`interpretune.analysis.venngram`, #887) and the default view (`venngram.view`, #900). The floor is the one
     # finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
     "venngram>=0.1.0.dev0,<0.2.0",
-    # CEILING <5.23: transformers 5.23.0 breaks nnsight 0.8.2 model construction ("Impossible to guess which
-    # tokenizer", #1002). Lift it once an nnsight release or a transformers patch constructs gemma-2-2b again.
-    "transformers>=4.57.1,<5.23",
+    # CEILING <5.25: 5.24 is the first release with Inkling 2 Mini's modeling code (`inkling2_loop`, #1180). The
+    # earlier <5.23 ceiling guarded nnsight 0.8.2's model construction under 5.23 (#1002), which nnsight 0.8.3 (the
+    # pin since #1170) no longer fails. Raise it after validating the next minor release.
+    "transformers>=4.57.1,<5.25",
     "tabulate >= 0.9.0",
     # FLOOR >=4.1.0: from 4.1.0 every Parquet write is page-indexed by default (`ParquetDatasetWriter` defaults
     # `write_page_index=True`), and `push_to_hub` writes through it, so a published AnalysisStore is range-readable.
