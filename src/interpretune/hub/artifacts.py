@@ -29,7 +29,7 @@ IT_ARTIFACT_ENVELOPE = "it_artifact.json"
 #: fields never bump it (readers ignore unknown keys by contract), so the only thing a version
 #: change communicates is "a reader that does not understand this cannot be correct". See
 #: `docs/analysis_store_serialization.md` for the policy and the rejected major.minor alternative.
-ARTIFACT_SCHEMA_VERSION = 2
+ARTIFACT_SCHEMA_VERSION = 3
 
 #: The oldest schema this code READS. Hub artifacts outlive the code that wrote them, so the
 #: reader accepts a WINDOW, never a single version; raising this floor retires published

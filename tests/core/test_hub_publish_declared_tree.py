@@ -80,6 +80,30 @@ class TestExtraFilesDeclaration:
         with pytest.raises(ValueError, match="resolves outside"):
             build_component_tree(root, tmp_path / "out2")
 
+    def test_an_unshipped_implementation_module_is_refused(self, tmp_path):
+        """A definition naming a module of the component that the tree would not contain is refused at staging, not
+        discovered as an import error in the consumer's cache; a declared one ships, and a module of an installed
+        package (absent from the component) is not the component's to ship."""
+        from interpretune.hub.publish import build_component_tree
+
+        root = _component(tmp_path, ["tests"])
+        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n")
+        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n")
+        with pytest.raises(ComponentManifestError, match=r"\['my_ops.py'\].*list them in `extra_files`"):
+            build_component_tree(root, tmp_path / "out")
+
+        root = _component(tmp_path / "declared", ["tests", "my_ops.py"])
+        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n")
+        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n")
+        build_component_tree(root, tmp_path / "out2")
+        assert (tmp_path / "out2" / "my_ops.py").is_file()
+
+        root = _component(tmp_path / "installed", ["tests"])
+        (root / "ops.yaml").write_text(
+            "my_op:\n  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n"
+        )
+        build_component_tree(root, tmp_path / "out3")
+
     def test_the_card_lists_the_extras(self):
         from interpretune.hub.cards import generate_component_card
 

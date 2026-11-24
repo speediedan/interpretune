@@ -32,6 +32,7 @@ class StoreSubject:
             ``schema_version``.
         dictionaries: The latent dictionaries attached to the model, each a mapping with a ``kind``
             (``"sae_lens"`` or ``"circuit_tracer"``) and the identifiers that kind publishes under.
+        n_layers: The model's block count, when its config states one.
     """
 
     model_id: str
@@ -40,6 +41,7 @@ class StoreSubject:
     tokenizer_id: str | None = None
     component_map: dict[str, Any] | None = None
     dictionaries: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    n_layers: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id:
@@ -48,7 +50,7 @@ class StoreSubject:
     def to_dict(self) -> dict[str, Any]:
         """The envelope form: JSON-native, with every field present so an unknown reads as ``None``."""
         return {
-            "model": {"id": self.model_id, "revision": self.model_revision},
+            "model": {"id": self.model_id, "revision": self.model_revision, "n_layers": self.n_layers},
             "architecture": self.architecture,
             "tokenizer": {"id": self.tokenizer_id},
             "component_map": dict(self.component_map) if self.component_map else None,
@@ -69,12 +71,25 @@ class StoreSubject:
             tokenizer_id=tokenizer.get("id") if isinstance(tokenizer, dict) else None,
             component_map=record.get("component_map"),
             dictionaries=tuple(record.get("dictionaries") or ()),
+            n_layers=_int(model.get("n_layers")),
         )
 
 
 def _str(value: Any) -> str | None:
     """A non-empty string as itself, anything else as unknown: a stand-in object is not an identifier."""
     return value if isinstance(value, str) and value else None
+
+
+def _int(value: Any) -> int | None:
+    """A positive integer as itself, anything else as unknown."""
+    return value if type(value) is int and value > 0 else None
+
+
+def _n_layers(config) -> int | None:
+    """The block count a Hugging Face config states, of its text model when it nests one."""
+    nested = getattr(config, "get_text_config", None)
+    config = nested() if callable(nested) else config
+    return _int(getattr(config, "num_hidden_layers", None))
 
 
 def _hf_config(module) -> Any:
@@ -149,4 +164,5 @@ def subject_from_module(module) -> StoreSubject:
         tokenizer_id=_str(getattr(tokenizer, "name_or_path", None)),
         component_map=_component_map_record(architecture),
         dictionaries=_dictionaries(it_cfg),
+        n_layers=_n_layers(config),
     )

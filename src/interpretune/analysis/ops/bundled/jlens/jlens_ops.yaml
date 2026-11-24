@@ -93,6 +93,7 @@ jlens_read:
       datasets_dtype: int64
       array_shape: [null, null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_top_token_scores:
       datasets_dtype: float32
       array_shape: [null, null]
@@ -105,10 +106,12 @@ jlens_read:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_include_rms_scale:
       datasets_dtype: bool
       non_tensor: true
@@ -205,14 +208,17 @@ jlens_concept_probe:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_layer:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_kind:
       # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
       # readout recall, so results differing only in lens kind are not comparable, and without this field they are
@@ -302,6 +308,7 @@ jlens_sparse_inventory:
       datasets_dtype: object
       non_tensor: true
       sequence_type: false
+      site: {binds: tokens}
     jlens_inventory_coefficients:
       datasets_dtype: object
       non_tensor: true
@@ -314,10 +321,12 @@ jlens_sparse_inventory:
       datasets_dtype: int64
       non_tensor: true
       sequence_type: false
+      site: {binds: layer}
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
       sequence_type: false
+      site: {binds: tokens}
     jlens_kind:
       # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
       # readout recall, so results differing only in lens kind are not comparable, and without this field they are
