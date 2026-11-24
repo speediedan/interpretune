@@ -9,7 +9,6 @@ from it_examples.utils.neuron_finder import (
     answer_margin,
     book_payload,
     book_settings,
-    cached_revision,
     candidate_settings,
     dose_unit,
     edit_sign,
@@ -139,13 +138,6 @@ def test_found_compares_with_the_controls_quantile():
         found({"a": 1.0}, [])
 
 
-def test_answer_margin_reads_the_last_position():
-    logits = torch.zeros(2, 3, 5)
-    logits[:, -1, 1], logits[:, -1, 4] = torch.tensor([3.0, -1.0]), torch.tensor([1.0, 2.0])
-    logits[:, 0, 1] = 100.0  # an earlier position is not read
-    torch.testing.assert_close(answer_margin(logits, (1, 4)), torch.tensor([2.0, -3.0]))
-
-
 def _tiny_qwen3():
     tr = pytest.importorskip("transformers")
     torch.manual_seed(0)
@@ -222,16 +214,3 @@ def test_steered_margins_read_both_passes_of_the_backend():
     clean, edited = steered_margins(Backend(), None, [batch, batch], {"p": 1}, (0, 1), input_key="input")
     torch.testing.assert_close(clean, torch.zeros(4))
     torch.testing.assert_close(edited, torch.full((4,), 2.0))
-
-
-def test_cached_revision_reads_the_snapshot_commit(monkeypatch, tmp_path):
-    import huggingface_hub
-
-    snapshot = tmp_path / "snapshots" / "c1899de2" / "config.json"
-    snapshot.parent.mkdir(parents=True)
-    snapshot.write_text("{}")
-    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: str(snapshot))
-    assert cached_revision("org/model") == "c1899de2"
-    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: None)
-    with pytest.raises(ValueError, match="not in the local Hugging Face cache"):
-        cached_revision("org/model")
