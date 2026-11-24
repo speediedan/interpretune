@@ -240,29 +240,33 @@ git-deps = [
     # generation. The row-group default is what makes an artifact streamable (readers prune per row
     # group), so corpora generated before this pin need regenerating to benefit.
     "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@f428a579132aa68061304c51492f79fb6d47dbda",
-    # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
-    # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
-    # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
-    # main with #218 (the `instrument` role kind renamed `artifact`, following venngram) and #213 (a run that ends on a
-    # gate veto keeps its reason in its last checkpoint), over #207 (a schedule thawing storage that cannot require
-    # gradients is refused at compile, for every view), #202 (a phase restores one earlier phase's best, `best:<depth>`, and `PlateauTransition` can judge each
-    # phase against its own best), #195 (per-phase `refreeze` and `restore`) and #177 (venngram's address books,
-    # support record and registry lookup), which depends on venngram.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@edad63593dfada88a338ae7c72e17adc09651ffc",
-    # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
-    # The SHA is venngram main with #129 (a verified execution map for Inkling 2 Mini, so an address names a module by
-    # weight layer and execution pass), over #127 (attention head block sizes, `unit_block`, recorded in schema 6 component maps,
-    # and whole heads selected by address, `units: {heads: [...]}`), #126 (a base map found under a wrapper that
-    # forwards its model's config mounts at the model inside it), #114 (the standalone recipe document kind retired; a
-    # recipe lives in an address book) and #116-#122, over #113 (a view's roles assigned by address as well as by name, `roles={role: address}`),
+    # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry, which
+    # carries the same URL and replaces the lock file's release pin at install. Kept here too so an install still gets
+    # it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler main with #241 (a
+    # phase's `promote` acts on a sharded model), over #237 (a restore chosen at the phase boundary) and #216, #222
+    # and #230 (gradient addresses and transforms), over #218 (the `instrument` role kind renamed `artifact`,
+    # following venngram) and #213 (a run that ends on a gate veto keeps its reason in its last checkpoint), over #207
+    # (a schedule thawing storage that cannot require gradients is refused at compile, for every view), #202 (a phase
+    # restores one earlier phase's best, `best:<depth>`, and `PlateauTransition` can judge each phase against its own
+    # best), #195 (per-phase `refreeze` and `restore`) and #177 (venngram's address books, support record and registry
+    # lookup), which depends on venngram.
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@91d349cff2c0585fc188a1b5b693e2d72a7671db",
+    # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release. The
+    # SHA is venngram main with #134 (the default `promote` acts on `DTensor` parameters), over #129 (a verified
+    # execution map for Inkling 2 Mini, so an address names a module by weight layer and execution pass), over #127
+    # (attention head block sizes, `unit_block`, recorded in schema 6 component maps, and whole heads selected by
+    # address, `units: {heads: [...]}`), #126 (a base map found under a wrapper that forwards its model's config
+    # mounts at the model inside it), #114 (the standalone recipe document kind retired; a recipe lives in an address
+    # book) and #116-#122, over #113 (a view's roles assigned by address as well as by name, `roles={role: address}`),
     # #108 (fractional layer bounds), #106 (unit sets naming the gradient axis) and #105 (graph subset documents, and
-    # treatments that apply them in another prompt), over #102 (modules registered beside
-    # the mapped model, `attached=`, placed at the module a hook splices them into), #95 (cooperative roles checked against promotions and earlier declarations) and #104
-    # (recipe target qualifiers that would be ignored are refused), over #84 (the `instrument` role kind renamed
-    # `artifact`, the old name read with a deprecation warning until 0.2), #56 (a reader passes over registry documents newer than it reads, so the
-    # default view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner
-    # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
-    "venngram @ git+https://github.com/speediedan/venngram@c49e5f58a6ac9d65f6a40cb06eae35265299f543",
+    # treatments that apply them in another prompt), over #102 (modules registered beside the mapped model,
+    # `attached=`, placed at the module a hook splices them into), #95 (cooperative roles checked against promotions
+    # and earlier declarations) and #104 (recipe target qualifiers that would be ignored are refused), over #84 (the
+    # `instrument` role kind renamed `artifact`, the old name read with a deprecation warning until 0.2), #56 (a
+    # reader passes over registry documents newer than it reads, so the default view survives a registry schema
+    # change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51 (a base map mounted under a
+    # wrapper root), #48 and #45 (base and overlay maps).
+    "venngram @ git+https://github.com/speediedan/venngram@735e5dbb418894622517decd8b874da114ee7ddb",
     # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
     # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
     # requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the three differ.
@@ -354,10 +358,10 @@ override-dependencies = [
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@edad63593dfada88a338ae7c72e17adc09651ffc",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@91d349cff2c0585fc188a1b5b693e2d72a7671db",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@c49e5f58a6ac9d65f6a40cb06eae35265299f543",
+    "venngram @ git+https://github.com/speediedan/venngram@735e5dbb418894622517decd8b874da114ee7ddb",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
