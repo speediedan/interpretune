@@ -28,11 +28,19 @@ from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
 
 import interpretune.utils.neuronpedia_dashboard_pipeline as dashboard_pipeline
 from interpretune.utils.import_utils import _NEURONPEDIA_UTILS_AVAILABLE
+from interpretune.utils.neuronpedia_db_utils import DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS
 from interpretune.utils.neuronpedia_source_conflicts import ConflictResolution, SourceSetOccupancy
 from interpretune.utils.neuronpedia_dashboard_pipeline import (
     NeuronpediaDashboardPipelineConfig,
     completed_layers_from_logs,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_db_url(monkeypatch):
+    """The pipeline imports into the database the environment names, so these tests run without one named."""
+    for name in DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def _load_dashboard_launcher_module() -> ModuleType:
@@ -4596,3 +4604,149 @@ def test_legacy_runner_command_leaves_a_frozen_baseline_on_its_own_wrapper(tmp_p
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
     assert not any(arg.startswith(("--model-wrapper", "--bridge-", "--no-bridge-")) for arg in command)
+
+
+def _db_url_config(tmp_path: Path, **overrides) -> NeuronpediaDashboardPipelineConfig:
+    return NeuronpediaDashboardPipelineConfig(
+        **{
+            **dict(
+                model_name="gemma-3-1b-it",
+                model_layers=26,
+                sae_set="gemmascope-2-transcoder-262k",
+                neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+                neuronpedia_source_set_description="Transcoder - 262k - RTE",
+                creator_name="Google DeepMind",
+                release_id="gemma-scope-2",
+                release_title="Gemma Scope 2",
+                release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+                hf_weights_repo_id="google/gemma-scope-2-1b-it",
+                hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+                hook_point="hook_resid_post",
+                prompts_huggingface_dataset_path="aps/super_glue",
+                start_layer=0,
+                end_layer=0,
+                sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+                run_root=tmp_path / "runs",
+                export_root=tmp_path / "exports",
+                saedashboard_repo_root=tmp_path,
+                saelens_repo_root=tmp_path,
+                neuronpedia_utils_root=tmp_path,
+                interpretune_env_file=None,
+            ),
+            **overrides,
+        }
+    )
+
+
+ENV_FILE_URL = "postgres://u:secret@127.0.0.1:6543/from_env_file"
+
+
+@pytest.fixture
+def env_file(tmp_path: Path) -> Path:
+    path = tmp_path / "it.env"
+    path.write_text(f"LOCAL_NEURONPEDIA_DB_URL={ENV_FILE_URL}\n", encoding="utf-8")
+    return path
+
+
+def test_a_config_without_a_db_url_imports_into_the_env_files_database(tmp_path, monkeypatch, env_file):
+    """Every step that touches the database gets the URL the env file names, the occupied-set check included."""
+    asked: list[str | None] = []
+
+    class _Stop(Exception):
+        pass
+
+    def _services(*, local_db_url, webapp_url):
+        asked.append(local_db_url)
+        raise _Stop
+
+    def _conflict(local_db_url, **kwargs):
+        asked.append(local_db_url)
+        return _unoccupied_resolution(local_db_url, **kwargs)
+
+    monkeypatch.setattr(dashboard_pipeline, "check_local_neuronpedia_services", _services)
+    monkeypatch.setattr(dashboard_pipeline, "resolve_source_set_conflict", _conflict)
+    config = _db_url_config(tmp_path, interpretune_env_file=env_file)
+    with pytest.raises(_Stop):
+        dashboard_pipeline.run_dashboard_pipeline(config)
+    assert asked == [ENV_FILE_URL, ENV_FILE_URL]
+    assert config.local_db_url == ENV_FILE_URL
+
+
+@pytest.mark.parametrize("set_in", ["argument", "environment"])
+def test_an_explicit_db_url_and_the_environment_win_over_the_env_file(tmp_path, monkeypatch, env_file, set_in):
+    explicit = "postgres://u:secret@127.0.0.1:5432/chosen"
+    if set_in == "environment":
+        monkeypatch.setenv("LOCAL_NEURONPEDIA_DB_URL", explicit)
+    config = _db_url_config(
+        tmp_path, interpretune_env_file=env_file, local_db_url=explicit if set_in == "argument" else None
+    )
+    dashboard_pipeline._resolve_pipeline_local_db_url(config, dashboard_pipeline._build_generation_env(config))
+    assert config.local_db_url == explicit
+
+
+def test_a_run_that_imports_nothing_resolves_no_db_url(tmp_path, env_file):
+    config = _db_url_config(tmp_path, interpretune_env_file=env_file, import_to_local_db=False)
+    dashboard_pipeline._resolve_pipeline_local_db_url(config, dashboard_pipeline._build_generation_env(config))
+    assert config.local_db_url is None
+
+
+def test_an_import_with_no_db_url_anywhere_is_refused_before_generation(tmp_path, monkeypatch):
+    """Nothing is assumed: the refusal names the variables to set and the run starts no process."""
+
+    def _services(*, local_db_url, webapp_url):
+        # The real check's resolution step, without its connection attempts.
+        with pytest.raises(dashboard_pipeline.NeuronpediaDBError) as refused:
+            dashboard_pipeline.resolve_local_neuronpedia_db_url(local_db_url)
+        return SimpleNamespace(db_available=False, db_error=str(refused.value))
+
+    def _unexpected_command(*args, **kwargs):
+        raise AssertionError("generation started without a database to import into")
+
+    monkeypatch.setattr(dashboard_pipeline, "check_local_neuronpedia_services", _services)
+    monkeypatch.setattr(dashboard_pipeline, "_layer_runner_command", _unexpected_command)
+    with pytest.raises(RuntimeError, match="DATABASE_URL in the environment.*--skip-local-db-import"):
+        dashboard_pipeline.run_dashboard_pipeline(_db_url_config(tmp_path))
+
+
+def test_committed_dashboard_configs_name_no_database():
+    """A URL in a committed config is right for one machine and cannot be corrected from the environment."""
+    config_dir = Path(dashboard_pipeline.__file__).resolve().parents[2] / "it_examples" / "neuronpedia_dashboard"
+    configs = sorted(config_dir.glob("*.yaml"))
+    assert configs, f"no dashboard configs found in {config_dir}"
+    for path in configs:
+        assert "local_db_url" not in path.read_text(encoding="utf-8"), path.name
+        assert yaml.safe_load(path.read_text(encoding="utf-8")), path.name
+
+
+@pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="reads the runner's memory from /proc")
+def test_runner_memory_is_the_spawned_process_not_the_pipeline(tmp_path, caplog):
+    """The peak reported after a layer is the runner's, whatever the pipeline process itself holds."""
+    test_logger = logging.getLogger("test_runner_memory")
+    test_logger.propagate = True
+    caplog.set_level(logging.INFO, logger=test_logger.name)
+    allocate = "import time; held = bytearray(b'x') * (300 * 2**20); time.sleep(6)"
+    process = subprocess.Popen([sys.executable, "-c", allocate], text=True)
+    memory = dashboard_pipeline._RunnerMemory(process.pid)
+    return_code = dashboard_pipeline._monitor_process(
+        process,
+        output_dir=tmp_path,
+        logger=test_logger,
+        heartbeat_seconds=1,
+        stall_timeout_seconds=0,
+        runner_memory=memory,
+    )
+    assert return_code == 0
+    assert memory.hwm_kib is not None and 300 * 1024 <= memory.hwm_kib < 600 * 1024
+    assert memory.rss_kib is None, "the runner has exited, so it has no current resident memory"
+
+    dashboard_pipeline._log_host_memory(test_logger, stage="after_generation", layer_num=3, runner=memory)
+    heartbeats = [m for m in caplog.messages if m.startswith("Heartbeat")]
+    assert heartbeats and all("runner_rss_gib=" in m and "pipeline_rss_gib=" in m for m in heartbeats)
+    (line,) = [m for m in caplog.messages if m.startswith("HostMemory")]
+    assert f"runner_rss_gib=na runner_hwm_gib={memory.hwm_kib / 2**20:.2f} pipeline_rss_gib=" in line
+    assert " rss_gib=" not in line and " hwm_gib=" not in line
+
+
+def test_host_memory_before_any_runner_names_the_pipeline():
+    snapshot = dashboard_pipeline._host_memory_snapshot()
+    assert snapshot.startswith("pipeline_rss_gib=") and "runner_" not in snapshot

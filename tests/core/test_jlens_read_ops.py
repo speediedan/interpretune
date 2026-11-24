@@ -7,6 +7,8 @@ aligned with itself, and a vector built from known atoms must be recovered as th
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import torch
 
@@ -204,7 +206,7 @@ class TestJLensRead:
 
     def test_fit_provenance_travels_with_the_result(self, synthetic_lens):
         out = jlens_ops.jlens_read_impl(_module(), _batch(torch.randn(1, 2, D)), None, 0)
-        assert out["jlens_provenance"]["results"]["prompts_fitted"] == 277
+        assert json.loads(out["jlens_provenance_json"])["results"]["prompts_fitted"] == 277
 
 
 class _MixedTok:
@@ -423,6 +425,43 @@ class TestSparseInventory:
             _module(), _batch(torch.randn(1, 1, D)), None, 0, jlens_inventory_k=5, jlens_positions=[0]
         )
         assert all(c >= 0.0 for c in out["jlens_inventory_coefficients"][0])
+
+
+class TestStoredReads:
+    """Each op's result is written to an AnalysisStore through the op's own schema and read back."""
+
+    def _stored_row(self, op_name, impl, **kwargs):
+        from interpretune.analysis import analysis_store_from_batches
+        from tests.core.test_analysis_store_dtype_fidelity import _module as dims_module
+
+        torch.manual_seed(1)
+        out = impl(_module(), _batch(torch.randn(2, 3, D)), None, 0, jlens_positions=[0, 1], **kwargs)
+        written = {name: out[name] for name in out if name != "cache"}
+        return written, analysis_store_from_batches(dims_module(), [out], op=op_name).dataset[0]
+
+    @pytest.mark.parametrize(
+        ("op_name", "kwargs", "nested"),
+        [
+            ("jlens_read", {"jlens_top_k": 2}, ["jlens_top_token_strings"]),
+            ("jlens_concept_probe", {"jlens_concept_token_ids": [1, 2, 4]}, []),
+            (
+                "jlens_sparse_inventory",
+                {"jlens_inventory_k": 2},
+                ["jlens_inventory_token_ids", "jlens_inventory_coefficients"],
+            ),
+        ],
+    )
+    def test_every_column_reads_back_as_the_op_returned_it(self, synthetic_lens, op_name, kwargs, nested):
+        written, row = self._stored_row(op_name, getattr(jlens_ops, f"{op_name}_impl"), **kwargs)
+        tensors = [name for name, value in written.items() if isinstance(value, torch.Tensor)]
+        for name in tensors:
+            torch.testing.assert_close(row[name], written[name])
+        for name in [*nested, "jlens_layer", "jlens_kind", "jlens_provenance_json"]:
+            assert row[name] == written[name], name
+        assert json.loads(row["jlens_provenance_json"])["results"]["prompts_fitted"] == 277
+        if "jlens_basis" in written:
+            assert row["jlens_basis"] == written["jlens_basis"] == "jlens_folded"
+        assert tensors, "the op returned no tensor, so nothing numeric was compared"
 
 
 class TestFoldChoice:
