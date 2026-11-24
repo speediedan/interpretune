@@ -681,11 +681,13 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert len(record["fsdp_units"]) == 3
 
 
-@pytest.fixture(scope="module")
-def addressed_reference(tmp_path_factory):
-    out_dir = tmp_path_factory.mktemp("dist_addressed_reference")
-    _launch("single", out_dir, "--addressed")
-    return json.loads((out_dir / "single_rank0.json").read_text())
+@pytest.fixture(scope="module", params=["roles", "promote"])
+def addressed_reference(request, tmp_path_factory):
+    """One process's record, with how the latent model is attached: tunable (``roles``), or frozen and promoted in
+    the second phase (``promote``)."""
+    out_dir = tmp_path_factory.mktemp(f"dist_addressed_reference_{request.param}")
+    _launch("single", out_dir, "--addressed", request.param)
+    return request.param, json.loads((out_dir / "single_rank0.json").read_text())
 
 
 # the last block's MLP, then the latent model too, then the first block's attention too: what the worker's addresses
@@ -701,10 +703,11 @@ ADDRESSED_EPOCHS = [_MLP, _MLP | _PROBE, _MLP | _PROBE | {f"model.layers.0.atten
 @pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
 def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extra, addressed_reference, tmp_path):
     """A schedule naming what to tune by layer and component and by role (never by parameter name) thaws the same
-    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values."""
-    _launch(placement, tmp_path, *extra, "--addressed")
+    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values, a
+    frozen latent model the second phase promotes included."""
+    attached, reference = addressed_reference
+    _launch(placement, tmp_path, *extra, "--addressed", attached)
     records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
-    reference = addressed_reference
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
     for record in (reference, *records):
@@ -715,20 +718,6 @@ def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extr
         for name, values in reference["probe_params"].items():
             assert record["probe_params"][name] == pytest.approx(values, rel=0, abs=1e-6), name
     assert "" in records[0]["fsdp_units"] and (placement == "ddp" or len(records[0]["fsdp_units"]) == 3)
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
-@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
-@pytest.mark.skipif(not _FTS_AVAILABLE, reason="promotion is finetuning-scheduler's")
-@pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
-def test_promoting_a_frozen_latent_model_is_refused_by_name_when_sharded(placement, extra, tmp_path):
-    """Finetuning-scheduler cannot promote an ``artifact`` tensor of a sharded model, and says so on every rank
-    before training; one process promotes it (``test_tuning_latents.py``), so the same schedule is not silently
-    different."""
-    _launch(placement, tmp_path, *extra, "--addressed", "promote")
-    for rank in range(2):
-        record = json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text())
-        assert "`promote` tensors of a sharded model" in record["refused"]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")

@@ -330,8 +330,8 @@ unit's, so the hook that applies it inside a block sees the whole operand, and b
 
 A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
 `fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
-values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
-the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+values. The same holds for a phase that promotes a frozen latent model with `promote` (attached with `frozen=True`, so
+its tensors are artifacts until then).
 
 ## Limits
 
@@ -340,7 +340,7 @@ the phases: attach the latent model already trainable rather than `frozen=True`,
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
   process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
-  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
+  accelerators.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
