@@ -481,10 +481,12 @@ feature_intervention_forward:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     intervention_specs_json:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
       site:
         - {binds: layer}
         - {binds: tokens}
@@ -493,6 +495,7 @@ feature_intervention_forward:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
       site:
         - {binds: layer}
         - {binds: tokens}

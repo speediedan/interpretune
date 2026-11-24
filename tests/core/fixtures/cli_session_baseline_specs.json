@@ -2704,6 +2704,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"
@@ -2946,6 +2947,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"

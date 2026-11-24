@@ -309,6 +309,88 @@ def test_a_latent_model_column_takes_a_storable_dtype(handle_dtype, expected):
     assert latent_model_column_dtype(handle_dtype) == expected
 
 
+#: Text column shapes a schema can declare, with a value each holds as written.
+TEXT_SHAPES = {
+    "string": (dict(sequence_type=False), "a string"),
+    "list": (dict(sequence_type=True), ["a", "bc"]),
+    "nested": (dict(array_shape=(None, None, None), sequence_type=False), [[["a", "b"], ["c"]], [["d"]]]),
+}
+
+
+def _write_text(kind: str, value, declared: str = "string"):
+    return _write(_op(declared, "scalar", **TEXT_SHAPES[kind][0], non_tensor=True), [value])
+
+
+@pytest.mark.parametrize("kind", list(TEXT_SHAPES))
+def test_text_reads_back_as_it_was_written(kind, tmp_path, monkeypatch):
+    """Strings, lists of strings and nested lists of strings come back as themselves from every reader."""
+    written = TEXT_SHAPES[kind][1]
+    for reader, rows in _read_all(_write_text(kind, written), tmp_path, monkeypatch).items():
+        assert rows == [written], reader
+
+
+@pytest.mark.parametrize("kind", list(TEXT_SHAPES))
+def test_a_missing_text_value_is_stored_as_null(kind):
+    assert _write_text(kind, None).dataset[0]["x"] is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "value", "shown"),
+    [
+        ("string", ["a", "b"], "given a list"),
+        ("string", {"a": 1}, "given a dict"),
+        ("string", 3, "given a int"),
+        ("string", True, "given a bool"),
+        ("string", torch.arange(3), "given a Tensor"),
+        ("list", "abc", "the list of its characters"),
+        ("list", [["a"], ["b"]], "given a list"),
+        ("list", [1, 2], "given a int"),
+        ("list", {"a": "b"}, "given a dict"),
+        ("nested", [["a"]], "the list of its characters"),
+    ],
+)
+def test_a_value_a_text_column_would_change_is_refused(kind, value, shown):
+    """``datasets`` stores each of these without an error, as a repr, as digits or as a list of characters."""
+    with pytest.raises(StoreDtypeError, match=f"'x'.*{shown}"):
+        _write_text(kind, value)
+
+
+def test_an_intermediate_column_is_not_checked_as_text():
+    """An intermediate-only column is declared ``object``, which compiles to ``string``, and is never stored."""
+    from interpretune.analysis import AnalysisBatch, analysis_store_from_batches
+    from interpretune.analysis.ops.base import AnalysisOp, ColCfg, OpSchema
+
+    text = dict(datasets_dtype="string", non_tensor=True, sequence_type=False)
+    op = AnalysisOp(
+        name="text_probe",
+        description="one stored column and one intermediate",
+        output_schema=OpSchema({"x": ColCfg(**text), "cache": ColCfg(**text, intermediate_only=True)}),
+    )
+    store = analysis_store_from_batches(_module(), [AnalysisBatch(x="kept", cache={"hook": torch.ones(1)})], op=op)
+    assert store.dataset.column_names == ["x"] and store.dataset[0]["x"] == "kept"
+
+
+def test_bundled_ops_declare_no_stored_object_column():
+    """A bundled op's stored columns declare a type they hold: ``object`` compiles to a plain string column."""
+    from pathlib import Path
+
+    import yaml
+
+    import interpretune.analysis.ops.bundled as bundled
+
+    assert bundled.__file__ is not None
+    files = sorted(Path(bundled.__file__).parent.glob("*/*.yaml"))
+    declared, stored_objects = 0, []
+    for path in files:
+        for op_name, op_def in yaml.safe_load(path.read_text(encoding="utf-8")).items():
+            for col, cfg in (op_def.get("output_schema") or {}).items() if isinstance(op_def, dict) else ():
+                declared += 1
+                if cfg.get("datasets_dtype") == "object" and not cfg.get("intermediate_only"):
+                    stored_objects.append(f"{op_name}.{col}")
+    assert files and declared, "read no bundled schema"
+    assert stored_objects == []
+
+
 def test_a_store_written_from_batches_carries_its_column_configs(tmp_path, monkeypatch):
     """The column configs travel with the store, so a dynamic-dimension swap is undone on every read.
 

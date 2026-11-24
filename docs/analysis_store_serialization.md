@@ -114,6 +114,29 @@ back as `float32` or `int64`. A store written by `analysis_store_from_batches` a
 `dyn_dim` column read back with its dimensions still swapped and its pushed envelope recorded no `col_cfg`; it now
 carries them, as the runner's stores do.
 
+### Text columns
+
+`datasets` encodes whatever a string column is given, so a value of the wrong kind is stored as text that looks like
+data. `AnalysisOp.process_batch` refuses those with `StoreDtypeError`, naming the column and what to declare. `None`
+is a null at any level.
+
+| Written into the column | Before | Now |
+| --- | --- | --- |
+| a list, dict or tensor into a string column | its Python repr | refused |
+| a number or bool into a string column | its digits or `"True"` | refused |
+| a string into a list-of-strings column (`sequence_type: true`) | the list of its characters | refused |
+| lists nested deeper than the column declares | the inner lists' reprs | refused |
+
+To store structured values, declare their shape or encode them:
+
+- **Nested lists** of strings or numbers: `datasets_dtype` of the element, `non_tensor: true`, `sequence_type: false`
+  and one `array_shape` entry per level (`[null, null]` for a list of lists, whose rows may differ in length).
+- **Anything else:** `json.dumps(value)` into a string column named `<column>_json`, which an op reads back with
+  `load_json_field`.
+
+A column declared `datasets_dtype: object` compiles to a plain string column, so a stored `object` column holds strings
+only. `object` is for `intermediate_only` columns, which are never stored.
+
 ### AnalysisStore access
 
 [AnalysisStore](../src/interpretune/analysis/core.py#L348) wraps a dataset and always reads it back through the `interpretune` formatter.

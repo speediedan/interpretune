@@ -139,6 +139,9 @@ def pull_op_collection(
     # An op collection's YAMLs name Python implementations inside the repo; the impl modules have to be
     # local before the compiler resolves them, and they are not enumerated by the manifest.
     _pull_collection_impl_modules(repo_id, commit, root, token, paths)
+    # What the collection publishes beside its definitions (a module its implementation imports, data it reads)
+    # is declared in `extra_files`; a consumer that received only the definitions would fail on first use.
+    _pull_collection_extra_files(repo_id, commit, root, token, manifest)
     _record_or_report_pin(repo_id, revision, commit, root)
     return paths, commit
 
@@ -177,23 +180,12 @@ def _pull_collection_impl_modules(
     Resolved from the declared op YAMLs rather than from a manifest field: the implementation reference
     already lives in the op definition, so a second declaration could disagree with it.
     """
-    import yaml
     from huggingface_hub import hf_hub_download
     from huggingface_hub.errors import EntryNotFoundError
 
     from interpretune.hub.components import _TELEMETRY
 
-    modules: set[str] = set()
-    for path in op_yaml_paths:
-        body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(body, dict):
-            continue
-        for op in body.values():
-            impl = op.get("implementation") if isinstance(op, dict) else None
-            if isinstance(impl, str) and "." in impl:
-                # `pkg.module.func` -> `pkg/module.py`; only in-repo relative modules can be fetched
-                modules.add(impl.rsplit(".", 1)[0].replace(".", "/") + ".py")
-    for rel in sorted(modules):
+    for rel in sorted(implementation_module_paths(op_yaml_paths)):
         try:
             hf_hub_download(repo_id, rel, revision=commit, cache_dir=cache_dir, token=token, **_TELEMETRY)
         except EntryNotFoundError:
@@ -202,4 +194,64 @@ def _pull_collection_impl_modules(
             continue
 
 
-__all__ = ["OpCollectionManifestError", "declared_op_files", "pull_op_collection", "resolve_cached_op_files"]
+def implementation_module_paths(op_yaml_paths: list[Path]) -> set[str]:
+    """The repo-relative module file (``pkg/module.py``) of every ``implementation:`` in these op YAMLs.
+
+    A path the repo does not contain names a module of an installed package (interpretune's own, say), which is resolved
+    by import and is not the collection's to ship.
+    """
+    import yaml
+
+    modules: set[str] = set()
+    for path in op_yaml_paths:
+        body = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        if not isinstance(body, dict):
+            continue
+        for op in body.values():
+            impl = op.get("implementation") if isinstance(op, dict) else None
+            if isinstance(impl, str) and "." in impl:
+                # `pkg.module.func` -> `pkg/module.py`
+                modules.add(impl.rsplit(".", 1)[0].replace(".", "/") + ".py")
+    return modules
+
+
+def _pull_collection_extra_files(
+    repo_id: str, commit: str, cache_dir: str, token: str | None, manifest: dict
+) -> list[str]:
+    """Fetch the files a collection declares in ``extra_files``, at the commit its manifest resolved to.
+
+    An entry may name a file or a directory, so the repo is listed once at that commit and every file equal to or under
+    an entry is fetched. An entry the repo does not contain is refused by name: the collection would load and then fail
+    on first use, far from the cause.
+    """
+    extras = [str(rel).strip("/") for rel in manifest.get("extra_files") or []]
+    if not extras:
+        return []
+    from huggingface_hub import HfApi, hf_hub_download
+
+    from interpretune.hub.components import _TELEMETRY
+
+    repo_files = HfApi(token=token).list_repo_files(repo_id, revision=commit)
+
+    def under(path: str, rel: str) -> bool:
+        return path == rel or path.startswith(rel + "/")
+
+    missing = [rel for rel in extras if not any(under(f, rel) for f in repo_files)]
+    if missing:
+        raise OpCollectionManifestError(
+            f"{repo_id}@{commit[:12]} declares extra files {missing} that the repo does not contain at that commit; "
+            "re-publish the collection with them (interpretune.hub.publish_component stages every declared extra)."
+        )
+    wanted = sorted(f for f in repo_files if any(under(f, rel) for rel in extras))
+    for rel in wanted:
+        hf_hub_download(repo_id, rel, revision=commit, cache_dir=cache_dir, token=token, **_TELEMETRY)
+    return wanted
+
+
+__all__ = [
+    "OpCollectionManifestError",
+    "declared_op_files",
+    "implementation_module_paths",
+    "pull_op_collection",
+    "resolve_cached_op_files",
+]
