@@ -765,7 +765,9 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
     FSDP2 gathers a unit's parameters in hooks on ``forward``, so a submodule called directly (an nnsight model's
     Hugging Face module, which nnsight calls rather than the interpretune module) or through another method (a
     transcoder's ``encode``) would compute with sharded parameters. The module declares these calls with
-    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered.
+    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered. An attached
+    latent model (``interpretune.tuning.latents``) is called through ``encode`` and ``decode`` by its splice; one that
+    the plan makes its own unit has both registered, and one the plan leaves to the root unit is gathered with it.
 
     Raises:
         MisconfigurationException: If a declared submodule is not its own FSDP2 unit, naming the plan keys to add.
@@ -781,6 +783,10 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
             missing.setdefault(type(submodule).__name__, []).append(name)
             continue
         _register_forward_methods(submodule, methods, register_fsdp_forward_method)
+    declared = {id(submodule) for _, submodule, _ in entries}
+    for latent in (getattr(module, "latent_models", None) or {}).values():
+        if isinstance(latent, FSDPModule) and id(latent) not in declared:
+            _register_forward_methods(latent, ("encode", "decode"), register_fsdp_forward_method)
     if missing:
         names = [n for group in missing.values() for n in group]
         raise MisconfigurationException(

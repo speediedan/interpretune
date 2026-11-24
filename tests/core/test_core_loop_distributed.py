@@ -998,7 +998,7 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
-@pytest.mark.parametrize("extra", [(), ("--loader", "dcp")], ids=["rank0", "dcp"])
+@pytest.mark.parametrize("extra", [(), ("--loader", "dcp"), ("--latent-unit",)], ids=["rank0", "dcp", "own-unit"])
 def test_a_latent_model_beside_a_meta_built_model_keeps_rank_zeros_values(tiny_gpt2_checkpoint, tmp_path, extra):
     """Materializing a meta-built module discards every parameter's value, and the checkpoint gives back only the
     model's: an attached latent model's are kept, rank 0's on every rank, so the spliced logits match one

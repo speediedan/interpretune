@@ -95,6 +95,7 @@ def main() -> None:
     parser.add_argument("--reference", default=None, help="a hub-layout checkpoint of the model, to compare with")
     parser.add_argument("--lora", action="store_true", help="LoRA on the model and on rank 0's copy (GPT-2, rank0)")
     parser.add_argument("--latent", action="store_true", help="a latent model with values beside the meta-built model")
+    parser.add_argument("--latent-unit", action="store_true", help="make the attached latent model its own FSDP2 unit")
     parser.add_argument("--train-step", action="store_true", help="one SGD step after loading, against one process")
     args = parser.parse_args()
 
@@ -144,7 +145,7 @@ def main() -> None:
         splice(holder, seed=run.rank)  # each rank's own values, of which rank 0's are placed (in the root unit)
         splice(expected_holder, seed=0)
     try:
-        place_module(holder, run, {f"class:{block}": {}})
+        place_module(holder, run, {f"class:{block}": {}, **({"class:Latent": {}} if args.latent_unit else {})})
     except MisconfigurationException as err:
         record["refused"] = str(err)
     else:
