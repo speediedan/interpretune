@@ -227,6 +227,33 @@ def test_site_positions_follow_each_site():
     assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 6, "b": 3, "c": 6}
 
 
+def test_the_op_reports_where_each_site_was_read(monkeypatch):
+    # one read position per prompt is not where a question-end site was read: the output has to say so per site
+    from types import SimpleNamespace
+
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    ops = _ops()
+    table = {
+        "spec": {"K": 2, "filters": [], "book": "b"},
+        "sites": [{"label": "L15p3:coda", "position": "read"}, {"label": "L21:active", "position": "question_end"}],
+    }
+    read_at = []
+
+    def top_ids(ids, where):
+        read_at.append(dict(where))
+        return {lab: torch.arange(100)[None] for lab in where}
+
+    runtime = SimpleNamespace(table=table, tok=_Tok(), vocab=[chr(65 + i) for i in range(100)], top_ids=top_ids)
+    monkeypatch.setattr(ops, "_local_runtime", lambda *args: runtime)
+    rows = ["Uab?c.M", "abcd.eM"]  # a question in a user turn, and a plain prompt
+    batch = {"input_ids": torch.tensor([[ord(c) for c in r] for r in rows])}
+    out = ops.looped_lens_read_impl(SimpleNamespace(), AnalysisBatch(), batch, 0, looped_lens_table="t.json")
+    assert read_at == [{"L15p3:coda": 6, "L21:active": 3}, {"L15p3:coda": 6, "L21:active": 6}]
+    assert out.looped_lens_site_positions.tolist() == [[6, 3], [6, 6]]
+    assert out.looped_lens_positions.tolist() == [6, 6]
+
+
 def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
     import venngram.book
     import venngram.maps
@@ -260,3 +287,131 @@ def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: _Map())
     with pytest.raises(ValueError, match="readout position 'answer' is not one this lens reads"):
         R.resolve_book(book, map_path)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the lens output as an AnalysisStore, and the store as the challenge's readouts
+# ---------------------------------------------------------------------------------------------------------------------
+LABELS = ["L15p3:coda", "L19:active", "L18:moe_in"]
+TOKENS = [[["Egypt", "Cairo"], ["Giza"], []], [["Paris", "France"], ["Lyon", "Nice"], ["Rhone"]]]
+
+
+def _op_batch(prompt_tokens, first: int):
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    n = len(prompt_tokens)
+    ab = AnalysisBatch()
+    ab.update(
+        looped_lens_labels=list(LABELS),
+        looped_lens_tokens=prompt_tokens,
+        looped_lens_top_ids=torch.arange(n * 3 * 100).reshape(n, 3, 100) + first,
+        looped_lens_positions=torch.arange(n),
+        looped_lens_site_positions=torch.arange(n)[:, None].expand(n, len(LABELS)).contiguous(),
+        looped_lens_book="books/example.yaml",
+    )
+    return ab
+
+
+@pytest.fixture
+def lens_store(tmp_path):
+    from types import SimpleNamespace
+
+    from interpretune.analysis.core import analysis_store_from_batches
+    from interpretune.analysis.ops.base import AnalysisOp
+    from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+    dispatcher = AnalysisOpDispatcher(yaml_paths=[COMPONENT], enable_hub_ops=False)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    dispatcher._cache_manager.cache_dir = cache
+    dispatcher.load_definitions()
+    op = dispatcher.get_op("looped_lens_read")
+    assert isinstance(op, AnalysisOp)
+    tok = SimpleNamespace(vocab_size=200058, model_max_length=4096)
+    module = SimpleNamespace(
+        datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=1)),
+        it_cfg=SimpleNamespace(),
+        model=SimpleNamespace(tokenizer=tok),
+        analysis_cfg=None,
+    )
+    # one prompt, then two in one call: rows of different prompt counts
+    return analysis_store_from_batches(module, [_op_batch(TOKENS[:1], 0), _op_batch(TOKENS, 1000)], op=op)
+
+
+def test_the_lens_output_survives_the_store(lens_store):
+    # a list of strings declared as `object` is stored as its repr; the columns must come back as the lists they were
+    row = lens_store.dataset[1]
+    assert row["looped_lens_labels"] == LABELS
+    assert [[list(s) for s in p] for p in row["looped_lens_tokens"]] == TOKENS
+    raw = lens_store.dataset.with_format(None)[0]["looped_lens_tokens"]
+    assert not isinstance(raw, str), raw
+
+
+def test_the_store_writes_the_challenge_readouts(lens_store, tmp_path):
+    R = _runtime()
+    ids = ["q0", "q1", "q2"]
+    expect_first = [
+        {"layer": 39, "tokens": ["Egypt", "Cairo"]},
+        {"layer": 42, "tokens": []},
+        {"layer": 43, "tokens": ["Giza"]},
+    ]
+    got = R.challenge_readouts(lens_store, ids)
+    assert [g["id"] for g in got] == ids and got[0]["readouts"] == expect_first
+    assert [r["layer"] for r in got[2]["readouts"]] == [39, 42, 43]
+    assert got[2]["readouts"][0]["tokens"] == ["Paris", "France"]
+    # the same rows read back from disk, and streamed, write the same file
+    from datasets import load_dataset
+
+    from interpretune.analysis.core import AnalysisStore
+
+    path = tmp_path / "rows.parquet"
+    lens_store.dataset.to_parquet(str(path))
+    fmt = {"col_cfg": lens_store.it_format_kwargs["col_cfg"]}
+    again = AnalysisStore(dataset=load_dataset("parquet", data_files=str(path), split="train"), it_format_kwargs=fmt)
+    assert R.challenge_readouts(again, ids) == got
+    stream = load_dataset("parquet", data_files=str(path), split="train", streaming=True)
+    assert R.challenge_readouts(AnalysisStore(dataset=stream, it_format_kwargs=fmt), ids) == got
+
+
+def test_the_visit_of_a_label_is_the_challenge_layer():
+    R = _runtime()
+    assert [
+        R.visit_index(x) for x in ("L0", "L6p1:coda", "L14p3:coda", "L15p3", "L17p3", "L18:moe_in", "L23:active")
+    ] == [0, 6, 38, 39, 41, 42, 47]
+    for bad in ("X3", "L15:coda", "L6p1:coda".replace("p1", ""), "L3p1", "L24", "L18p2"):
+        with pytest.raises(ValueError):
+            R.visit_index(bad)
+
+
+def test_readouts_refuse_what_the_challenge_would_not_take(lens_store):
+    R = _runtime()
+    with pytest.raises(ValueError, match="more prompts"):
+        R.challenge_readouts(lens_store, ["only-one"])
+    with pytest.raises(ValueError, match="prompts for"):
+        R.challenge_readouts(lens_store, ["q0", "q1", "q2", "q3"])
+    row = {"looped_lens_labels": ["L15p3:coda", "L15p3:active"], "looped_lens_tokens": [[["a"], ["b"]]]}
+    with pytest.raises(ValueError, match="at most"):
+        R.challenge_readouts([row], ["q0"])
+
+
+def test_readouts_take_one_token_position_per_prompt(lens_store):
+    # the challenge reads a prompt at a single position, and a book can place two of its sites at the question's end
+    R = _runtime()
+    rows = [dict(row) for row in lens_store.dataset]
+    assert R.challenge_readouts(rows, ["q0", "q1", "q2"])  # each prompt at one position, the prompts at different ones
+    moved = dict(rows[1], looped_lens_site_positions=[[4, 4, 4], [9, 3, 9]])
+    with pytest.raises(ValueError, match="read at 2 token positions"):
+        R.challenge_readouts([rows[0], moved], ["q0", "q1", "q2"])
+    got = R.challenge_readouts([rows[0], moved], ["q0", "q1", "q2"], allow_several_positions=True)
+    assert got == R.challenge_readouts(rows, ["q0", "q1", "q2"])
+    # a row that cannot say where its sites were read is refused, also when several positions are allowed
+    unknown = {k: v for k, v in rows[0].items() if k != "looped_lens_site_positions"}
+    for allow in (False, True):
+        with pytest.raises(ValueError, match="where their sites were read is unknown"):
+            R.challenge_readouts([unknown], ["q0"], allow_several_positions=allow)
+    for wrong, match in (
+        ([[4, 4]], "2 positions for 3 read sites"),
+        ([[4, 4, 4], [4, 4, 4]], "positions for 2 prompts"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            R.challenge_readouts([dict(rows[0], looped_lens_site_positions=wrong)], ["q0"])

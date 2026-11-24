@@ -40,7 +40,13 @@ def _edit() -> dict:
 def lm():
     from nnsight import LanguageModel
 
-    return LanguageModel("gpt2", device_map="cpu", dispatch=True)
+    lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+    # gpt2's safetensors file leaves every mapped tensor misaligned, and on Apple silicon a one-row CPU matmul with a
+    # large misaligned weight returns NaN or garbage (pytorch/pytorch#191238). A cached forward is one row, so the
+    # weights are copied to aligned memory until torch handles it.
+    for parameter in lm._module.parameters():
+        parameter.data = parameter.data.clone()
+    return lm
 
 
 @pytest.fixture(scope="module")
