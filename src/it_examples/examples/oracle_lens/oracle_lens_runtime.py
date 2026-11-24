@@ -13,13 +13,15 @@ The lens is WorkspaceBench's metamodel lens, released as LoRA adapters on ``Qwen
   activation they came from in the whitened space the AR was trained in (:func:`joint_fve`).
 
 Every contract term the checkpoints fix (the base, the trained layer band, the prompt and transform per adapter) is
-refused by name when a caller asks for something else. Adapters are mounted on the caller's model with
+refused when a caller asks for something else. Adapters are mounted on the caller's model with
 ``interpretune.utils.peft_mount``, so no second copy of the base is loaded.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -143,26 +145,39 @@ def lens_root(revision: str = LENS_REV, local_dir: str | Path | None = None) -> 
     return Path(snapshot_download(LENS_REPO, revision=revision))
 
 
-def _remap_ar(src: Path, dst: Path) -> Path:
+def _remap_ar(src: Path, scratch: Path) -> Path:
     """The AR's LoRA keys name a compiled backbone (``base_model.model.layers.N._orig_mod.``); rewrite them for a
     causal LM (``base_model.model.model.layers.N.``).
 
-    Two keys mapping to one, or a lost key, is refused.
+    Two keys mapping to one is refused. The rewritten copy is kept under ``scratch`` by the identity of the released
+    file (its resolved path, size and modification time), so another checkpoint never reads an earlier one's copy, and
+    it is moved into place whole, so an interrupted write is not taken for a finished one.
     """
     from safetensors.torch import load_file, save_file
 
-    if (dst / "adapter_model.safetensors").exists():
+    weights = (src / "adapter_model.safetensors").resolve()
+    stat = weights.stat()
+    key = hashlib.sha256(f"{weights}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()[:16]
+    dst = scratch / f"{AR_NAME}-{key}"
+    if dst.exists():
         return dst
-    sd = load_file(str(src / "adapter_model.safetensors"))
     out: dict[str, torch.Tensor] = {}
-    for k, v in sd.items():
+    for k, v in load_file(str(weights)).items():
         nk = k.replace("base_model.model.layers.", "base_model.model.model.layers.").replace("._orig_mod.", ".")
         if nk in out:
             raise ValueError(f"two AR keys map to {nk}")
         out[nk] = v
-    dst.mkdir(parents=True, exist_ok=True)
-    save_file(out, str(dst / "adapter_model.safetensors"))
-    (dst / "adapter_config.json").write_text((src / "adapter_config.json").read_text())
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+        part = Path(tmp) / "adapter"
+        part.mkdir()
+        save_file(out, str(part / "adapter_model.safetensors"))
+        (part / "adapter_config.json").write_text((src / "adapter_config.json").read_text())
+        try:
+            part.rename(dst)
+        except OSError:
+            if not dst.exists():  # anything but another process finishing the same copy first
+                raise
     return dst
 
 
@@ -173,7 +188,7 @@ def mount_lens(model: Any, name: str, root: Path, scratch: Path) -> str:
     ``mount_adapter`` refuses a base other than Qwen3.6-27B and an adapter whose tensors do not all land on the model.
     """
     if name == AR_NAME:
-        src = _remap_ar(root / "ar_ptag_pooled" / "lora", scratch / "ar")
+        src = _remap_ar(root / "ar_ptag_pooled" / "lora", scratch)
     else:
         src = root / check_adapter(name)["dir"]
     mounted = adapter_name(name)

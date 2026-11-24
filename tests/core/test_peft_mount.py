@@ -30,9 +30,9 @@ def _tiny(name: str = "org/tiny", seed: int = 0):
     return model
 
 
-def _save_lora(path, base_name: str = "org/tiny"):
+def _save_lora(path, base_name: str = "org/tiny", seed: int = 1):
     """A LoRA with non-zero weights on ``base_name``, saved where ``load_adapter`` can read it."""
-    donor = _tiny(base_name, seed=1)
+    donor = _tiny(base_name, seed=seed)
     lora = peft.LoraConfig(r=4, target_modules=["q_proj", "v_proj"], init_lora_weights=False)
     peft.get_peft_model(donor, lora).save_pretrained(str(path))
     return str(path)
@@ -102,13 +102,60 @@ def test_an_adapter_whose_tensors_do_not_land_is_refused_and_removed(tmp_path, i
     assert torch.equal(_logits(model, ids), bare)
 
 
+def test_two_mounted_adapters_keep_their_own_weights_and_do_not_nest(tmp_path, ids):
+    model = _tiny()
+    bare = _logits(model, ids)
+    pm.mount_adapter(model, _save_lora(tmp_path / "a"), name="a", base="org/tiny")
+    with pm.adapter_enabled(model, "a"):
+        read_a = _logits(model, ids)
+        with pytest.raises(RuntimeError, match="'a' is on; mount adapters outside its block"):
+            pm.mount_adapter(model, _save_lora(tmp_path / "b", seed=2), name="b", base="org/tiny")
+    pm.mount_adapter(model, str(tmp_path / "b"), name="b", base="org/tiny")
+    with pm.adapter_enabled(model, "b"):
+        assert not torch.equal(_logits(model, ids), read_a), "the two adapters must read differently"
+    with pm.adapter_enabled(model, "a"):
+        # ending an inner block would switch this one off, so it is refused and this one stays on
+        with pytest.raises(RuntimeError, match="'a' is already on; blocks do not nest"):
+            with pm.adapter_enabled(model, "b"):
+                pass
+        assert torch.equal(_logits(model, ids), read_a)
+    assert torch.equal(_logits(model, ids), bare)
+
+
+def test_a_session_that_runs_its_own_adapter_is_refused_and_unchanged(tmp_path, ids):
+    lens = _save_lora(tmp_path / "lens")
+    native = _tiny()
+    native.load_adapter(_save_lora(tmp_path / "own", seed=2), adapter_name="own")
+    own = _logits(native, ids)
+    with pytest.raises(ValueError, match="already carries adapters that were not mounted here: \\['own'\\]"):
+        pm.mount_adapter(native, lens, name="lens", base="org/tiny")
+    assert torch.equal(_logits(native, ids), own), "a refused mount must leave the session's own adapter on"
+
+    tuned = peft.get_peft_model(_tiny(), peft.LoraConfig(r=4, target_modules=["q_proj"], init_lora_weights=False))
+    own = _logits(tuned, ids)
+    with pytest.raises(TypeError, match="already runs an adapter of its own"):
+        pm.mount_adapter(tuned, lens, name="lens", base="org/tiny")
+    assert torch.equal(_logits(tuned, ids), own)
+
+
+def test_an_adapter_added_after_the_mount_is_refused_at_the_read(tmp_path, ids):
+    model = _tiny()
+    pm.mount_adapter(model, _save_lora(tmp_path / "lens"), name="lens", base="org/tiny")
+    model.load_adapter(_save_lora(tmp_path / "own", seed=2), adapter_name="own")
+    own = _logits(model, ids)
+    with pytest.raises(ValueError, match="not mounted here: \\['own'\\]"):
+        with pm.adapter_enabled(model, "lens"):
+            pass
+    assert torch.equal(_logits(model, ids), own)
+
+
 def test_enabling_an_unmounted_adapter_is_refused():
     with pytest.raises(KeyError, match="no adapter is mounted as 'lens'; mounted: none"):
         with pm.adapter_enabled(_tiny(), "lens"):
             pass
 
 
-def test_missing_peft_is_refused_by_name(monkeypatch, tmp_path):
+def test_missing_peft_is_refused(monkeypatch, tmp_path):
     real_import = builtins.__import__
 
     def no_peft(name, *args, **kwargs):

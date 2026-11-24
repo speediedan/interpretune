@@ -37,7 +37,9 @@ def _ints(value: Any) -> list[int]:
 
 
 def _scratch(revision: str) -> pathlib.Path:
-    return pathlib.Path.home() / ".cache" / "interpretune" / "oracle_lens" / revision
+    from interpretune.hub.cache import IT_CACHE
+
+    return IT_CACHE / "oracle_lens" / revision
 
 
 def _ar(module: Any, root: pathlib.Path) -> Any:

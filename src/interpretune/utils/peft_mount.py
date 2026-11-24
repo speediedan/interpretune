@@ -19,6 +19,7 @@ from typing import Any, Iterator
 import torch
 
 MOUNTS_ATTR = "_it_mounted_adapters"
+ACTIVE_ATTR = "_it_active_adapter"
 _SNAPSHOT = re.compile(r"models--([^/\\]+)--([^/\\]+)[/\\]snapshots[/\\]")
 
 
@@ -36,8 +37,9 @@ def hf_model_of(model: Any) -> Any:
     """The Hugging Face model an op reads through: the model itself, or the one an nnsight wrapper holds.
 
     nnsight keeps the wrapped module at ``_module``. It is read from the instance dict, because an envoy forwards any
-    attribute it lacks to that module, so ``getattr`` would answer for the wrong object. A TransformerLens bridge is
-    refused: its read path has no test that an adapter mounted on its HF model is off outside the block.
+    attribute it lacks to that module, so ``getattr`` would answer for the wrong object. Two kinds are refused: a
+    TransformerLens bridge, whose read path has no test that an adapter mounted on its HF model is off outside the
+    block, and a ``PeftModel`` (a session that tunes its own adapter), whose base is not what the session runs.
     """
     inner = vars(model).get("_module") if hasattr(model, "__dict__") else None
     hf = inner if isinstance(inner, torch.nn.Module) else model
@@ -45,6 +47,11 @@ def hf_model_of(model: Any) -> Any:
         raise TypeError(
             "mounting a pretrained adapter is supported on an HF model or an nnsight wrapper of one, not on a "
             "TransformerLens TransformerBridge"
+        )
+    if type(hf).__name__.startswith("PeftModel"):
+        raise TypeError(
+            f"the session's model is a {type(hf).__name__}, so it already runs an adapter of its own; mount a "
+            "pretrained adapter on a session of the bare base model"
         )
     if not hasattr(hf, "load_adapter"):
         raise TypeError(
@@ -81,6 +88,17 @@ def mounted_adapters(model: Any) -> dict[str, AdapterMount]:
     return dict(vars(hf_model_of(model)).get(MOUNTS_ATTR, {}))
 
 
+def _refuse_foreign_adapters(hf: Any, mounts: dict[str, AdapterMount]) -> None:
+    """Refuse a model that carries adapters this module did not mount: switching ours off switches every adapter off,
+    so the session would silently run without its own, and a read would not be of the model the session runs."""
+    foreign = sorted(set(getattr(hf, "peft_config", None) or {}) - set(mounts))
+    if foreign:
+        raise ValueError(
+            f"the session's model already carries adapters that were not mounted here: {foreign}; mount a pretrained "
+            "adapter on a session of the bare base model"
+        )
+
+
 def mount_adapter(
     model: Any, source: str, *, name: str, base: str, revision: str | None = None, **load_kwargs: Any
 ) -> AdapterMount:
@@ -98,6 +116,9 @@ def mount_adapter(
         raise ValueError(f"the adapter {source!r} is for {base!r}, but the session's model is {found or 'unnamed'!r}")
     want = AdapterMount(name, str(source), revision, base)
     mounts: dict[str, AdapterMount] = hf.__dict__.setdefault(MOUNTS_ATTR, {})
+    _refuse_foreign_adapters(hf, mounts)
+    if vars(hf).get(ACTIVE_ATTR):
+        raise RuntimeError(f"the adapter {vars(hf)[ACTIVE_ATTR]!r} is on; mount adapters outside its block")
     if name in mounts:
         if mounts[name] != want:
             raise ValueError(f"an adapter is already mounted as {name!r}: {mounts[name]}; asked for {want}")
@@ -140,14 +161,22 @@ def _check_fit(hf: Any, name: str, source: str, info: Any) -> None:
 
 @contextlib.contextmanager
 def adapter_enabled(model: Any, name: str) -> Iterator[Any]:
-    """Switch the mounted adapter ``name`` on for the block, and off again when it ends, including on an error."""
+    """Switch the mounted adapter ``name`` on for the block, and off again when it ends, including on an error.
+
+    One adapter is on at a time: a block inside another is refused, since ending it would switch the outer one off.
+    """
     hf = hf_model_of(model)
     mounts = vars(hf).get(MOUNTS_ATTR, {})
     if name not in mounts:
         raise KeyError(f"no adapter is mounted as {name!r}; mounted: {sorted(mounts) or 'none'}")
+    _refuse_foreign_adapters(hf, mounts)
+    if vars(hf).get(ACTIVE_ATTR):
+        raise RuntimeError(f"the adapter {vars(hf)[ACTIVE_ATTR]!r} is already on; blocks do not nest")
     hf.set_adapter(name)
     hf.enable_adapters()
+    hf.__dict__[ACTIVE_ATTR] = name
     try:
         yield hf
     finally:
+        hf.__dict__[ACTIVE_ATTR] = None
         hf.disable_adapters()

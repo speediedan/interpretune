@@ -3,8 +3,8 @@
 They run on a tiny random model of Qwen3.6-27B's architecture, the real tokenizer (the injection marker depends on it)
 and fake adapters in the released checkpoint's layout, so what they cover is the mechanics: the marker, the injection,
 the capture, the adapter being on only for the read, the reconstructor fit, and every contract term the checkpoints fix
-being refused by name. Each check has a planted failure beside it, because a check that cannot fail proves nothing.
-Whether the lens reads well is measured on the real weights (interpretune#1202, step 1).
+being refused. Each check has a planted failure beside it, because a check that cannot fail proves nothing. Whether the
+lens reads well is measured on the real weights (interpretune#1202, step 1).
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def test_a_prompt_where_no_marker_appears_once_is_refused(tok, monkeypatch):
         R.render_prompt(tok, "twice", 44)
 
 
-def test_contract_terms_are_refused_by_name():
+def test_contract_terms_are_refused():
     with pytest.raises(ValueError, match="outside the oracle lens's trained band"):
         R.check_layer(22)
     with pytest.raises(ValueError, match="unknown oracle lens adapter 'lensB'"):
@@ -238,7 +238,7 @@ def test_an_adapter_whose_tensors_match_nothing_is_refused(shallow_cfg, tmp_path
 def test_the_ar_keys_are_remapped_and_a_collision_is_refused(root, tmp_path):
     from safetensors.torch import load_file, save_file
 
-    out = R._remap_ar(root / "ar_ptag_pooled" / "lora", tmp_path / "ar")
+    out = R._remap_ar(root / "ar_ptag_pooled" / "lora", tmp_path / "scratch")
     keys = list(load_file(str(out / "adapter_model.safetensors")))
     assert keys and all(k.startswith("base_model.model.model.layers.") and "_orig_mod" not in k for k in keys)
     bad = tmp_path / "collide"
@@ -249,7 +249,27 @@ def test_the_ar_keys_are_remapped_and_a_collision_is_refused(root, tmp_path):
         str(bad / "adapter_model.safetensors"),
     )
     with pytest.raises(ValueError, match="two AR keys map to"):
-        R._remap_ar(bad, tmp_path / "collide_out")
+        R._remap_ar(bad, tmp_path / "scratch")
+
+
+def test_each_ar_checkpoint_gets_its_own_remapped_copy(root, tmp_path):
+    # planted: two checkpoints sharing a scratch directory; keyed by anything but the file, the second would be given
+    # the first one's copy
+    import shutil
+
+    from safetensors.torch import load_file, save_file
+
+    src, scratch = root / "ar_ptag_pooled" / "lora", tmp_path / "scratch"
+    first = R._remap_ar(src, scratch)
+    assert R._remap_ar(src, scratch) == first
+    other = tmp_path / "other"
+    shutil.copytree(src, other)
+    sd = {k: v + 1 for k, v in load_file(str(src / "adapter_model.safetensors")).items()}
+    save_file(sd, str(other / "adapter_model.safetensors"))
+    second = R._remap_ar(other, scratch)
+    a, b = (load_file(str(d / "adapter_model.safetensors")) for d in (first, second))
+    assert second != first and all(torch.equal(b[k], a[k] + 1) for k in a)
+    assert sorted(p.name for p in scratch.iterdir()) == sorted([first.name, second.name]), "no partial copies are left"
 
 
 def test_bullets():

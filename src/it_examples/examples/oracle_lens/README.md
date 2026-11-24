@@ -15,11 +15,11 @@ them through interpretune's op dispatch, from the session's own model.
 
 ## The contract the checkpoints fix
 
-Each term is refused by name when a call asks for something else.
+A call that asks for anything else is refused.
 
 - **Base:** `Qwen/Qwen3.6-27B`. The adapters are mounted on the session's own model with
-  `interpretune.utils.peft_mount`, which refuses a session on another base and an adapter whose tensors do not all
-  land on the model. No second copy of the base is loaded.
+  `interpretune.utils.peft_mount`, which refuses a session on another base, a session that already runs an adapter
+  of its own, and an adapter whose tensors do not all land on the model. No second copy of the base is loaded.
 - **Layers:** 20 to 60 in steps of 4, the trained band.
 - **Prompt and transform per adapter:** `space` (the default), `rl600` and `student` read the `concepts_raw` prompt
   with the activation injected as $16000 \cdot h / \lVert h \rVert$; `inverter` reads `continuation_raw` with
@@ -59,8 +59,10 @@ use, or read from `oracle_lens_root`.
 
 ## Evidence
 
-The runtime is ported from the research code of step 1 of interpretune#1202, which read the lens on the poetry planning items of WorkspaceBench with the `space` adapter: the
-committed rhyme word appears in 0.244 of readouts against 0.053 and 0.020 for two controls, and at 0.440 at layer 52.
+The runtime is ported from the research code of step 1 of
+[interpretune#1202](https://github.com/interpretune/interpretune/issues/1202), which read the lens on the poetry
+planning items of WorkspaceBench with the `space` adapter: the committed rhyme word appears in 0.244 of readouts
+(0.053 for another item's vector and 0.020 for a rhyme the model did not write), and in 0.440 at layer 52.
 The reconstructor reproduces its published per-layer fraction explained on the model's own chat replies (0.135 to
 0.358 against the card's 0.120 to 0.341), with the head's LayerNorm non-affine and the hidden state taken after the
 final norm, which the checkpoint does not state and step 1 measured.
