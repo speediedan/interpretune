@@ -288,8 +288,8 @@ class LensRuntime:
     """Forward hooks at a site table's sites on a loaded Inkling 2 Mini, and the readouts."""
 
     def __init__(self, hf_model: Any, tokenizer: Any, table: dict, translators: dict | None = None) -> None:
-        # Inkling 2 Mini's modeling code is in transformers only from the commit the challenge pins
-        from transformers.models.inkling2_loop import modeling_inkling2_loop as M  # pyright: ignore[reportMissingImports]
+        # Inkling 2 Mini's modeling code ships with transformers from 5.24
+        from transformers.models.inkling2_loop import modeling_inkling2_loop as M
 
         self.hf, self.tok, self.table, self.M = hf_model, tokenizer, table, M
         spec = table["spec"]
