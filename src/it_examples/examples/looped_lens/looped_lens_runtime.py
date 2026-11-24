@@ -170,28 +170,51 @@ def check_spec(spec: dict) -> None:
         )
 
 
-def question_end(ids: list[int], read_position: int, tokenizer: Any, user_marker: str = "<|message_user|>") -> int:
-    """The last token containing ``?`` after the last user-turn marker and before ``read_position``; else
-    ``read_position`` (a plain prompt, or a turn with no question mark)."""
-    user = tokenizer.convert_tokens_to_ids(user_marker)
+def content_end(
+    ids: list[int],
+    read_position: int,
+    tokenizer: Any,
+    user_marker: str = "<|message_user|>",
+    end_marker: str = "<|end_message|>",
+) -> tuple[int, str]:
+    """Where the question's content ends in one prompt, and how it was found.
+
+    ``question``: the last token containing ``?`` in the last user turn. ``content``: a user turn with no question
+    mark (an instruction followed by a text, say): the turn's last content token. ``plain``: no user turn, so the read
+    position is already the end of the content.
+    """
+    user, end = tokenizer.convert_tokens_to_ids(user_marker), tokenizer.convert_tokens_to_ids(end_marker)
     starts = [i for i, t in enumerate(ids) if t == user]
     if not starts:
-        return read_position
-    marks = [i for i in range(starts[-1] + 1, read_position) if "?" in tokenizer.decode([ids[i]])]
-    return marks[-1] if marks else read_position
+        return read_position, "plain"
+    ends = [i for i in range(starts[-1] + 1, read_position) if ids[i] == end]
+    stop = ends[0] if ends else read_position
+    marks = [i for i in range(starts[-1] + 1, stop) if "?" in tokenizer.decode([ids[i]])]
+    if marks:
+        return marks[-1], "question"
+    if stop - 1 > starts[-1] + 1:
+        return stop - 1, "content"
+    return read_position, "plain"
+
+
+def question_end(ids: list[int], read_position: int, tokenizer: Any, user_marker: str = "<|message_user|>") -> int:
+    """The end of the question's content (:func:`content_end`)."""
+    return content_end(ids, read_position, tokenizer, user_marker)[0]
 
 
 def site_positions(table: dict, ids: list[int], read_position: int, tokenizer: Any) -> dict[str, int]:
-    """Where each site of ``table`` is read in one prompt."""
-    q = None
-    out = {}
-    for s in table["sites"]:
-        if s.get("position", "read") == "question_end":
-            q = question_end(ids, read_position, tokenizer) if q is None else q
-            out[s["label"]] = q
-        else:
-            out[s["label"]] = read_position
-    return out
+    """Where each site of ``table`` is read in one prompt.
+
+    A question reads its ``question_end`` sites at its question mark and the others at the read position. A chat turn
+    with no question mark reads every site at its content's end: at the opening of the model's turn the model is about
+    to format, and a readout there names almost nothing (0 of 34 multihop items in an instruction-first chat render,
+    against 24 at the content's end). A plain prompt reads every site at the read position.
+    """
+    end, how = content_end(ids, read_position, tokenizer)
+    return {
+        s["label"]: end if how == "content" or s.get("position", "read") == "question_end" else read_position
+        for s in table["sites"]
+    }
 
 
 # ---------------------------------------------------------------------------------------------------------------------

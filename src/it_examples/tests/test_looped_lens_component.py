@@ -199,10 +199,10 @@ def test_a_venngram_without_execution_maps_is_refused(monkeypatch, tmp_path):
 
 
 class _Tok:
-    """A stand-in tokenizer: one character per token, ``U`` the user-turn marker."""
+    """A stand-in tokenizer: one character per token, ``U`` the user-turn marker, ``E`` the end of a message."""
 
     def convert_tokens_to_ids(self, token):
-        return ord("U") if token == "<|message_user|>" else -1
+        return {"<|message_user|>": ord("U"), "<|end_message|>": ord("E")}.get(token, -1)
 
     def decode(self, ids):
         return "".join(chr(i) for i in ids)
@@ -216,15 +216,21 @@ def test_question_end_reads_the_last_question_mark_of_the_user_turn():
     assert R.question_end(ids, read, tok) == 11  # the second "?" of the user turn, not the system turn's
     plain = [ord(c) for c in "what? no marker"]
     assert R.question_end(plain, len(plain) - 1, tok) == len(plain) - 1
-    no_mark = [ord(c) for c in "SUabc.M"]
-    assert R.question_end(no_mark, len(no_mark) - 1, tok) == len(no_mark) - 1
+    no_mark = [ord(c) for c in "SUabc.EM"]
+    assert R.content_end(no_mark, len(no_mark) - 1, tok) == (5, "content")  # the turn's last content token
 
 
 def test_site_positions_follow_each_site():
     R = _runtime()
     table = {"sites": [{"label": "a", "position": "read"}, {"label": "b", "position": "question_end"}, {"label": "c"}]}
-    ids = [ord(c) for c in "Uab?c.M"]
-    assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 6, "b": 3, "c": 6}
+    ids = [ord(c) for c in "Uab?c.EM"]
+    assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 7, "b": 3, "c": 7}
+    # a chat turn with no question mark reads every site at its content's end
+    ids = [ord(c) for c in "Uabc.EM"]
+    assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 4, "b": 4, "c": 4}
+    # a plain prompt reads every site at the read position
+    ids = [ord(c) for c in "abc d"]
+    assert R.site_positions(table, ids, len(ids) - 1, _Tok()) == {"a": 4, "b": 4, "c": 4}
 
 
 def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
