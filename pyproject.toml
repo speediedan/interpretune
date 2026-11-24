@@ -647,8 +647,8 @@ env = { IT_RESOURCE_DEBUG = "1" }
 # adds. Its rerun and resource-debug flags reach the `run` phases through PYTEST_ADDOPTS and the special-test phases as
 # runner options.
 name = "IT"
-# sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls sys.settrace(None) on trace
-# teardown, which wipes the default settrace-based core for the rest of the process
+# sys.monitoring measurement core (coverage>=7.4, py>=3.12): code that replaces the thread's trace function (debuggers,
+# nnsight before 0.8) wipes the default settrace-based core for the rest of the process
 env = { COVERAGE_CORE = "sysmon", PYTHONFAULTHANDLER = "1" }
 setup = [["-m", "coverage", "erase"]]
 report = [["-m", "coverage", "report", "-m"]]

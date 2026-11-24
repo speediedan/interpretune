@@ -30,6 +30,7 @@ from interpretune.analysis.optools import (
     UnembedNormInfo,
     jlens_basis_name,
     jlens_direction_rows,
+    jlens_provenance_json,
     resolve_jlens_fold_choice,
     resolve_jlens_layer,
     resolve_tokenizer,
@@ -230,7 +231,7 @@ def jlens_read_impl(
         jlens_include_rms_scale=include_rms_scale,
         jlens_readout_mask=readout_mask,
         jlens_kind=artifact.kind,
-        jlens_provenance=artifact.provenance,
+        jlens_provenance_json=jlens_provenance_json(artifact),
     )
     return analysis_batch
 
@@ -267,7 +268,7 @@ def jlens_concept_probe_impl(
         jlens_layer=layer,
         jlens_positions=positions,
         jlens_kind=artifact.kind,
-        jlens_provenance=artifact.provenance,
+        jlens_provenance_json=jlens_provenance_json(artifact),
         jlens_basis=jlens_basis_name(apply_norm),
     )
     return analysis_batch
@@ -371,7 +372,7 @@ def jlens_sparse_inventory_impl(
         jlens_layer=layer,
         jlens_positions=positions,
         jlens_kind=artifact.kind,
-        jlens_provenance=artifact.provenance,
+        jlens_provenance_json=jlens_provenance_json(artifact),
         jlens_basis=jlens_basis_name(apply_norm),
     )
     return analysis_batch
