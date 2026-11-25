@@ -53,6 +53,28 @@ class TestWarmScript:
         # A dry run fetches nothing, so it is allowed offline (the offline CI pass itself may plan one).
         assert script.main(["--dry-run"]) == 0
 
+    def test_a_component_is_warmed_with_its_extra_files(self, monkeypatch):
+        """Offline tests publish and run from the warmed snapshot, whose manifest names its extra files."""
+        from interpretune.hub import components
+
+        script = _load_script()
+        manifest = {"module": {"configs": {"a.b.c": "configs/a.b.c.yaml"}}, "extra_files": ["runs"]}
+        calls: list[tuple] = []
+
+        def record(name, result=None):
+            def _call(*args, **kwargs):
+                calls.append((name, *args, kwargs.get("revision")))
+                return result
+
+            return _call
+
+        monkeypatch.setattr(components, "pull_component_manifest", record("manifest", (manifest, "c0ffee")))
+        for name in ("payloads", "extra_files", "config"):
+            monkeypatch.setattr(components, f"pull_component_{name}", record(name))
+        script.warm_components([{"repo_id": "org/repo", "revision": "c0ffee"}], dry_run=False)
+        assert ("extra_files", "org/repo", manifest, "c0ffee", None) in calls
+        assert ("config", "org/repo", "a.b.c", "c0ffee") in calls
+
     def test_retry_backs_off_then_reraises_the_last_error(self, monkeypatch):
         script = _load_script()
         sleeps: list[float] = []

@@ -16,7 +16,7 @@
 # exists to exercise? A resolution test that discovers a repository's real layout and a pinned-pull test
 # that verifies a fetch both fail that question, and warming either would leave a green test that checks
 # nothing. A tokenizer that a session fixture happens to load passes it easily.
-cache_version: 1
+cache_version: 2
 models:
   # Both spellings are used in the tree and cache under separate directories, so both are warmed.
   - repo_id: gpt2

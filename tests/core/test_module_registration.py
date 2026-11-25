@@ -189,6 +189,6 @@ class TestComponentTreeRegistryLaziness:
             assert resolve_prompt_config_class(f"{PROMPT_CONFIGS_REPO}#{name}", cache_dir=cache).__name__ == name
         rte_manifest, _, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
         rte_keys = sorted((rte_manifest.get("module") or {}).get("configs") or {})
-        assert len(rte_keys) == 12  # rte_demo (8), rte_ft (2), rte_sparse (2)
+        assert len(rte_keys) == 15  # rte_demo (8), rte_ft (5), rte_sparse (2)
         for key in rte_keys:
             assert it.hub.load(SEED_REPO, key, revision=SEED_REVISION) is not None
