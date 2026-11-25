@@ -251,14 +251,14 @@ class TestRequiredOsEnv:
     def test_loads_the_named_file_then_validates(self, tmp_path, clean_var) -> None:
         pytest.importorskip("dotenv")
         env_file = tmp_path / "nb.env"
-        env_file.write_text(f"{self._FROM_FILE}=from_file\n")
+        env_file.write_text(f"{self._FROM_FILE}=from_file\n", encoding="utf-8")
         assert required_os_env(env_file, [(self._FROM_FILE, "non-empty")]) is True
         assert os.environ[self._FROM_FILE] == "from_file"
 
     def test_failed_requirement_is_reported_after_loading(self, tmp_path, clean_var, env) -> None:
         pytest.importorskip("dotenv")
         env_file = tmp_path / "nb.env"
-        env_file.write_text(f"{self._FROM_FILE}=from_file\n")
+        env_file.write_text(f"{self._FROM_FILE}=from_file\n", encoding="utf-8")
         assert required_os_env(env_file, [(self._FROM_FILE, "present"), (_ABSENT, "present")]) is False
 
     def test_missing_file_falls_back_to_auto_discovery(self, tmp_path, recorded_loads) -> None:
@@ -271,7 +271,7 @@ class TestRequiredOsEnv:
 
     def test_existing_file_is_passed_as_a_string(self, tmp_path, recorded_loads) -> None:
         env_file = tmp_path / "nb.env"
-        env_file.write_text("")
+        env_file.write_text("", encoding="utf-8")
         required_os_env(env_file)
         assert recorded_loads == [(str(env_file),)]
 

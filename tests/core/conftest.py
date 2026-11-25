@@ -206,16 +206,16 @@ extra_op2:
 
     # Write the main YAML file
     main_yaml_file = tmp_path / "test_ops.yaml"
-    with open(main_yaml_file, "w") as f:
+    with open(main_yaml_file, "w", encoding="utf-8") as f:
         f.write(main_yaml_content)
 
     # Write additional YAML files in subdirectory
     extra_yaml1_file = sub_dir / "extra_ops1.yaml"
-    with open(extra_yaml1_file, "w") as f:
+    with open(extra_yaml1_file, "w", encoding="utf-8") as f:
         f.write(extra_yaml1_content)
 
     extra_yaml2_file = sub_dir / "extra_ops2.yaml"
-    with open(extra_yaml2_file, "w") as f:
+    with open(extra_yaml2_file, "w", encoding="utf-8") as f:
         f.write(extra_yaml2_content)
 
     # Return a structure containing paths for different test scenarios

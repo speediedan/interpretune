@@ -63,12 +63,12 @@ def _run(run: str, revision: str, tmp_path: Path, monkeypatch) -> dict:
         {"class_path": "tests.core.rte_ft_record.AddressedEpochRecorder", "init_args": {"out": str(record)}}
     )
     config = work / f"rte_ft.gpt2.{run}.yaml"
-    config.write_text(yaml.safe_dump(cfg))
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     args = ["--config", str(config)]
     args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(work / "dataset")}})]
     args += [f"--run_cfg.{k}={v}" for k, v in LIMITS.items()]
     core_cli_main(run_mode="train", args=args)
-    return json.loads(record.read_text())
+    return json.loads(record.read_text(encoding="utf-8"))
 
 
 # a process of its own: it trains GPT-2 three times, once traced by nnsight (whose trace replaces coverage's trace

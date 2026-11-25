@@ -28,7 +28,7 @@ def stage_needs(directory: str | Path, small_max_gb: float) -> dict[str, int]:
     rows: list[dict] = []
     for f in sorted(Path(directory).glob("session-*.json")) if Path(directory).is_dir() else []:
         try:
-            got = json.loads(f.read_text())
+            got = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         rows += [r for r in got if isinstance(r, dict)] if isinstance(got, list) else []

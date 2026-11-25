@@ -134,7 +134,9 @@ def test_the_special_phases_collect_the_example_tests():
     )
     assert "test_sae_lens_notebooks" in proc.stdout, proc.stdout[-2000:]
     # the special-test runner collects both roots (configured in pyproject.toml)
-    runner = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["gpu-epsilon"]["special-tests"]
+    runner = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["gpu-epsilon"][
+        "special-tests"
+    ]
     assert runner["collect-dirs"] == ["tests", "src/it_examples/tests"]
 
 
@@ -147,7 +149,8 @@ def test_the_probe_reads_back_a_known_allocation(tmp_path):
         "def test_alloc():\n"
         "    x = torch.empty(512 * 2**20, dtype=torch.uint8, device='cuda')\n"
         "    torch.cuda.synchronize()\n"
-        "    del x\n"
+        "    del x\n",
+        encoding="utf-8",
     )
     report = tmp_path / "vram.jsonl"
     env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
@@ -173,6 +176,6 @@ def test_the_probe_reads_back_a_known_allocation(tmp_path):
         timeout=600,
     )
     assert proc.returncode == 0, proc.stdout[-2000:]
-    row = json.loads(report.read_text().splitlines()[-1])
+    row = json.loads(report.read_text(encoding="utf-8").splitlines()[-1])
     assert row["allocator_peak_gb"] >= 0.5, row
     assert row["need_gb"] >= 0.5 + row["context_gb"] - 1e-3, row

@@ -160,7 +160,7 @@ def test_reporting_runs_after_the_actual_final_selection(tmp_path, veto):
     saved_path = module.sparse_attribution_report_path
     assert isinstance(saved_path, str)
     report_path = Path(saved_path)
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     checkpoint = report_path.with_name("checkpoint.pt")
     proof = verify_attribution_checkpoint(checkpoint, scheduler.view.checkpoint_state_dict())
     assert report["checkpoint_sha256"] == proof.sha256

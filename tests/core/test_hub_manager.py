@@ -93,7 +93,7 @@ class TestHubAnalysisOpManager:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API
         mock_api = Mock()
@@ -188,7 +188,7 @@ class TestHubAnalysisOpManager:
         snapshots_dir.mkdir()
         snapshot_dir = snapshots_dir / "abc123"
         snapshot_dir.mkdir()
-        (snapshot_dir / "operations.yaml").write_text("test: {}")
+        (snapshot_dir / "operations.yaml").write_text("test: {}", encoding="utf-8")
 
         collections = self.manager.get_cached_collections()
 
@@ -448,7 +448,7 @@ class TestDynamicModuleUtils:
         ):
             # Create test module file
             test_file = self.temp_dir / "test_module.py"
-            test_file.write_text("def test_func(): pass")
+            test_file.write_text("def test_func(): pass", encoding="utf-8")
 
             # The function takes only name parameter (no module_files)
             create_dynamic_module_it(name="test_module")
@@ -466,7 +466,7 @@ class TestDynamicModuleUtils:
             module_dir = self.temp_dir / "test_module"
             module_dir.mkdir(parents=True)
             module_file = module_dir / "test_func.py"
-            module_file.write_text("def my_function():\n    return 'test_result'")
+            module_file.write_text("def my_function():\n    return 'test_result'", encoding="utf-8")
 
             # Get the function
             func = get_function_in_module("my_function", "test_module/test_func.py")
@@ -479,7 +479,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for existing repository
         mock_api = Mock()
@@ -523,7 +523,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for existing repository
         mock_api = Mock()
@@ -559,7 +559,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for new repository
         mock_api = Mock()
@@ -585,7 +585,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for existing repository
         mock_api = Mock()
@@ -613,7 +613,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for existing repository
         mock_api = Mock()
@@ -650,7 +650,7 @@ class TestDynamicModuleUtils:
         # Create test files
         test_dir = self.temp_dir / "test_ops"
         test_dir.mkdir()
-        (test_dir / "test_ops.yaml").write_text("test: {}")
+        (test_dir / "test_ops.yaml").write_text("test: {}", encoding="utf-8")
 
         # Mock API for existing repository
         mock_api = Mock()

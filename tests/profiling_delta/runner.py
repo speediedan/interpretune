@@ -114,7 +114,7 @@ def run_arm_subprocess(composition: str, arm: str, out: Path, timeout: float = 1
         raise RuntimeError(
             f"arm {composition}/{arm} failed ({proc.returncode}):\n{proc.stdout[-4000:]}\n{proc.stderr[-8000:]}"
         )
-    record = json.loads(out.read_text())
+    record = json.loads(out.read_text(encoding="utf-8"))
     record["process_seconds"] = round(time.perf_counter() - t0, 3)
     return record
 
@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> None:
         plant=_parse_plant(args.plant),
         inventory=args.inventory or bool(os.environ.get("IT_PROFILING_DELTA_INVENTORY")),
     )
-    args.out.write_text(json.dumps(record))
+    args.out.write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

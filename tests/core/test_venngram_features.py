@@ -567,7 +567,7 @@ def _graph_recipe(tmp_path, ops, nodes=NODES, value_shape=None, tc_kind="transco
         "nodes": nodes,
     }
     path = tmp_path / "reasoning.yaml"
-    path.write_text(yaml.safe_dump(graph))
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
     book = {
         "schema_version": 5,
         "name": "transfer",

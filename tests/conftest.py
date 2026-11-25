@@ -1059,7 +1059,7 @@ def ensure_path(cfg_dir):
 
 
 def write_cfg_to_yaml_file(path, config):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(yaml.dump(config))
 
 
@@ -1426,7 +1426,7 @@ def _write_gpu_declaration_report(items, path: str) -> None:
         kw = gpu_marks(item)
         if kw.get("min_cuda_gpus") or kw.get("bf16_cuda"):
             rows.append({"nodeid": item.nodeid, **kw})
-    Path(path).write_text(json.dumps(rows, indent=1))
+    Path(path).write_text(json.dumps(rows, indent=1), encoding="utf-8")
 
 
 def _write_gpu_stage_needs(items, directory: str) -> None:
@@ -1451,7 +1451,7 @@ def _write_gpu_stage_needs(items, directory: str) -> None:
         if _marked(item, lambda kw: kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
     ]
     Path(directory).mkdir(parents=True, exist_ok=True)
-    (Path(directory) / f"session-{uuid.uuid4().hex}.json").write_text(json.dumps(rows))
+    (Path(directory) / f"session-{uuid.uuid4().hex}.json").write_text(json.dumps(rows), encoding="utf-8")
 
 
 def _gpu_selection_prefixes() -> tuple[list[str], list[str]] | None:
@@ -1466,7 +1466,7 @@ def _gpu_selection_prefixes() -> tuple[list[str], list[str]] | None:
     path = os.getenv("IT_GPU_SELECTION_FILE")
     if not path:
         return None
-    lines = [ln.strip() for ln in Path(path).read_text().splitlines() if ln.strip()]
+    lines = [ln.strip() for ln in Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
     if lines == ["full"]:
         return None
     return [ln for ln in lines if not ln.startswith("!")], [ln[1:] for ln in lines if ln.startswith("!")]

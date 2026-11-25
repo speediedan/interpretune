@@ -36,7 +36,7 @@ REGISTRY_PATH = Path(__file__).resolve().parent / "benchmark_registry.yaml"
 
 
 def _load_registry() -> dict:
-    with open(REGISTRY_PATH) as f:
+    with open(REGISTRY_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

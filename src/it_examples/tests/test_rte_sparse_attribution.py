@@ -154,7 +154,7 @@ def test_shipping_column_pruning_preserves_validation_identity(sparse_module):
     from it_examples.utils.rte_sparse_attribution import _validation_items
 
     path = Path(__file__).resolve().parents[1] / "examples/rte/configs/rte_sparse.gemma3.core.yaml"
-    config = yaml.safe_load(path.read_text())["registered_cfg"]["datamodule_cfg"]
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))["registered_cfg"]["datamodule_cfg"]
     data = SimpleNamespace(itdm_cfg=SimpleNamespace(remove_unused_columns=True, **config))
     dataset = Dataset.from_list(sparse_module.datamodule.dataset["validation"])
     prepared = ITDataModule._remove_unused_columns(cast(ITDataModule, data), dataset, target_model=sparse_module.model)
@@ -410,9 +410,9 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
     )
     # Hydrate the actual shipping callback configuration; only the tiny CPU artifact and output location differ.
     shipped = Path(__file__).resolve().parents[1] / "examples/rte/runs/rte_sparse.gemma3.core.yaml"
-    callbacks = yaml.safe_load(shipped.read_text())["run_cfg"]["callbacks"]
+    callbacks = yaml.safe_load(shipped.read_text(encoding="utf-8"))["run_cfg"]["callbacks"]
     model_config = shipped.parents[1] / "configs/rte_sparse.gemma3.core.yaml"
-    source_config = yaml.safe_load(model_config.read_text())
+    source_config = yaml.safe_load(model_config.read_text(encoding="utf-8"))
     loader = source_config["registered_cfg"]["module_cfg"]["init_args"]
     assert loader["hf_from_pretrained_cfg"]["init_args"]["pretrained_kwargs"]["revision"] == (
         "dcc83ea841ab6100d6b47a070329e1ba4cf78752"
@@ -455,7 +455,7 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
     with only_token_zero_special(SimpleNamespace(tokenizer=module.datamodule.tokenizer)):
         core_train_loop(module, data, 1, 1, 2, callbacks=[fts, callback], validate_with_grad=True)
     path = Path(module.sparse_attribution_report_path)
-    report = json.loads(path.read_text())
+    report = json.loads(path.read_text(encoding="utf-8"))
     checkpoint = path.with_name("checkpoint.pt")
     assert fts.tuning_scheduler is not None
     selected = fts.tuning_scheduler.view.checkpoint_state_dict()

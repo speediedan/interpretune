@@ -313,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.classify_file is not None:
-        print(json.dumps(classify_failure(args.classify_file.read_text()), indent=2))
+        print(json.dumps(classify_failure(args.classify_file.read_text(encoding="utf-8")), indent=2))
         return 0
     if args.classify_junit is not None:
         print(json.dumps(classify_run(junit_failures(args.classify_junit)), indent=2))
@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     phases = args.phase or ["cuda", "standalone"]
     manifest = build_manifest(phases, ["-k", args.k] if args.k else None)
     if args.out is not None:
-        args.out.write_text(json.dumps(manifest, indent=2) + "\n")
+        args.out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     for phase, entry in manifest["phases"].items():
         # collected beside phase, always: a count without its phase reads as a suite result.
         print(f"phase={phase} collected={entry['collected']} executed=0 (collection only)")

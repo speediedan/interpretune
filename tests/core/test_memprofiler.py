@@ -84,7 +84,7 @@ class TestClassMemProfiler:
             with memprofiler.profile("test_step"):
                 model(torch.ones(1, 4))
         memprofiler.dump_memory_stats()
-        with open(tmp_path / "memprofiler" / "rank_0_memory_stats.yaml") as f:
+        with open(tmp_path / "memprofiler" / "rank_0_memory_stats.yaml", encoding="utf-8") as f:
             stats = yaml.safe_load(f)
         # one iteration is collected (the default schedule), at its start and end, with the hook attributes the
         # forward hooks set on the root module

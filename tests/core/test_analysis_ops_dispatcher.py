@@ -68,7 +68,8 @@ class TestAnalysisOpDispatcher:
         """Test dispatcher warns when operation is redefined."""
         # Create first YAML file
         yaml1 = tmp_path / "ops1.yaml"
-        yaml1.write_text("""
+        yaml1.write_text(
+            """
 test_op:
   implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: First definition
@@ -78,11 +79,14 @@ test_op:
   output_schema:
     output1:
       datasets_dtype: float32
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Create second YAML file with same operation name
         yaml2 = tmp_path / "ops2.yaml"
-        yaml2.write_text("""
+        yaml2.write_text(
+            """
 test_op:
   implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Second definition (redefinition)
@@ -92,7 +96,9 @@ test_op:
   output_schema:
     output1:
       datasets_dtype: int64
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Create dispatcher with both files
         dispatcher = AnalysisOpDispatcher(yaml_paths=tmp_path)
@@ -1780,7 +1786,8 @@ class TestAnalysisOpDispatcherHubIntegration:
             repo_dir.mkdir(parents=True)
 
             ops_file = repo_dir / "ops.yaml"
-            ops_file.write_text("""
+            ops_file.write_text(
+                """
 test_hub_op:
   implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Test hub operation
@@ -1790,7 +1797,9 @@ test_hub_op:
   output_schema:
     output1:
       datasets_dtype: float32
-""")
+""",
+                encoding="utf-8",
+            )
             declare_cached_op_files(repo_dir)
 
             with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
@@ -1816,7 +1825,8 @@ test_hub_op:
         snapshot_dir.mkdir(parents=True)
 
         hub_yaml = snapshot_dir / "ops.yaml"
-        hub_yaml.write_text("""
+        hub_yaml.write_text(
+            """
 text_processor:
   description: Process text data
   implementation: nlp.process
@@ -1827,7 +1837,9 @@ text_processor:
   output_schema:
     tokens:
       datasets_dtype: int64
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(snapshot_dir)
 
         with (
@@ -1849,7 +1861,8 @@ text_processor:
         """Test dispatcher with both local-collection and hub operations."""
         # Create a local op collection
         local_yaml = tmp_path / "local_ops.yaml"
-        local_yaml.write_text("""
+        local_yaml.write_text(
+            """
 local_op:
   description: A local operation
   implementation: local.module.func
@@ -1860,7 +1873,9 @@ local_op:
   output_schema:
     result:
       datasets_dtype: float32
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Create hub structure
         hub_cache = tmp_path / "hub_cache"
@@ -1870,7 +1885,8 @@ local_op:
         snapshot_dir.mkdir(parents=True)
 
         hub_yaml = snapshot_dir / "ops.yaml"
-        hub_yaml.write_text("""
+        hub_yaml.write_text(
+            """
 hub_special_op:
   description: A special hub operation
   implementation: special.module.func
@@ -1881,7 +1897,9 @@ hub_special_op:
   output_schema:
     special_result:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(snapshot_dir)
 
         with (
@@ -1908,7 +1926,8 @@ hub_special_op:
         snapshot_dir.mkdir(parents=True)
 
         hub_yaml = snapshot_dir / "ops.yaml"
-        hub_yaml.write_text("""
+        hub_yaml.write_text(
+            """
 base_op:
   description: Base operation
   implementation: tests.core.test_analysis_ops_base.op_impl_test
@@ -1929,7 +1948,9 @@ dependent_op:
   output_schema:
     output2:
       datasets_dtype: int64
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(snapshot_dir)
 
         with (
@@ -1974,7 +1995,7 @@ dependent_op:
         repo_dir = hub_cache / "models--testuser--testrepo" / "snapshots" / "abc123"
         repo_dir.mkdir(parents=True)
         hub_file = repo_dir / "ops.yaml"
-        hub_file.write_text("dummy content")
+        hub_file.write_text("dummy content", encoding="utf-8")
 
         dispatcher = AnalysisOpDispatcher()
 
@@ -2003,7 +2024,7 @@ dependent_op:
 
         # Mock a non-hub file path
         local_file = tmp_path / "local_ops.yaml"
-        local_file.write_text("dummy")
+        local_file.write_text("dummy", encoding="utf-8")
 
         # Mock the get_hub_namespace method to return a simple namespace (no dots)
         with patch.object(dispatcher._cache_manager, "get_hub_namespace", return_value="local"):
@@ -2020,7 +2041,7 @@ dependent_op:
 
         # Create a temporary invalid YAML file
         invalid_yaml = tmp_path / "invalid.yaml"
-        invalid_yaml.write_text("invalid: yaml: content: [")
+        invalid_yaml.write_text("invalid: yaml: content: [", encoding="utf-8")
 
         # Mock the cache manager methods
         with (

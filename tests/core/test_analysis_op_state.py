@@ -713,7 +713,7 @@ my_local_streaming_op:
     def _load(self, tmp_path, yaml_text: str):
         op_dir = tmp_path / "my_ops"
         op_dir.mkdir()
-        (op_dir / "my_ops.yaml").write_text(yaml_text)
+        (op_dir / "my_ops.yaml").write_text(yaml_text, encoding="utf-8")
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
         return self._dispatcher_over(op_dir, cache_dir)

@@ -57,11 +57,11 @@ def test_the_memory_classes_partition_the_phase(tmp_path):
     assert small | large | multi == whole, sorted(whole - (small | large | multi))[:5]
     assert rest == large | multi, sorted(rest ^ (large | multi))[:5]
     # the collect step's declarations (what sizes the large stage) list the phase's GPU tests, multi-device ones as such
-    rows = [r for f in needs.glob("session-*.json") for r in json.loads(f.read_text())]
+    rows = [r for f in needs.glob("session-*.json") for r in json.loads(f.read_text(encoding="utf-8"))]
     assert rows and {r["nodeid"] for r in rows if r["gpus"] > 1} == multi, sorted(multi)[:5]
     # bf16 tests go to the large class whatever they declare: the small device may lack bf16, and there they would be
     # skipped rather than run. At least one must exist, or this half checks nothing.
-    bf16 = {row["nodeid"] for row in json.loads(report.read_text()) if row.get("bf16_cuda")}
+    bf16 = {row["nodeid"] for row in json.loads(report.read_text(encoding="utf-8")) if row.get("bf16_cuda")}
     assert bf16, "no bf16_cuda test in the cuda-marked phase to check the rule against"
     assert not bf16 & small, sorted(bf16 & small)[:5]
 
