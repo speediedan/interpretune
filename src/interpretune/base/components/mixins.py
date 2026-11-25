@@ -573,7 +573,7 @@ class HFFromPretrainedMixin:
         return model
 
     def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> PreTrainedModel:
-        """The model built on the meta device, for a data-parallel placement to shard before loading it.
+        """The model built on the meta device, for a placement to shard or split before loading it.
 
         With ``meta_init_load: rank0``, the process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads
         the checkpoint on the CPU, kept as the module's meta-init source for the placement to load from. It is set as
