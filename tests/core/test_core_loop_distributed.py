@@ -397,6 +397,21 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
             meta_built(partial)
 
+    def test_what_is_attached_beside_a_meta_built_model_holds_its_values(self):
+        """The model's checkpoint does not hold it, so it must be built with values, which the placement keeps."""
+
+        def holder(model_device: str, latent_device: str) -> nn.Module:
+            root = nn.Module()
+            root.model = nn.Linear(2, 2, device=model_device)
+            root.latent_models = nn.ModuleDict({"probe": nn.Linear(2, 2, device=latent_device)})
+            return root
+
+        assert meta_built(holder("meta", "cpu"))
+        assert not meta_built(holder("cpu", "cpu"))
+        for model_device in ("meta", "cpu"):
+            with pytest.raises(MisconfigurationException, match="2 parameters attached beside the model"):
+                meta_built(holder(model_device, "meta"))
+
     def test_a_meta_build_materializes_on_the_cpu_only_when_every_unit_offloads(self):
         """FSDP2 keeps an offloaded unit's shards on the CPU, so a meta-built module is materialized there when
         every unit offloads, on the rank's device when none does, and a plan offloading only some units is
@@ -681,11 +696,13 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert len(record["fsdp_units"]) == 3
 
 
-@pytest.fixture(scope="module")
-def addressed_reference(tmp_path_factory):
-    out_dir = tmp_path_factory.mktemp("dist_addressed_reference")
-    _launch("single", out_dir, "--addressed")
-    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
+@pytest.fixture(scope="module", params=["roles", "promote"])
+def addressed_reference(request, tmp_path_factory):
+    """One process's record, with how the latent model is attached: tunable (``roles``), or frozen and promoted in
+    the second phase (``promote``)."""
+    out_dir = tmp_path_factory.mktemp(f"dist_addressed_reference_{request.param}")
+    _launch("single", out_dir, "--addressed", request.param)
+    return request.param, json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 # the last block's MLP, then the latent model too, then the first block's attention too: what the worker's addresses
@@ -701,10 +718,11 @@ ADDRESSED_EPOCHS = [_MLP, _MLP | _PROBE, _MLP | _PROBE | {f"model.layers.0.atten
 @pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
 def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extra, addressed_reference, tmp_path):
     """A schedule naming what to tune by layer and component and by role (never by parameter name) thaws the same
-    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values."""
-    _launch(placement, tmp_path, *extra, "--addressed")
+    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values, a
+    frozen latent model the second phase promotes included."""
+    attached, reference = addressed_reference
+    _launch(placement, tmp_path, *extra, "--addressed", attached)
     records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
-    reference = addressed_reference
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
     for record in (reference, *records):
@@ -715,20 +733,6 @@ def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extr
         for name, values in reference["probe_params"].items():
             assert record["probe_params"][name] == pytest.approx(values, rel=0, abs=1e-6), name
     assert "" in records[0]["fsdp_units"] and (placement == "ddp" or len(records[0]["fsdp_units"]) == 3)
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
-@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
-@pytest.mark.skipif(not _FTS_AVAILABLE, reason="promotion is finetuning-scheduler's")
-@pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
-def test_promoting_a_frozen_latent_model_is_refused_by_name_when_sharded(placement, extra, tmp_path):
-    """Finetuning-scheduler cannot promote an ``artifact`` tensor of a sharded model, and says so on every rank
-    before training; one process promotes it (``test_tuning_latents.py``), so the same schedule is not silently
-    different."""
-    _launch(placement, tmp_path, *extra, "--addressed", "promote")
-    for rank in range(2):
-        record = json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text(encoding="utf-8"))
-        assert "`promote` tensors of a sharded model" in record["refused"]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -989,6 +993,64 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert record["step_diff"] < 1e-6 and record["step_effect"] > 0.01
         assert record["trainable"] == ["default"] and record["param_types"] == ["DTensor"]
         assert record["tied"] and record["source_dropped"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+@pytest.mark.parametrize("extra", [(), ("--loader", "dcp"), ("--latent-unit",)], ids=["rank0", "dcp", "own-unit"])
+def test_a_latent_model_beside_a_meta_built_model_keeps_rank_zeros_values(tiny_gpt2_checkpoint, tmp_path, extra):
+    """Materializing a meta-built module discards every parameter's value, and the checkpoint gives back only the
+    model's: an attached latent model's are kept, rank 0's on every rank, so the spliced logits match one
+    process's."""
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "out", "--latent", *extra):
+        assert record["max_abs_diff"] < 1e-5 and record["adapter_effect"] > 0.1
+        assert record["param_types"] == ["DTensor"] and record["tied"] and record["source_dropped"]
+
+
+@pytest.fixture(scope="module")
+def tied_tiny_llama_checkpoint(tmp_path_factory):
+    """A Llama checkpoint whose LM head is tied to its embedding, both of which the default plan leaves whole."""
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tied_tiny_llama")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+        tie_word_embeddings=True,
+    )
+    LlamaForCausalLM(config).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+@pytest.mark.parametrize("loader", ["rank0", "dcp"])
+@pytest.mark.parametrize("latent", [False, True], ids=["model", "latent"])
+def test_a_meta_built_model_is_split_then_loaded(tied_tiny_llama_checkpoint, tmp_path, loader, latent):
+    """A model built on the meta device and split by its default tensor-parallel plan holds about half of the split
+    parameters on each rank and computes, and trains, what one process does: the LM head stays tied to the
+    embedding the plan leaves whole, and a latent model attached beside the model keeps rank 0's values."""
+    extra = ("--arch", "llama", "--placement", "tp", "--loader", loader, "--train-step")
+    for record in _launch_meta(
+        tied_tiny_llama_checkpoint, tmp_path / "out", *extra, *(("--latent",) if latent else ())
+    ):
+        assert record["max_abs_diff"] < 1e-5
+        assert record["step_diff"] < 1e-5 and record["step_effect"] > 0.01
+        assert record["tied"] and record["source_dropped"]
+        split = record["split_params"]
+        assert len(split) == 14 and all(".layers." in name for name in split)  # q, k, v, o and gate, up, down, twice
+        assert record["held_numel"] < 0.75 * record["whole_numel"]
+        if latent:
+            assert record["adapter_effect"] > 0.1
 
 
 # the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads

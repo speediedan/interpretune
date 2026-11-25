@@ -530,8 +530,10 @@ def place_module(
     shards of different ones (``fsdp2``), with no error.
 
     A module built on the meta device (``HFFromPretrainedConfig.meta_init``) holds no values to broadcast. It is
-    sharded as it is, materialized on each rank's device with ``to_empty``, and then loaded from rank 0's CPU copy of
-    the checkpoint (see :func:`_load_from_rank0`), so no rank ever holds the whole model on its accelerator.
+    sharded (or, under ``tp``, split) as it is, materialized on each rank's device with ``to_empty``, and then loaded
+    from rank 0's CPU copy of the checkpoint (see :func:`_load_from_rank0`) or from its files, so no rank ever holds
+    the whole model on its accelerator. What is attached beside the model (a latent model, an intervention) is built
+    with its values, which are kept across the materialization, rank 0's on every rank.
 
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
@@ -559,6 +561,8 @@ def place_module(
         with torch.no_grad():
             for tensor in [*module.parameters(), *module.buffers()]:
                 dist.broadcast(tensor, src=0)
+    # copied before sharding, which replaces the parameters and, for a meta-built module, discards their values
+    kept_params = {n: p.detach().clone() for n, p in _beside_load_target(module).items()} if on_meta else {}
     device_type = torch.device(run.devices[run.rank]).type
     if run.placement == "ddp":
         mesh = init_device_mesh(device_type, (run.world_size, 1), mesh_dim_names=("replicate", "shard"))
@@ -577,17 +581,7 @@ def place_module(
     run.mesh = mesh
     _register_direct_calls(module)
     if on_meta:
-        kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
-        _materialize(module, run, _meta_offloads(units, fsdp_default_kwargs))
-        with torch.no_grad():
-            for name, value in kept.items():
-                buffer = module.get_buffer(name)
-                buffer.copy_(value)
-                dist.broadcast(buffer, src=0)
-        if hasattr(module, META_INIT_CHECKPOINT):
-            _load_from_checkpoint_files(module, run)
-        else:
-            _load_from_rank0(module, run)
+        _fill_meta_built(module, run, kept_params, _meta_offloads(units, fsdp_default_kwargs))
     _refresh_tensor_references(module)
 
 
@@ -602,37 +596,42 @@ def _refresh_tensor_references(module: torch.nn.Module) -> None:
 def _place_tensor_parallel(
     module: torch.nn.Module, run: DistributedRun, tp_plan: Mapping[str, Mapping[str, Any]] | None, on_meta: bool
 ) -> None:
-    """Split the layers ``tp_plan`` selects across a one-dimensional mesh of every rank, after broadcasting rank
-    0's weights (each rank's split is cut from its own copy, so differing copies would assemble a model nobody
-    built), and split each packed parameter whose views the plan splits with them (see :func:`_packed_groups`)."""
+    """Split the layers ``tp_plan`` selects across a one-dimensional mesh of every rank, and each packed parameter
+    whose views the plan splits with them (see :func:`_packed_groups`).
+
+    Rank 0's weights are broadcast first: each rank's split is cut from its own copy, so differing copies would
+    assemble a model nobody built. A meta-built model's parameters are loaded after the split instead (see
+    :func:`_fill_meta_built`).
+    """
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
 
-    if on_meta:
-        raise MisconfigurationException(
-            "Placement 'tp' does not load a model built on the meta device (`meta_init`) yet: build it on each rank's"
-            " device, or use placement 'fsdp2', which loads a meta-built model from rank 0."
-        )
     styles = _resolve_tp_plan(module, tp_plan, run.world_size)
     groups = _packed_groups(module, styles, run.world_size)
     _refuse_local_splices(module, styles)
-    with torch.no_grad():
-        for tensor in [*module.parameters(), *module.buffers()]:
-            if tensor.is_contiguous():
-                dist.broadcast(tensor, src=0)
-            else:  # a view of a packed weight: collectives take contiguous tensors only
-                whole = tensor.contiguous()
-                dist.broadcast(whole, src=0)
-                tensor.copy_(whole)
+    # copied before the split, which replaces the parameters (materializing a meta-built module discards their values)
+    kept_params = {n: p.detach().clone() for n, p in _beside_load_target(module).items()} if on_meta else {}
+    if not on_meta:
+        with torch.no_grad():
+            for tensor in [*module.parameters(), *module.buffers()]:
+                if tensor.is_contiguous():
+                    dist.broadcast(tensor, src=0)
+                else:  # a view of a packed weight: collectives take contiguous tensors only
+                    whole = tensor.contiguous()
+                    dist.broadcast(whole, src=0)
+                    tensor.copy_(whole)
     device_type = torch.device(run.devices[run.rank]).type
     mesh = init_device_mesh(device_type, (run.world_size,), mesh_dim_names=("tp",))
     from torch.distributed.tensor.parallel import parallelize_module
 
-    parallelize_module(module, mesh, styles)
+    # a meta parameter holds nothing to scatter: each rank's shard is loaded below
+    parallelize_module(module, mesh, styles, src_data_rank=None if on_meta else 0)
     for group in groups:
         _split_packed(group, mesh, run.rank)
-    _gather_activation_splices(module)
     run.mesh = mesh
+    if on_meta:
+        _fill_meta_built(module, run, kept_params, offloaded=False)
+    _gather_activation_splices(module)
 
 
 class _WholeActivation:
@@ -740,12 +739,52 @@ def _meta_offloads(units: Mapping[str, Mapping[str, Any]], default_kwargs: Mappi
     return False
 
 
+def _fill_meta_built(
+    module: torch.nn.Module, run: DistributedRun, kept_params: Mapping[str, torch.Tensor], offloaded: bool
+) -> None:
+    """Materialize a placed meta-built module and give every tensor its value: the buffers built with values and
+    what is attached beside the model (``kept_params``) keep theirs, rank 0's on every rank, and the model's
+    parameters are loaded from its checkpoint (``meta_init_load``)."""
+    import torch.distributed as dist
+
+    kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
+    _materialize(module, run, offloaded)
+    with torch.no_grad():
+        for name, value in kept.items():
+            buffer = module.get_buffer(name)
+            buffer.copy_(value)
+            dist.broadcast(buffer, src=0)
+    _restore_kept(module, run, kept_params)
+    if hasattr(module, META_INIT_CHECKPOINT):
+        _load_from_checkpoint_files(module, run)
+    else:
+        _load_from_rank0(module, run)
+
+
+def _tied_parameters(module: torch.nn.Module) -> list[list[tuple[torch.nn.Module, str]]]:
+    """The (module, name) places of each parameter registered in more than one place, one list per parameter."""
+    places: dict[int, list[tuple[torch.nn.Module, str]]] = {}
+    for submodule in module.modules():
+        for name, param in submodule._parameters.items():
+            if param is not None:
+                places.setdefault(id(param), []).append((submodule, name))
+    return [group for group in places.values() if len(group) > 1]
+
+
 def _materialize(module: torch.nn.Module, run: DistributedRun, offloaded: bool) -> None:
-    """Give a sharded meta-built module real storage: shards on the rank's device, or on the CPU when every unit
-    offloads, and buffers on the rank's device either way (FSDP2 offloads parameters, not buffers)."""
+    """Give a sharded or split meta-built module real storage: shards on the rank's device, or on the CPU when every
+    unit offloads, and buffers on the rank's device either way (FSDP2 offloads parameters, not buffers).
+
+    ``to_empty`` gives each place a whole (plain) parameter is registered in a parameter of its own, so tied ones, such
+    as the LM head and the embedding a tensor-parallel plan leaves whole, are tied again.
+    """
     device = rank_device(run)
     if not offloaded:
+        tied = _tied_parameters(module)
         module.to_empty(device=device)
+        for (owner, name), *others in tied:
+            for other, other_name in others:
+                other._parameters[other_name] = owner._parameters[name]
         return
     module.to_empty(device=torch.device("cpu"))
     for submodule in module.modules():
@@ -760,7 +799,9 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
     FSDP2 gathers a unit's parameters in hooks on ``forward``, so a submodule called directly (an nnsight model's
     Hugging Face module, which nnsight calls rather than the interpretune module) or through another method (a
     transcoder's ``encode``) would compute with sharded parameters. The module declares these calls with
-    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered.
+    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered. An attached
+    latent model (``interpretune.tuning.latents``) is called through ``encode`` and ``decode`` by its splice; one that
+    the plan makes its own unit has both registered, and one the plan leaves to the root unit is gathered with it.
 
     Raises:
         MisconfigurationException: If a declared submodule is not its own FSDP2 unit, naming the plan keys to add.
@@ -776,6 +817,11 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
             missing.setdefault(type(submodule).__name__, []).append(name)
             continue
         _register_forward_methods(submodule, methods, register_fsdp_forward_method)
+    declared = {id(submodule) for _, submodule, _ in entries}
+    held: Mapping[str, torch.nn.Module] = getattr(module, "latent_models", None) or {}
+    for latent in held.values():
+        if isinstance(latent, FSDPModule) and id(latent) not in declared:
+            _register_forward_methods(latent, ("encode", "decode"), register_fsdp_forward_method)
     if missing:
         names = [n for group in missing.values() for n in group]
         raise MisconfigurationException(
@@ -859,14 +905,31 @@ def params_on_meta() -> Iterator[None]:
         torch.nn.Module.register_parameter = register
 
 
-def meta_built(module: torch.nn.Module) -> bool:
-    """Whether ``module``'s parameters were built on the meta device, refusing a module only partly built there.
+def _beside_load_target(module: torch.nn.Module) -> dict[str, torch.nn.Parameter]:
+    """The parameters outside the load target (see :func:`_load_target`), by name: latent models and interventions
+    attached beside the model, which its checkpoint does not hold.
 
-    Buffers may hold values on a meta-built module (see :func:`params_on_meta`); :func:`place_module` keeps them across
-    materialization. A buffer left on the meta device of a module whose parameters are not is refused, since nothing
-    would ever give it values.
+    Empty for a module with no load target.
     """
-    params = dict(module.named_parameters())
+    target = _load_target(module)
+    if target is None:
+        return {}
+    loaded = {id(p) for p in target.parameters()}
+    return {n: p for n, p in module.named_parameters() if id(p) not in loaded}
+
+
+def meta_built(module: torch.nn.Module) -> bool:
+    """Whether the model ``module`` holds (its load target, or the whole module when it has none) was built on the
+    meta device, refusing one only partly built there.
+
+    Parameters beside the load target (an attached latent model's) are in no checkpoint of the model, so on a meta-built
+    module they must hold values, which :func:`place_module` keeps across materialization. Buffers may hold values too
+    (see :func:`params_on_meta`) and are kept the same way. A parameter beside the load target on the meta device is
+    refused, and so is a buffer left there on a module whose parameters are not, since nothing would ever give either
+    values.
+    """
+    beside = _beside_load_target(module)
+    params = {n: p for n, p in module.named_parameters() if n not in beside}
     on_meta = [p.is_meta for p in params.values()]
     if any(on_meta) and not all(on_meta):
         names = [n for n, p in params.items() if not p.is_meta]
@@ -874,6 +937,13 @@ def meta_built(module: torch.nn.Module) -> bool:
             f"This module was built partly on the meta device: {len(names)} tensors are not ({', '.join(names[:3])}"
             f"{' and more' if len(names) > 3 else ''}). Materializing the meta part would also discard their values,"
             " so build the whole module on the meta device or none of it."
+        )
+    if valueless := [n for n, p in beside.items() if p.is_meta]:
+        raise MisconfigurationException(
+            f"{len(valueless)} parameters attached beside the model are on the meta device"
+            f" ({', '.join(valueless[:3])}{' and more' if len(valueless) > 3 else ''}), and the model's checkpoint does"
+            " not hold them, so nothing would give them values. Build what is attached beside a meta-built model on a"
+            " real device."
         )
     built = bool(params) and all(on_meta)
     if not built and (meta_buffers := [n for n, b in module.named_buffers() if b.is_meta]):
@@ -883,6 +953,25 @@ def meta_built(module: torch.nn.Module) -> bool:
             " give them values. Build the whole module on the meta device or none of it."
         )
     return built
+
+
+def _restore_kept(module: torch.nn.Module, run: DistributedRun, kept: Mapping[str, torch.Tensor]) -> None:
+    """Give each kept parameter (see :func:`_beside_load_target`) of a placed module its shard of rank 0's value,
+    or the whole value where ``tp`` left it whole."""
+    import torch.distributed as dist
+    from torch.distributed.tensor import DTensor, distribute_tensor
+
+    for name, value in kept.items():
+        param = module.get_parameter(name)
+        whole = value.to(rank_device(run)).contiguous()
+        if not isinstance(param, DTensor):
+            dist.broadcast(whole, src=0)
+            with torch.no_grad():
+                param.copy_(whole)
+            continue
+        shard = distribute_tensor(whole, param.device_mesh, param.placements, src_data_rank=0)
+        with torch.no_grad():
+            param.to_local().copy_(shard.to_local())
 
 
 def _hub_layout_keys(model: Any) -> set[str]:
@@ -1025,6 +1114,35 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
     object.__delattr__(module, META_INIT_CHECKPOINT)
 
 
+def _copy_from_rank0(model: torch.nn.Module, full: Mapping[str, torch.Tensor], run: DistributedRun) -> None:
+    """Copy rank 0's parameters (``full``, by name) into a split model on every rank, one tensor at a time, so that
+    a rank holds at most one parameter's copy beside its own storage.
+
+    ``set_model_state_dict`` keeps a full copy of every parameter it does not find sharded, the embedding and the LM
+    head among them under ``tp``, until the end of the load.
+    """
+    import torch.distributed as dist
+    from torch.distributed.tensor import DTensor, distribute_tensor
+
+    device = rank_device(run)
+    done: set[int] = set()
+    for name, param in model.named_parameters(remove_duplicate=False):
+        if id(param) in done:  # tied: the copy already made holds
+            continue
+        done.add(id(param))
+        with torch.no_grad():
+            if run.rank == 0:
+                whole = full[name].to(device, param.dtype).contiguous()
+            else:
+                whole = torch.empty(param.shape, dtype=param.dtype, device=device)
+            dist.broadcast(whole, src=0)
+            if isinstance(param, DTensor):  # every rank holds the whole tensor, so each keeps its own slice of it
+                mine = distribute_tensor(whole, param.device_mesh, param.placements, src_data_rank=None)
+                param.to_local().copy_(mine.to_local())
+            else:
+                param.copy_(whole)
+
+
 def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     """Load rank 0's CPU copy of the checkpoint into the load target (see :func:`_load_target`), sharded and
     materialized on every rank.
@@ -1081,8 +1199,11 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     if box[0] is not None:
         raise MisconfigurationException(box[0])
     assert model is not None
-    options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
-    set_model_state_dict(model, full, options=options)
+    if run.placement == "tp":
+        _copy_from_rank0(model, full, run)
+    else:
+        options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+        set_model_state_dict(model, full, options=options)
     with torch.no_grad():
         for name, buffer in model.named_buffers():
             if run.rank == 0:

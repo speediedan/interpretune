@@ -155,7 +155,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return hf_tp_plan(target, prefix, world_size) or None
 
     def meta_load_target(self) -> torch.nn.Module:
-        """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
+        """The torch module a placement loads a meta-built model's weights into: ``self.model`` here.
 
         An adapter whose model wraps a torch module rather than being one (nnsight) returns the module it wraps.
         """
