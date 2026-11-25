@@ -273,6 +273,11 @@ class LatentCatalog:
             indexed[key] = binding
         return indexed
 
+    @property
+    def frames(self) -> tuple[LatentFrame, ...]:
+        """Every frame the catalog declares."""
+        return tuple(self._frames.values())
+
     def binding(self, target: LatentTarget) -> LatentBinding | SubspaceBinding:
         """The loaded object or basis that owns a canonical target."""
         table = self._features if target.kind == "feature" else self._subspaces

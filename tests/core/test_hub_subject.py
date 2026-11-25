@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from interpretune.hub.subject import StoreSubject, StoreSubjectError, subject_from_module
+from interpretune.hub.subject import StoreSubject, StoreSubjectError, loaded_revision, subject_from_module
 
 
 class _HFConfig:
@@ -128,3 +128,71 @@ class TestWriteTimeStamp:
         AnalysisCfg._stamp_subject(store, module)
         assert store.subject is None
         assert any("subject was not recorded" in str(w.message) for w in recwarn.list)
+
+
+def _cached_repo(cache, repo="org/model", **refs):
+    """A Hub cache holding ``repo`` with ``config.json`` at each commit, and each ref pointing at its commit."""
+    root = cache / ("models--" + repo.replace("/", "--"))
+    for ref, commit in refs.items():
+        (root / "snapshots" / commit).mkdir(parents=True, exist_ok=True)
+        (root / "snapshots" / commit / "config.json").write_text("{}", encoding="utf-8")
+        (root / "refs").mkdir(exist_ok=True)
+        (root / "refs" / ref).write_text(commit, encoding="utf-8")
+    return cache
+
+
+class TestLoadedRevision:
+    """Transformers 5.18 and later record the commit a model was loaded from nowhere on it (#1243)."""
+
+    MAIN, TAGGED = "a" * 40, "b" * 40
+
+    def _loaded(self, tmp_path, name="org/model", **kwargs):
+        module = _module(config=_HFConfig(name_or_path=name, commit=None))
+        cache = _cached_repo(tmp_path, main=self.MAIN, v1=self.TAGGED)
+        return loaded_revision(module, cache_dir=cache, **kwargs)
+
+    def test_the_default_branch_and_a_named_revision(self, tmp_path):
+        assert self._loaded(tmp_path) == self.MAIN
+        assert self._loaded(tmp_path, revision="v1") == self.TAGGED
+        assert self._loaded(tmp_path, revision=self.TAGGED) == self.TAGGED
+
+    @pytest.mark.parametrize("name", ["", "org/not-cached", "not a repository/at/all"])
+    def test_what_no_hub_load_left_in_the_cache_is_unknown(self, tmp_path, name):
+        assert self._loaded(tmp_path, name=name) is None
+
+    def test_a_local_directory_has_no_revision(self, tmp_path, monkeypatch):
+        (tmp_path / "org" / "model").mkdir(parents=True)  # shadows the cached repository of the same name
+        monkeypatch.chdir(tmp_path)
+        assert self._loaded(tmp_path) is None
+
+    def test_a_revision_the_config_states_is_kept(self, tmp_path):
+        assert loaded_revision(_module(config=_HFConfig(commit="abc123")), cache_dir=tmp_path) == "abc123"
+
+    def test_a_module_records_it_when_its_model_is_built(self):
+        """What the store was computed on stays what was loaded, wherever the cache's branch moves afterwards."""
+        module = _module(config=_HFConfig(commit=None))
+        module._it_state = SimpleNamespace(_model_revision=self.MAIN)
+        assert subject_from_module(module).model_revision == self.MAIN
+
+    def test_a_loaded_model_states_its_commit(self):
+        """A real load, so a change in what transformers records makes this fail."""
+        from huggingface_hub import try_to_load_from_cache
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained("gpt2")
+        commit = loaded_revision(_module(config=config))
+        assert commit is not None and commit in str(try_to_load_from_cache("gpt2", "config.json"))
+
+    @pytest.mark.parametrize("session", ["ns_gpt2", "sl_br_gpt2", "core_cust"])
+    def test_a_composition_records_the_commit_of_the_model_it_loads(self, request, session):
+        from copy import deepcopy
+
+        from interpretune.hub.subject import model_identity
+        from interpretune.session import ITSession
+
+        module = ITSession(deepcopy(request.getfixturevalue(f"get_it_session_cfg__{session}"))).module
+        _, commit = model_identity(module)
+        if session == "core_cust":  # built from a configuration, so there is no commit to state
+            assert commit is None
+        else:
+            assert commit is not None and len(commit) == 40
