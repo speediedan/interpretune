@@ -41,7 +41,7 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import torch
 from torch import nn, Tensor
@@ -476,7 +476,7 @@ class CircuitTracerView:
         from interpretune.tuning.views import default_view
 
         placements = getattr(self.root, "tunable_placements", None)
-        attached = placements() if callable(placements) else None
+        attached = cast("Mapping[str, str]", placements()) if callable(placements) else None
         structure = default_view(self.root, attached=attached).structure()
         if structure.vocabulary:
             return structure
