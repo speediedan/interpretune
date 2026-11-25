@@ -466,6 +466,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- An op reading fields of its batch from a streamed `input_store` reads each column forwards once, rather than from the start at every field access: a run's reads grew with the square of its batches (50 batches of 12 reads each took 57 s, and take 0.3 s). Over a loaded store a field access decodes that field rather than every column of the row. Both go through the new `AnalysisStore.batch_value(column, batch_idx)`; whole-column access is unchanged ([#175](https://github.com/interpretune/interpretune/issues/175))
+
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
 
 - A phased schedule over a TransformerLens bridge thaws its biases under placements `fsdp2` and `tp`. A placement registers new tensors in place of the module's own, and the bridge kept each bias alias (`b_in`, `b_out`, ...) pointing at the old tensor, so its view lost the name and the biases stayed frozen, with nothing said. Once placed, a module now refreshes such references in a cooperative `refresh_tensor_references()`, which the TransformerLens composition implements ([#1200](https://github.com/interpretune/interpretune/issues/1200))

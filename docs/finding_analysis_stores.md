@@ -109,7 +109,9 @@ the envelope's commit, through `datasets` streaming. It differs from a pulled st
 - **It reads only what you ask for.** `columns=` projects the read, so the other columns are not fetched. Reading a
   column by name streams that column alone, again on each access.
 - **It has no positions.** It can be iterated and read by column, but indexing by row (`store[0]`, `store[2:5]`) is
-  refused, since a stream has no positions to index. Pull without `streaming=True` to index rows.
+  refused, since a stream has no positions to index. Pull without `streaming=True` to index rows. As an analysis
+  config's `input_store`, it gives an op its batch's fields by reading each column forwards
+  (`store.batch_value(column, batch_idx)`), so a run over the batches in order reads each column once.
 - **It holds a stream, not a table.** The rows are in `store.stream` (an `IterableDataset`), and `store.dataset` is
   `None`. A streamed store cannot be pushed; pull it in full to republish it.
 - **Each read is a range request.** Requests go through `HfFileSystem` in blocks of `block_size` bytes, 64 KiB by
