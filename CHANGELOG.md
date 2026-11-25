@@ -466,6 +466,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The direct-forward input check (a batch keyed by a primary input the model's forward cannot take is refused by name) covers nnsight wrappers, circuit-tracer's nnsight replacement model among them, PEFT models and SAE Lens bridges. It skipped all four, the PEFT ones because it looked for the model on `base_model`, which is the tuner, so such a configuration failed inside the model with its own message about a missing input ([#748](https://github.com/interpretune/interpretune/issues/748))
+
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
 
 - A phased schedule over a TransformerLens bridge thaws its biases under placements `fsdp2` and `tp`. A placement registers new tensors in place of the module's own, and the bridge kept each bias alias (`b_in`, `b_out`, ...) pointing at the old tensor, so its view lost the name and the biases stayed frozen, with nothing said. Once placed, a module now refreshes such references in a cooperative `refresh_tensor_references()`, which the TransformerLens composition implements ([#1200](https://github.com/interpretune/interpretune/issues/1200))
