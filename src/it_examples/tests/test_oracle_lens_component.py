@@ -154,7 +154,7 @@ def test_a_hub_copy_runs_the_runtime_of_its_own_revision(tmp_path, monkeypatch):
     revision = (uuid4().hex + uuid4().hex)[:40]
     repo = tmp_path / "hub" / "models--Some-Org--oracle-lens"
     (repo / "refs").mkdir(parents=True)
-    (repo / "refs" / "main").write_text(revision)
+    (repo / "refs" / "main").write_text(revision, encoding="utf-8")
     build_component_tree(COMPONENT, repo / "snapshots" / revision)
     modules = tmp_path / "modules"
     modules.mkdir()

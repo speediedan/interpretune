@@ -357,19 +357,22 @@ class TestARepoWhoseNameIsNormalizedRunsItsOps:
         snapshot.mkdir(parents=True)
         (snapshot / IT_COMPONENT_MANIFEST).write_text(
             "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [my_ops.yaml]\n"
-            "extra_files: [my_ops.py, my_runtime.py]\n"
+            "extra_files: [my_ops.py, my_runtime.py]\n",
+            encoding="utf-8",
         )
         (snapshot / "my_ops.yaml").write_text(
             "spelled_op:\n  description: a probe\n  implementation: my_ops.spelled_op\n"
-            "  input_schema: {}\n  output_schema: {}\n"
+            "  input_schema: {}\n  output_schema: {}\n",
+            encoding="utf-8",
         )
         (snapshot / "my_ops.py").write_text(
-            f"{sibling_import}\n\n\ndef spelled_op(module, analysis_batch, batch, batch_idx):\n    return {answer}\n"
+            f"{sibling_import}\n\n\ndef spelled_op(module, analysis_batch, batch, batch_idx):\n    return {answer}\n",
+            encoding="utf-8",
         )
-        (snapshot / "my_runtime.py").write_text(f"ANSWER = {repo_id!r}\n")
+        (snapshot / "my_runtime.py").write_text(f"ANSWER = {repo_id!r}\n", encoding="utf-8")
         refs = snapshot.parent.parent / "refs"
         refs.mkdir()
-        (refs / "main").write_text(revision)
+        (refs / "main").write_text(revision, encoding="utf-8")
         monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
         monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
         monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
