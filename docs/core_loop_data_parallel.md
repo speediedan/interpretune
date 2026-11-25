@@ -100,8 +100,9 @@ A plan that leaves a called module to the root unit is refused, naming the `clas
 ## Tensor parallelism
 
 `tp` splits layers across ranks instead of data: the layers `tp_plan` selects are split with `parallelize_module`
-(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned. Every
-rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
+(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned: built
+with `meta_init` (below), it is split before it holds any weights, and each rank holds its slices of the split layers
+and the whole of the rest. Without it every rank builds the whole model first. Every rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
 as `fsdp_plan`, each mapped to a parallel style (`{style: colwise}`, `rowwise`, `sequence`, `prepare_input`, ...) and
 its layouts. Without one, the module's own default is used: a Hugging Face model's declared plan on the core and nnsight
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
@@ -145,8 +146,8 @@ gets the same graph. Every rank makes every call, since the forward and backward
 
 ## Models larger than one rank's accelerator
 
-By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
-with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
+By default every rank builds the whole model before it is sharded or split, so each rank must fit it once. For a model
+loaded with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
 
 ```yaml
 module_cfg:
@@ -157,10 +158,11 @@ module_cfg:
 ```
 
 Every rank then builds the model from its configuration without any weights, and the launcher's rank 0 also loads the
-checkpoint on the CPU. The placement shards the empty model with the plan, materializes each rank's shards on its
-device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
+checkpoint on the CPU. The placement shards the empty model with the plan (or splits it, under `tp`), materializes each
+rank's shards on its device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
 `broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
-state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
+state dict. No accelerator ever holds the whole model (under `tp`, each holds the layers the plan leaves whole and its
+slices of the rest); rank 0's host holds one copy of it while loading.
 
 When even one host copy is too much, `meta_init_load: dcp` loads each rank's shards straight from the checkpoint's
 safetensors files with distributed checkpointing (`torch.distributed.checkpoint` with `HuggingFaceStorageReader`), so
@@ -192,8 +194,10 @@ does not. For any other model with converters the conversion path decides, and t
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
 `lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
-base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
-module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
+base weights. A latent model or intervention attached beside the model (`interpretune.tuning`) is in no checkpoint of the
+model, so it is built with its values on a real device: the placement keeps them, rank 0's on every rank, and refuses one
+built on the meta device. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized
+parameters), a model built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
 not build on the meta device (a TransformerLens bridge, a plain nnsight model, or `defer_model_init`), rather than being
 ignored.
 
@@ -346,8 +350,8 @@ unit's, so the hook that applies it inside a block sees the whole operand, and b
 
 A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
 `fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
-values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
-the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+values. The same holds for a phase that promotes a frozen latent model with `promote` (attached with `frozen=True`, so
+its tensors are artifacts until then).
 
 ## Limits
 
@@ -356,7 +360,7 @@ the phases: attach the latent model already trainable rather than `frozen=True`,
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
   process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
-  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
+  accelerators.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
