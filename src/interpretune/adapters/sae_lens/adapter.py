@@ -288,6 +288,19 @@ class BaseSAELensModule(BaseITModule):
                 declared.setdefault(role, []).append(f"attached_saes.{key}")
         return merge_roles(roles, {role: module_address(*paths) for role, paths in declared.items()})
 
+    def latent_model_releases(self) -> dict[str, dict[str, str]]:
+        """Adds each spliced SAE by its ``attached_saes`` key: the SAE Lens release and id of one loaded from a
+        release, and nothing for one built from a custom configuration."""
+        releases = super().latent_model_releases()  # cooperative, provided by BaseITModule
+        sources = {
+            id(sae.handle): {"sae_lens": cfg.release, "id": cfg.sae_id}
+            for cfg, sae in zip(self.it_cfg.sae_cfgs, self.saes)
+            if isinstance(cfg, SAELensFromPretrainedConfig)
+        }
+        for key, sae in (self._attached_saes() or {}).items():
+            releases[key] = sources.get(id(sae), {})
+        return releases
+
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         super()._capture_hyperparameters()

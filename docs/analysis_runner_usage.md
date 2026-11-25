@@ -76,7 +76,7 @@ runner.run_analysis(cfg)   # Analysis-specific
 | Field | Purpose |
 |-------|---------|
 | `output_store` | Where to save analysis results |
-| `input_store` | Optional input dataset for multi-step composition |
+| `input_store` | Optional input dataset for multi-step composition. An op reads the fields it needs of its batch's row, one column at a time |
 | `step_fn` | Which step function to use (e.g., `"analysis_step"`) |
 | `output_schema` | Schema defining the output dataset columns |
 | `names_filter` | Optional filter for specific hook point names |

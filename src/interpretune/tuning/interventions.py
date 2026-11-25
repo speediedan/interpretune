@@ -529,7 +529,7 @@ def attach_configured_interventions(
         sets = None
         if cfg.book is not None:
             if cfg.book not in books:
-                books[cfg.book] = book_sets(cfg.book)
+                books[cfg.book] = book_sets(cfg.book, root)
             sets = books[cfg.book]
         units = _unit_splice(root, cfg.site, sets)[1] if is_site_address(cfg.site) else None
         if units is not None:
