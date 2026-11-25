@@ -307,6 +307,73 @@ activations, and the logits and activations of a feature intervention are bitwis
 intervention that moves the logits by up to 4.86, so the comparison could fail. Pin the component revision in both
 runs (`speediedan/rte:<config>@<revision>`) so that both read the same configuration.
 
+## Walkthrough: staged latent tuning of a sharded Gemma 3 from the CLI
+
+The `rte` component also ships a tuning run: gemma-3-4b-it on the RTE task, with LoRA adapters on its first 10 decoder
+layers and two Gemma Scope 2 transcoders (16k features) spliced over the MLPs of layers 17 and 22. The model is built on
+the meta device and sharded with FSDP2 across two ranks, and a Fine-Tuning Scheduler schedule tunes it in two stages on
+the core loop. The configuration is `rte_latent.gemma3.core.fsdp2` and the run is
+`runs/rte_latent.gemma3_4b.core.fsdp2.yaml`.
+
+### Running the stages
+
+As above, the model is gated and the component is fetched first. The two transcoders are downloaded from
+`google/gemma-scope-2-4b-it` when the module is built:
+
+```bash
+python -c "import interpretune.hub; interpretune.hub.pull('speediedan/rte')"
+PYTORCH_ALLOC_CONF=pinned_max_round_threshold_mb:0 IT_TRUST_REMOTE_CODE=1 \
+  torchrun --standalone --nproc-per-node 2 --no-python interpretune --run_command train \
+  --config hub://speediedan/rte/runs/rte_latent.gemma3_4b.core.fsdp2.yaml
+```
+
+The run trains two epochs, one per stage, at a batch of 2 per rank (a global batch of 4). It keeps no checkpoint.
+
+### The schedule
+
+| stage | entry | what it tunes |
+| --- | --- | --- |
+| 0 | `role:adapter` | the LoRA adapters; every base weight and transcoder is frozen |
+| 1 | `latent_models\.tc\d+\.(w_dec\|b_dec)` | the transcoders' decoders too; their encoders, thresholds and affine skips stay as published |
+
+The schedule is `ft_schedules/rte_latent.gemma3.yaml` in the component. `role:adapter` selects by what a tensor is, so
+the schedule does not change when the LoRA targets do. Stage 1 selects by name because `role:latent` would thaw all of a
+transcoder, encoder and thresholds included. `max_transition_epoch: 1` ends stage 0 after its first epoch, so each stage
+trains for one epoch whatever the validation loss does.
+
+### The units, and why each is there
+
+| plan key | why it is a unit |
+| --- | --- |
+| `class:Gemma3DecoderLayer` | the transformer blocks, with `act_ckpt: composable`, so that one block is gathered at a time and its activations are recomputed rather than kept |
+| `class:GemmaScopeTranscoder` | each spliced transcoder, gathered where it is read; unlisted, it would be gathered with the root unit |
+| `class:SiglipEncoderLayer` | the vision tower's layers, which the task never calls; as units they stay sharded and offloaded |
+
+The model is called through the Interpretune module, so neither the Hugging Face model nor a direct call needs a unit of
+its own, unlike the circuit-tracer walkthrough above. The base model is held in bf16, and what trains (the adapters and
+the transcoders) in fp32. `mp_policy` names only `reduce_dtype: float32`, so each tensor computes in the dtype it is
+stored in and the fp32 gradients are reduced in fp32.
+
+### What a run showed
+
+Launched on a 24 GB and an 8 GB card, with eight steps and four validation batches in each stage and otherwise as
+shipped:
+
+- Stage 0 trained the 140 adapter tensors and changed nothing else. Stage 1 also trained exactly `w_dec` and `b_dec` of
+  `tc17` and `tc22`. Both ranks reported the same validation metrics.
+- Each card peaked at 2.8 GiB allocated, in both stages, at about 5 seconds a step.
+- Host resident memory peaked at 15.0 GiB on rank 0, which loads the checkpoint, and 8.2 GiB on rank 1. The run completed
+  under a 26 GiB limit on the host memory of the whole job, with the allocator's rounding off; an attempt with it on was
+  stopped in placement by a 16 GiB limit.
+
+Sixteen steps show that the run works, not that the tuning helps.
+
+### The 27B run
+
+`runs/rte_latent.gemma3_27b.core.fsdp2.yaml` is the same run on gemma-3-27b-it, with transcoders at layers 31 and 40. It
+overrides the model, the layers and the transcoder repository, and keeps the plan and the schedule: neither names a
+layer. It is shaped for two 32 GB cards and has not been launched yet.
+
 ## What the runner does
 
 1. **Joins the process group** from the launcher's `WORLD_SIZE`, `RANK` and `LOCAL_RANK`. When accelerators are
@@ -372,8 +439,8 @@ its tensors are artifacts until then).
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
-  process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
-  accelerators.
+  process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`. No test runs it
+  on accelerators; the latent tuning walkthrough above was launched on two by hand.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
