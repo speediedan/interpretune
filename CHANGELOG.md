@@ -466,6 +466,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- Site addresses resolve on a model PEFT wraps (`lora_cfg`). `attach_latent_model` and `attach_intervention` at `point:hook_resid_post & layers:1` raised `AttributeError` on Llama-shaped models, and on GPT-2 attached at the right block under a path the tunable view could not place, so `role:latent & layers:1` matched nothing. The path is now the wrapped model's own (`model.base_model.model...`), and a module path that reaches its module through the wrapper is placed by the module's registered name ([#1250](https://github.com/interpretune/interpretune/issues/1250))
+
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
 
 - A phased schedule over a TransformerLens bridge thaws its biases under placements `fsdp2` and `tp`. A placement registers new tensors in place of the module's own, and the bridge kept each bias alias (`b_in`, `b_out`, ...) pointing at the old tensor, so its view lost the name and the biases stayed frozen, with nothing said. Once placed, a module now refreshes such references in a cooperative `refresh_tensor_references()`, which the TransformerLens composition implements ([#1200](https://github.com/interpretune/interpretune/issues/1200))

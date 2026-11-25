@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, runtime_che
 import torch
 from torch import nn
 
-from interpretune.tuning.sites import is_site_address, resolve_site
+from interpretune.tuning.sites import is_site_address, registered_path, resolve_site
 
 if TYPE_CHECKING:
     from torch.distributed.tensor import DTensor
@@ -210,7 +210,9 @@ def _resolved(
     if is_site_address(site.write_path):
         resolved = resolve_site(root, site.write_path, sets)
         write, write_io = resolved.path, resolved.io
-    return replace(site, read=read, write=write, read_from=read_from), write_io
+    if write is not None:
+        write = registered_path(root, write)
+    return replace(site, read=registered_path(root, read), write=write, read_from=read_from), write_io
 
 
 def _latent_models(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:

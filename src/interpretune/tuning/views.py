@@ -38,6 +38,7 @@ from typing import Any
 
 from torch import nn
 
+from interpretune.tuning.sites import peft_base_model
 from interpretune.utils import rank_zero_info, rank_zero_warn
 
 # `venngram.tuning.VIEW_ATTR`, kept here so attaching imports neither venngram nor finetuning-scheduler
@@ -151,11 +152,9 @@ def _peft_mount(root: nn.Module) -> str | None:
     architecture. A ``PeftModel`` reports its base model's ``config``, which records ``architectures`` once loaded from
     a checkpoint, so without a named mount the map would be placed at the wrapper, where none of its paths are (#1142).
     """
-    model = getattr(root, "model", None)
-    get_base_model = getattr(model, "get_base_model", None)
-    if not callable(get_base_model) or type(model).__module__.split(".")[0] != "peft":
+    base = peft_base_model(getattr(root, "model", None))
+    if base is None:
         return None
-    base = get_base_model()
     return next((path for path, module in root.named_modules() if module is base and path), None)
 
 
