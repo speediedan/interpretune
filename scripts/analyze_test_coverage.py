@@ -121,7 +121,7 @@ exclude_lines =
 show_contexts = True
 """.format(self.coverage_db, branch_option)
 
-        with open(self.coverage_config, "w") as f:
+        with open(self.coverage_config, "w", encoding="utf-8") as f:
             f.write(config_content.strip())
         print(f"Created coverage config at {self.coverage_config}")
         if self.branch_level:
@@ -446,20 +446,20 @@ show_contexts = True
             test_to_lines = {k: list(v) for k, v in self.test_to_lines.items()}
             line_to_tests = {k: list(v) for k, v in self.line_to_tests.items()}
 
-            with open(self.output_dir / "test_to_lines.json", "w") as f:
+            with open(self.output_dir / "test_to_lines.json", "w", encoding="utf-8") as f:
                 json.dump(test_to_lines, f, indent=2)
 
-            with open(self.output_dir / "line_to_tests.json", "w") as f:
+            with open(self.output_dir / "line_to_tests.json", "w", encoding="utf-8") as f:
                 json.dump(line_to_tests, f, indent=2)
         else:
             # Save branch coverage mappings
             test_to_branches = {k: list(v) for k, v in self.test_to_branches.items()}
             branch_to_tests = {k: list(v) for k, v in self.branch_to_tests.items()}
 
-            with open(self.output_dir / "test_to_branches.json", "w") as f:
+            with open(self.output_dir / "test_to_branches.json", "w", encoding="utf-8") as f:
                 json.dump(test_to_branches, f, indent=2)
 
-            with open(self.output_dir / "branch_to_tests.json", "w") as f:
+            with open(self.output_dir / "branch_to_tests.json", "w", encoding="utf-8") as f:
                 json.dump(branch_to_tests, f, indent=2)
 
     def find_base_tests(self):
@@ -482,10 +482,10 @@ show_contexts = True
                 "tests": {test: len(self.test_to_lines[test]) for test in self.statement_level_base},
             }
 
-            with open(self.output_dir / "statement_level_base.json", "w") as f:
+            with open(self.output_dir / "statement_level_base.json", "w", encoding="utf-8") as f:
                 json.dump(base_tests_info, f, indent=2)
 
-            with open(self.output_dir / "unique_statement_coverage.json", "w") as f:
+            with open(self.output_dir / "unique_statement_coverage.json", "w", encoding="utf-8") as f:
                 json.dump({k: v for k, v in unique_coverage.items()}, f, indent=2)
 
             print(f"Found {len(self.statement_level_base)} base tests that uniquely cover at least one line")
@@ -507,10 +507,10 @@ show_contexts = True
                 "tests": {test: len(self.test_to_branches[test]) for test in self.branch_level_base},
             }
 
-            with open(self.output_dir / "branch_level_base.json", "w") as f:
+            with open(self.output_dir / "branch_level_base.json", "w", encoding="utf-8") as f:
                 json.dump(base_tests_info, f, indent=2)
 
-            with open(self.output_dir / "unique_branch_coverage.json", "w") as f:
+            with open(self.output_dir / "unique_branch_coverage.json", "w", encoding="utf-8") as f:
                 json.dump({k: v for k, v in unique_coverage.items()}, f, indent=2)
 
             print(f"Found {len(self.branch_level_base)} base tests that uniquely cover at least one branch")
@@ -554,7 +554,7 @@ show_contexts = True
             sorted_redundant = sorted(self.statement_level_redundant, key=lambda x: x["test"])
 
             # Save the results
-            with open(self.output_dir / "statement_level_redundant.json", "w") as f:
+            with open(self.output_dir / "statement_level_redundant.json", "w", encoding="utf-8") as f:
                 json.dump(sorted_redundant, f, indent=2)
 
             print(f"Found {len(self.statement_level_redundant)} potential statement-level candidates for removal")
@@ -596,7 +596,7 @@ show_contexts = True
             sorted_redundant = sorted(self.branch_level_redundant, key=lambda x: x["test"])
 
             # Save the results
-            with open(self.output_dir / "branch_level_redundant.json", "w") as f:
+            with open(self.output_dir / "branch_level_redundant.json", "w", encoding="utf-8") as f:
                 json.dump(sorted_redundant, f, indent=2)
 
             print(f"Found {len(self.branch_level_redundant)} potential branch-level candidates for removal")
@@ -648,7 +648,7 @@ show_contexts = True
                 "removal_candidates_list": sorted(list(removal_candidates)),
             }
 
-            with open(self.output_dir / "statement_minimization_stats.json", "w") as f:
+            with open(self.output_dir / "statement_minimization_stats.json", "w", encoding="utf-8") as f:
                 json.dump(minimization_stats, f, indent=2)
 
             print(
@@ -702,7 +702,7 @@ show_contexts = True
                 "removal_candidates_list": sorted(list(removal_candidates)),
             }
 
-            with open(self.output_dir / "branch_minimization_stats.json", "w") as f:
+            with open(self.output_dir / "branch_minimization_stats.json", "w", encoding="utf-8") as f:
                 json.dump(minimization_stats, f, indent=2)
 
             print(
@@ -716,7 +716,7 @@ show_contexts = True
         """Generate a human-readable report."""
         report_path = self.output_dir / "test_coverage_analysis_report.txt"
 
-        with open(report_path, "w") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write("Test Coverage Analysis Report\n")
             f.write("============================\n\n")
 
@@ -732,7 +732,7 @@ show_contexts = True
                 f.write("---------------------------------------\n\n")
 
                 # Load the sorted redundant tests
-                with open(self.output_dir / "statement_level_redundant.json", "r") as rf:
+                with open(self.output_dir / "statement_level_redundant.json", "r", encoding="utf-8") as rf:
                     redundant_tests = json.load(rf)
 
                 # Just list the test names
@@ -743,7 +743,7 @@ show_contexts = True
                 f.write("------------------------------------------------\n\n")
 
                 # Load minimization stats
-                with open(self.output_dir / "statement_minimization_stats.json", "r") as mf:
+                with open(self.output_dir / "statement_minimization_stats.json", "r", encoding="utf-8") as mf:
                     stats = json.load(mf)
             else:
                 # Branch-level reporting
@@ -754,7 +754,7 @@ show_contexts = True
                 f.write("-------------------------------------\n\n")
 
                 # Load the sorted redundant tests
-                with open(self.output_dir / "branch_level_redundant.json", "r") as rf:
+                with open(self.output_dir / "branch_level_redundant.json", "r", encoding="utf-8") as rf:
                     redundant_tests = json.load(rf)
 
                 # Just list the test names
@@ -765,7 +765,7 @@ show_contexts = True
                 f.write("--------------------------------------------\n\n")
 
                 # Load minimization stats
-                with open(self.output_dir / "branch_minimization_stats.json", "r") as mf:
+                with open(self.output_dir / "branch_minimization_stats.json", "r", encoding="utf-8") as mf:
                     stats = json.load(mf)
 
             f.write(f"Tests needed for full coverage: {stats['total_tests_needed']} ")

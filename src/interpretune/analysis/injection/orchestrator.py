@@ -176,7 +176,7 @@ def init_analysis_logger(
     if log_to_file:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file_path = Path(log_dir) / f"{log_prefix}_{timestamp}.log"
-        file_handler = logging.FileHandler(log_file_path)
+        file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         logger.addHandler(file_handler)
 

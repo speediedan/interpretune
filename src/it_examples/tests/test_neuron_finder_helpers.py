@@ -229,7 +229,7 @@ def test_cached_revision_reads_the_snapshot_commit(monkeypatch, tmp_path):
 
     snapshot = tmp_path / "snapshots" / "c1899de2" / "config.json"
     snapshot.parent.mkdir(parents=True)
-    snapshot.write_text("{}")
+    snapshot.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: str(snapshot))
     assert cached_revision("org/model") == "c1899de2"
     monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: None)

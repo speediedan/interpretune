@@ -124,7 +124,7 @@ def test_recorder_without_accelerator_reports_unavailable():
 def test_run_arm_synthetic_cpu(tmp_path):
     out = tmp_path / "it.json"
     runner.main(["--composition", "synthetic", "--arm", "it", "--repeats", "2", "--window", "3", "--out", str(out)])
-    record = json.loads(out.read_text())
+    record = json.loads(out.read_text(encoding="utf-8"))
     assert record["vendor"] == "cpu"
     assert len(record["repeats"]) == 2
     assert all(len(r["steps"]) == 5 for r in record["repeats"])

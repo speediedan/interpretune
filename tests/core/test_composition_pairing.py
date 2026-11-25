@@ -74,10 +74,10 @@ class TestUnderstatingIsRefusedAtLoad:
 
         component = _write_component(tmp_path, REGISTERS_BOTH)
         manifest_path = component / "it_component.yaml"
-        manifest = yaml.safe_load(manifest_path.read_text())
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         # the entrypoint registers module AND datamodule for (core, fixture_adapter); declare only one of them
         manifest["adapters"]["compositions"] = [{"component": "module", "adapters": ["core", FIXTURE_ADAPTER]}]
-        manifest_path.write_text(yaml.safe_dump(manifest))
+        manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
         cache = tmp_path / "components"
         with pytest.warns(UnpairedCompositionWarning):
             local_publish(component, "org/understated", cache_dir=cache)

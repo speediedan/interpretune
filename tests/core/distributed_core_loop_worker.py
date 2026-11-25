@@ -282,7 +282,7 @@ def main() -> None:
     except MisconfigurationException as err:
         if latent is None:
             raise
-        out_path.write_text(json.dumps({"refused": str(err)}))
+        out_path.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
     from torch.distributed.fsdp import FSDPModule
 
@@ -310,7 +310,7 @@ def main() -> None:
         try:
             runner.train()
         except FTSConfigurationError as err:
-            out_path.write_text(json.dumps({"refused": str(err)}))
+            out_path.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
             return
     else:
         runner.train()
@@ -344,7 +344,7 @@ def main() -> None:
         assert fts.tuning_scheduler is not None
         record["depth"] = fts.tuning_scheduler.curr_depth
         record["trainable"] = sorted(n for n, p in module.named_parameters() if p.requires_grad)
-    out_path.write_text(json.dumps(record))
+    out_path.write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

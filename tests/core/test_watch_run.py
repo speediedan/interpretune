@@ -50,14 +50,14 @@ class TestPidWithLog:
 
     def test_a_pytest_summary_with_failures_is_red(self, tmp_path):
         log = tmp_path / "run.log"
-        log.write_text("...\n=========== 2 failed, 40 passed in 3.00s ===========\n")
+        log.write_text("...\n=========== 2 failed, 40 passed in 3.00s ===========\n", encoding="utf-8")
         p = self._sleeper()
         code, lines = _run("--pid", str(p.pid), "--log", str(log), "--interval", "1")
         assert code == 1 and len(lines) == 1 and " RED " in lines[0] and "2 failed" in lines[0]
 
     def test_a_clean_summary_is_green(self, tmp_path):
         log = tmp_path / "run.log"
-        log.write_text("=========== 42 passed, 3 skipped in 3.00s ===========\n")
+        log.write_text("=========== 42 passed, 3 skipped in 3.00s ===========\n", encoding="utf-8")
         p = self._sleeper()
         code, lines = _run("--pid", str(p.pid), "--log", str(log), "--interval", "1")
         assert code == 0 and len(lines) == 1 and " GREEN " in lines[0]
@@ -65,7 +65,7 @@ class TestPidWithLog:
     def test_no_summary_means_dead_not_green(self, tmp_path):
         """The state a hand-written loop reports as nothing: the process is gone and the log stops mid-run."""
         log = tmp_path / "run.log"
-        log.write_text("tests/core/test_x.py::test_y PASSED\n")
+        log.write_text("tests/core/test_x.py::test_y PASSED\n", encoding="utf-8")
         p = self._sleeper()
         code, lines = _run("--pid", str(p.pid), "--log", str(log), "--interval", "1")
         assert code == 3 and len(lines) == 1 and " DEAD " in lines[0]
@@ -94,7 +94,7 @@ class TestQuietModeSummary:
 
     def test_a_quiet_red_summary_is_red(self, tmp_path):
         log = tmp_path / "run.log"
-        log.write_text("...\n3 failed, 40 passed, 2 skipped in 3.00s\n")
+        log.write_text("...\n3 failed, 40 passed, 2 skipped in 3.00s\n", encoding="utf-8")
         p = subprocess.Popen(["sleep", "1"])
         code, lines = _run("--pid", str(p.pid), "--log", str(log), "--interval", "1")
         assert code == 1 and len(lines) == 1 and " RED " in lines[0] and "3 failed" in lines[0]
@@ -129,7 +129,7 @@ class TestBrokenProbe:
     def test_a_probe_that_returns_nothing_is_query_failed_not_pending(self, tmp_path):
         """A broken az on PATH must surface as its own state, never as a healthy poll that keeps waiting."""
         fake = tmp_path / "az"
-        fake.write_text("#!/usr/bin/env bash\nexit 1\n")
+        fake.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
         fake.chmod(0o755)
         env = {**os.environ, "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}"}
         code, lines = _run("--azure-build", "1", "--interval", "0", "--max-query-failures", "3", env=env)
@@ -139,7 +139,7 @@ class TestBrokenProbe:
         fake = tmp_path / "az"
         # The real `az ... --query "[status,result]" -o tsv` prints one element per LINE (captured, not assumed);
         # the first fake wrote them tab-separated and passed while the live command was misread.
-        fake.write_text("#!/usr/bin/env bash\nprintf 'completed\\ncanceled\\n'\n")
+        fake.write_text("#!/usr/bin/env bash\nprintf 'completed\\ncanceled\\n'\n", encoding="utf-8")
         fake.chmod(0o755)
         env = {**os.environ, "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}"}
         code, lines = _run("--azure-build", "1", "--interval", "0", env=env)

@@ -129,7 +129,7 @@ def _collect_imports_with_names(tree: ast.AST) -> list[tuple[str, int, bool, tup
 @pytest.mark.parametrize("module_path", _family_impl_modules(), ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_bundled_family_module_imports_are_sanctioned(module_path: Path):
     family_prefix = f"{BUNDLED_PKG}.{module_path.parent.name}"
-    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     violations: list[str] = []
 
     for module_name, level, is_function_level in _collect_imports(tree):
@@ -175,7 +175,7 @@ def test_bundled_family_imports_no_private_names(module_path: Path):
     gets promoted to a public name in the sanctioned surface instead.
     """
     family_prefix = f"{BUNDLED_PKG}.{module_path.parent.name}"
-    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     violations: list[str] = []
 
     for module_name, level, _is_function_level, names in _collect_imports_with_names(tree):
@@ -205,7 +205,7 @@ class TestConcreteBackendsAreDenied:
         family_dir = tmp_path / "synthetic_family"
         family_dir.mkdir()
         module_path = family_dir / "synthetic_ops.py"
-        module_path.write_text(source)
+        module_path.write_text(source, encoding="utf-8")
         return module_path
 
     def test_importing_a_concrete_backend_is_rejected(self, tmp_path):
@@ -255,7 +255,7 @@ def test_bundled_family_yaml_references_are_sanctioned(yaml_path: Path):
     if yaml_path.name == "composites.yaml":
         pytest.skip("composites reference ops by name, not implementation paths")
     family_prefix = f"{BUNDLED_PKG}.{yaml_path.parent.name}"
-    content = yaml.safe_load(yaml_path.read_text()) or {}
+    content = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     violations: list[str] = []
     for op_name, op_def in content.items():
         if op_name in (COLLECTION_HEADER_KEY, "composite_operations") or not isinstance(op_def, dict):
@@ -277,7 +277,7 @@ def test_bundled_family_yaml_references_are_sanctioned(yaml_path: Path):
 def test_bundled_yaml_op_names_are_globally_unique():
     seen: dict[str, Path] = {}
     for yaml_path in _family_yamls():
-        content = yaml.safe_load(yaml_path.read_text()) or {}
+        content = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
         for op_name in content:
             # `collection:` is family metadata, not an op; every family declares one, so treating it as an
             # op name made this fail on the second family with a misleading duplicate-op message.
@@ -289,7 +289,7 @@ def test_bundled_yaml_op_names_are_globally_unique():
 
 
 def _single_sourced_all(module_path: Path) -> tuple[list[str], set[str]]:
-    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     all_assignments = [
         node
         for node in tree.body

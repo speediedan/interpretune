@@ -400,8 +400,10 @@ sub-hook (`blocks.<layer>.<site>.hook_sae_acts_post`), or becomes circuit-tracer
 backend (`recipe_feature_interventions`), as the [table above](#current-surfaces) describes.
 
 A value is a `dose` (every member takes it), a `doses` table, or a column of evidence the caller supplies, through
-venngram's transforms. On a composed target, a `dose` doses every member of the composition and a `doses` table only
-the members it lists: a table entry for a unit outside the composition (unit 4 in `only_a` above) doses nothing.
+venngram's transforms. On a composed target, as on a single set, a `dose` doses every member of the composition, a
+`doses` table only the members it lists, and an evidence-sourced value reads its column for every member: a table entry
+or evidence row for a unit outside the composition (unit 4 in `only_a` above) doses nothing, and a member the column has
+no row for is refused.
 
 ### What bounds what runs
 
@@ -418,7 +420,7 @@ a silently narrowed treatment. The refusals a unit-set treatment can meet:
 | a unit-targeted recipe op other than `add`, `scale` and `replace` | venngram's op registry or `op_refusal` |
 | an operand on a unit-targeted op (it takes a value) | `op_refusal` |
 | a site with no supplied width, or a unit at or past it | `recipe_interventions` |
-| an evidence-sourced value on a composed target | `recipe_interventions` |
+| an evidence-sourced value whose column has no row for one of the target's members | `recipe_interventions` |
 | a target addressing the gradient (`of: grad`), composed or not, in a translation for values | `op_refusal` |
 
 `add` and `scale` use dense vectors with their identity values elsewhere; `replace` uses a selected-coordinate spec.
@@ -427,12 +429,9 @@ A gradient target is translated with `flow="grad"` for the backward surface
 
 ### Not yet supported
 
-- **Evidence-sourced values on a composed target.** venngram lists a composition's members only through an op's doses
-  today, so a composed target takes a `dose` or a `doses` table.
 - **Registered address books with evidence**, so an experiment cites a model's sets, their compositions and the
   evidence behind them by reference rather than re-deriving indices, with registered examples for supported models.
-
-Both are tracked in [#905](https://github.com/interpretune/interpretune/issues/905).
+  This is tracked in [#905](https://github.com/interpretune/interpretune/issues/905).
 
 ## Latent addresses: blocks, frames, charts and linear spaces
 

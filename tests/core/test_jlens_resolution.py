@@ -22,7 +22,7 @@ from interpretune.analysis.optools import (
     resolve_jlens,
 )
 
-LISTING = json.loads((Path(__file__).parent / "fixtures" / "jlens_repo_listing.json").read_text())
+LISTING = json.loads((Path(__file__).parent / "fixtures" / "jlens_repo_listing.json").read_text(encoding="utf-8"))
 SIDECARS: dict[str, dict] = LISTING["sidecars"]
 CANONICAL = "{d}/jlens/Salesforce-wikitext/{d}_jacobian_lens.pt"
 

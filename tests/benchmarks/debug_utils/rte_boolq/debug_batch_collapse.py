@@ -174,7 +174,7 @@ def debug_batch_collapse():
     log_dir = os.environ.get("IT_DEBUG_LOG_DIR", "/tmp/it_benchmark_debugging")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"batch_collapse_debug_{timestamp}.log")
-    with open(log_path, "w") as f:
+    with open(log_path, "w", encoding="utf-8") as f:
         f.write("\n".join(log_lines))
     print(f"\nLog saved to: {log_path}")
 

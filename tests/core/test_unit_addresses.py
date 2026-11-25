@@ -176,7 +176,7 @@ def test_a_book_entry_gives_a_configured_splice_its_site_and_units(tmp_path):
 
     book = {"schema_version": 1, "name": "units", "sets": {"steer": "point:mlp.out.hook_in & layers:0 & units:[1, 6]"}}
     path = tmp_path / "units.yaml"
-    path.write_text(yaml.safe_dump(book))
+    path.write_text(yaml.safe_dump(book), encoding="utf-8")
     root = nn.Module()
     root.model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_head=1, n_embd=4, n_inner=8, vocab_size=8)).eval()
     (steer,) = attach_configured_interventions(root, [InterventionCfg(name="s", site="@steer", book=str(path))])

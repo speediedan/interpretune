@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out = args.out or args.dir / "telemetry" / "build_telemetry.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(record, indent=2) + "\n")
+    out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     for name, phase in record["phases"].items():
         full = phase["full_phase"] if phase["full_phase"] is not None else "unknown"
         print(f"phase={name} scope={phase['scope']} selected={phase['selected']} full_phase={full}")

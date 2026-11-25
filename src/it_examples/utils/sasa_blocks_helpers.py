@@ -288,7 +288,7 @@ def load_sasa(
 
     cfg_path = hf_hub_download(repo_id, f"{checkpoint}/cfg.json", revision=revision)
     weights = hf_hub_download(repo_id, f"{checkpoint}/sae_weights.safetensors", revision=revision)
-    with open(cfg_path) as fh:
+    with open(cfg_path, encoding="utf-8") as fh:
         cfg = json.load(fh)
     if cfg.get("normalize_activations") != "layer_norm":
         raise ValueError(f"{checkpoint}: expected layer-normalized inputs, got {cfg.get('normalize_activations')!r}")

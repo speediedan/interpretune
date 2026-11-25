@@ -17,7 +17,9 @@ from interpretune.hub import components
 
 COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "prompt_analysis"
 REPO_ID = "speediedan/prompt-analysis"
-CONFIG_KEYS = sorted(yaml.safe_load((COMPONENT_DIR / "it_component.yaml").read_text())["module"]["configs"])
+CONFIG_KEYS = sorted(
+    yaml.safe_load((COMPONENT_DIR / "it_component.yaml").read_text(encoding="utf-8"))["module"]["configs"]
+)
 
 
 @pytest.fixture

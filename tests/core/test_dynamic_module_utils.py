@@ -48,7 +48,7 @@ class TestGetCachedModuleFileIt:
 
         # Create a dummy file to copy from
         src_file = Path(mock_it_modules_cache) / "test_module.py"
-        src_file.write_text("# test module")
+        src_file.write_text("# test module", encoding="utf-8")
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
@@ -77,7 +77,7 @@ class TestGetCachedModuleFileIt:
 
         # Create a dummy file to copy from
         src_file = Path(mock_it_modules_cache) / "test_module.py"
-        src_file.write_text("# test module")
+        src_file.write_text("# test module", encoding="utf-8")
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
@@ -109,7 +109,7 @@ class TestGetCachedModuleFileIt:
 
         # Create a dummy file to copy from
         src_file = Path(mock_it_modules_cache) / "test_module.py"
-        src_file.write_text("# test module")
+        src_file.write_text("# test module", encoding="utf-8")
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
@@ -132,7 +132,7 @@ class TestGetCachedModuleFileIt:
 
         # Create a dummy file to copy from
         src_file = Path(mock_it_modules_cache) / "module.py"
-        src_file.write_text("# test module")
+        src_file.write_text("# test module", encoding="utf-8")
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
@@ -184,7 +184,7 @@ class TestGetCachedModuleFileIt:
         """Test that remote repository names are properly transformed."""
         # Create actual files in the temporary cache
         src_file = Path(mock_it_modules_cache) / "module.py"
-        src_file.write_text("# test module")
+        src_file.write_text("# test module", encoding="utf-8")
 
         mock_cached.return_value = str(src_file)
         mock_try_load.return_value = "/old/cache/module.py"
@@ -291,9 +291,9 @@ class TestGetCachedModuleFileIt:
         helper1_file = mock_it_modules_cache / "helper1.py"
         helper2_file = mock_it_modules_cache / "helper2.py"
 
-        main_file.write_text("# main module")
-        helper1_file.write_text("# helper1 module")
-        helper2_file.write_text("# helper2 module")
+        main_file.write_text("# main module", encoding="utf-8")
+        helper1_file.write_text("# helper1 module", encoding="utf-8")
+        helper2_file.write_text("# helper2 module", encoding="utf-8")
 
         # Track recursive calls
         recursive_calls = []
@@ -463,7 +463,7 @@ class TestOpPathMgmt:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create a file instead of using a directory
             test_file = Path(temp_dir) / "test_file.txt"
-            test_file.write_text("test content")
+            test_file.write_text("test content", encoding="utf-8")
 
             with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
                 test_paths = [str(test_file)]
@@ -487,7 +487,7 @@ class TestOpPathMgmt:
             valid_dir.mkdir()
 
             test_file = Path(temp_dir) / "invalid_file.txt"
-            test_file.write_text("test")
+            test_file.write_text("test", encoding="utf-8")
 
             nonexistent_path = "/does/not/exist"
 
@@ -685,7 +685,7 @@ class TestGetFunctionInModule:
         # Create a test module file
         module_path = "test_module.py"
         module_file = Path(mock_it_modules_cache) / module_path
-        module_file.write_text("def test_function():\n    return 'force_reload_test'")
+        module_file.write_text("def test_function():\n    return 'force_reload_test'", encoding="utf-8")
 
         # Mock get_relative_import_files to return empty list
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
@@ -716,7 +716,7 @@ class TestGetFunctionInModule:
         # Create a test module file
         module_path = "cached_test_module.py"
         module_file = Path(mock_it_modules_cache) / module_path
-        module_file.write_text("def cached_function():\n    return 'cached_result'")
+        module_file.write_text("def cached_function():\n    return 'cached_result'", encoding="utf-8")
 
         # Mock get_relative_import_files to return empty list
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
@@ -750,7 +750,7 @@ class TestGetFunctionInModule:
         module_path = "hash_test_module.py"
         module_file = Path(mock_it_modules_cache) / module_path
         original_content = "def hash_function():\n    return 'original'"
-        module_file.write_text(original_content)
+        module_file.write_text(original_content, encoding="utf-8")
 
         # Mock get_relative_import_files to return empty list
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
@@ -768,7 +768,7 @@ class TestGetFunctionInModule:
 
             # Modify the module file to change its hash
             new_content = "def hash_function():\n    return 'modified'"
-            module_file.write_text(new_content)
+            module_file.write_text(new_content, encoding="utf-8")
 
             # Instead of mocking exec_module, let's verify the behavior by checking the hash and function output
             # Call again - should detect hash change and reload
@@ -795,7 +795,7 @@ class TestGetFunctionInModule:
         # Create a test module file without the requested function
         module_path = "no_function_module.py"
         module_file = Path(mock_it_modules_cache) / module_path
-        module_file.write_text("def other_function():\n    return 'other'")
+        module_file.write_text("def other_function():\n    return 'other'", encoding="utf-8")
 
         # Mock get_relative_import_files to return empty list
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
@@ -813,8 +813,8 @@ class TestGetFunctionInModule:
         main_module_file = Path(mock_it_modules_cache) / main_module_path
         helper_module_file = Path(mock_it_modules_cache) / helper_module_path
 
-        main_module_file.write_text("def main_function():\n    return 'main'")
-        helper_module_file.write_text("def helper_function():\n    return 'helper'")
+        main_module_file.write_text("def main_function():\n    return 'main'", encoding="utf-8")
+        helper_module_file.write_text("def helper_function():\n    return 'helper'", encoding="utf-8")
 
         # Mock get_relative_import_files to return the helper module
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files") as mock_get_imports:
@@ -833,7 +833,7 @@ class TestGetFunctionInModule:
             assert initial_hash is not None
 
             # Modify the helper module to change the overall hash
-            helper_module_file.write_text("def helper_function():\n    return 'modified_helper'")
+            helper_module_file.write_text("def helper_function():\n    return 'modified_helper'", encoding="utf-8")
 
             # Call again - should detect hash change due to helper module change
             func2 = get_function_in_module("main_function", main_module_path)
@@ -850,7 +850,7 @@ class TestGetFunctionInModule:
         # Create a test module file
         module_path = "force_reload_test.py"
         module_file = Path(mock_it_modules_cache) / module_path
-        module_file.write_text("def test_function():\n    return 'original'")
+        module_file.write_text("def test_function():\n    return 'original'", encoding="utf-8")
 
         # Mock get_relative_import_files to return empty list
         with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
