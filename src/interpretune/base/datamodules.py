@@ -1,12 +1,14 @@
 import os
 import inspect
+import tempfile
+from pathlib import Path
 from typing import Any, cast
 from functools import reduce
 import logging
 
 import torch
 import datasets
-from datasets import Dataset
+from datasets import Dataset, DatasetDict
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from interpretune.utils import rank_zero_info, rank_zero_warn, _import_class, rank_zero_debug, _resolve_env_auth_token
@@ -15,6 +17,20 @@ from interpretune.protocol import SaveHyperparametersProtocol, ITModuleProtocol
 
 
 log = logging.getLogger(__name__)
+
+
+def _publish_order(name: Path) -> tuple[int, str]:
+    """Order a saved dataset's files so each is in place before the file that names it."""
+    rank = {".arrow": 0}.get(name.suffix, 2 if name.name == "dataset_dict.json" else 1)
+    return rank, name.as_posix()
+
+
+def _remove_superseded(target: Path, keep: set[Path]) -> None:
+    """Remove the Arrow files of an earlier save that the current one does not name (it had more shards or
+    splits)."""
+    for stale in target.rglob("*.arrow"):
+        if stale.relative_to(target) not in keep:
+            stale.unlink(missing_ok=True)
 
 
 ################################################################################
@@ -50,6 +66,9 @@ class ITDataModule:
             cast(SaveHyperparametersProtocol, self).save_hyperparameters()
         os.environ["TOKENIZERS_PARALLELISM"] = "true" if self.itdm_cfg.tokenizers_parallelism else "false"
         self.tokenizer = self.configure_tokenizer()
+        # the class whose `prepare_data` runs is part of the key, so two datamodules of one task never share rows
+        preparer = next(c for c in type(self).__mro__ if "prepare_data" in vars(c))
+        self.itdm_cfg.key_default_dataset_path(self.tokenizer, preparer=preparer, **self.prepared_dataset_key_extra())
         rank_zero_debug(
             f"[ITDataModule.__init__] Tokenizer initialized: {self.tokenizer.__class__.__name__}, "
             f"padding_side={getattr(self.tokenizer, 'padding_side', None)}, "
@@ -80,8 +99,41 @@ class ITDataModule:
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
+    def prepared_dataset_key_extra(self) -> dict[str, Any]:
+        """What ``prepare_data`` depends on beyond the configuration, to key the default ``dataset_path`` by.
+
+        Override it when something outside ``itdm_cfg`` changes the rows ``prepare_data`` writes.
+        """
+        return {}
+
     def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
         """Load the SuperGLUE dataset."""
+
+    def save_prepared_dataset(self, dataset: Dataset | DatasetDict) -> None:
+        """Save ``dataset`` to ``itdm_cfg.dataset_path`` without rewriting files another session has memory-mapped.
+
+        ``save_to_disk`` truncates and rewrites an existing Arrow file, which changes the rows under any process that
+        has it mapped. This writes beside the target and moves each file into place, data before the metadata that
+        names it, so a reader keeps the file it opened and a new reader never finds one half written. Where a live
+        mapping blocks the move (Windows), the prepared dataset already there is kept, with a warning.
+        """
+        assert self.itdm_cfg.dataset_path is not None, "Dataset path is not configured"
+        target = Path(self.itdm_cfg.dataset_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f".{target.name}.", dir=target.parent, ignore_cleanup_errors=True) as d:
+            staged = Path(d) / "dataset"
+            dataset.save_to_disk(staged)
+            files = sorted((p.relative_to(staged) for p in staged.rglob("*") if p.is_file()), key=_publish_order)
+            try:
+                for name in files:
+                    (target / name).parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(staged / name, target / name)
+                _remove_superseded(target, keep=set(files))
+            except PermissionError as e:
+                rank_zero_warn(
+                    f"Kept the prepared dataset already at {target}: another reader has it memory-mapped, which blocks"
+                    f" replacing it on this platform ({e})."
+                )
 
     def setup(self, stage: str | None = None, module: torch.nn.Module | None = None, *args, **kwargs) -> None:
         """Setup our dataset splits for training/validation."""

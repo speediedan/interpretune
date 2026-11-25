@@ -45,9 +45,10 @@ same grammar as Fine-Tuning Scheduler's own interfaces:
 | `model\.layers\.\d+$` | every module whose name the regular expression matches from the start |
 | `class:GPT2Block` (or `class:<module>.<qualname>`) | every instance of that class or of a subclass |
 
-Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus two aliases: `act_ckpt: composable`
-applies composable activation checkpointing to the unit before it is sharded, and `cpu_offload_policy` (a mapping of
-`CPUOffloadPolicy` arguments) becomes its `offload_policy`. `fsdp_default_kwargs` gives every planned unit keyword
+Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus three aliases: `act_ckpt: composable`
+applies composable activation checkpointing to the unit before it is sharded, `cpu_offload_policy` (a mapping of
+`CPUOffloadPolicy` arguments) becomes its `offload_policy`, and `mp_policy` (a mapping of `MixedPrecisionPolicy`
+arguments, dtypes by name) becomes its mixed precision policy. `fsdp_default_kwargs` gives every planned unit keyword
 arguments its entry does not override; all but `act_ckpt` also apply to the root unit.
 
 ```yaml
@@ -57,7 +58,11 @@ run_cfg:
     class:GPT2Block: {act_ckpt: composable}
   fsdp_default_kwargs:
     cpu_offload_policy: {pin_memory: true}
+    mp_policy: {reduce_dtype: float32}
 ```
+
+Without a `param_dtype` every tensor computes in the dtype it is stored in, so a bf16 model keeps fp32 islands (its
+trainable parameters, say) and `reduce_dtype: float32` reduces their gradients in fp32.
 
 Pinned offload lets the copies between host and accelerator run asynchronously, but PyTorch's pinned host allocator
 rounds every allocation up to a power of two by default, so offloaded shards can take up to twice their size in host
@@ -369,8 +374,6 @@ its tensors are artifacts until then).
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
   process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
   accelerators.
-- FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
-  so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
