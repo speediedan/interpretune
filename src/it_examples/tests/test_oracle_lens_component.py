@@ -286,6 +286,9 @@ def test_joint_fve():
         -torch.eye(3)[:2], y
     )  # planted: only negative coefficients would help, and they are not allowed
     assert fve == pytest.approx(0.0, abs=1e-6) and torch.all(c == 0)
+    # nothing helps, so the fit explains exactly 0: a residual and a norm summed two ways in float32 differed here
+    wide = torch.randn(5376, generator=torch.Generator().manual_seed(0))
+    assert all(R.joint_fve(-v[None], v)[0] == 0 for v in (wide, wide * 3, wide + 1))
     with pytest.raises(ValueError, match="zero norm"):
         R.joint_fve(torch.eye(3), torch.zeros(3))
 

@@ -331,11 +331,12 @@ def joint_fve(D: torch.Tensor, y: torch.Tensor) -> tuple[float, torch.Tensor]:
     A zero target is refused: its fraction explained is undefined.
     """
     y, D = y.float().cpu(), D.float().cpu()
-    yy = float(y @ y)
+    # one reduction for both sums, in float64: an all-zero fit must explain exactly 0, not a rounding error either side
+    yy = float(y.double().pow(2).sum())
     if yy == 0:
         raise ValueError("the whitened activation has zero norm, so its fraction explained is undefined")
     c = nnls(D, y)
-    return 1 - float((y - D.T @ c).pow(2).sum()) / yy, c
+    return 1 - float((y.double() - D.T.double() @ c.double()).pow(2).sum()) / yy, c
 
 
 def adapter_config(root: Path, name: str) -> dict:
