@@ -304,6 +304,25 @@ class TestBaseTuning:
         assert "hf_model" not in module._modules
 
 
+class TestTranscoderRelease:
+    """The transcoders' source, as an address book pins it (#875)."""
+
+    @pytest.mark.parametrize(
+        ("transcoder_set", "release"),
+        [
+            ("org/set@9ab1f0e", {"hub": "org/set", "revision": "9ab1f0e"}),
+            ("org/set/width_16k@9ab1f0e", {"hub": "org/set", "revision": "9ab1f0e", "path": "width_16k"}),
+            ("org/set", {}),  # follows the repository's latest snapshot, so it identifies nothing
+            ("gemma", {}),
+        ],
+    )
+    def test_a_set_is_identified_by_its_revision(self, transcoder_set, release):
+        assert _toy_module(transcoder_set=transcoder_set).latent_model_releases() == {"transcoder": release}
+
+    def test_no_transcoders_report_no_source(self):
+        assert _ct_module(SimpleNamespace(), transcoder_set="org/set@9ab1f0e").latent_model_releases() == {}
+
+
 class TestDefaultOptimizer:
     """The default optimizer over a composition with no HF module registered (the circuit-tracer notebooks'), whose
     parameters are all transcoder ``artifact`` tensors until a promotion (#859)."""

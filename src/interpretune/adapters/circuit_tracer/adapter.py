@@ -351,6 +351,27 @@ class BaseCircuitTracerModule(BaseITModule):
             return
         self._modules["hf_model"] = base
 
+    def latent_model_releases(self) -> dict[str, dict[str, str]]:
+        """Adds the transcoders, as ``transcoder``: their Hub repository and revision where ``transcoder_set``
+        states a revision (``<repository>@<revision>``).
+
+        A set named without one follows its repository's latest snapshot, which identifies nothing, so it reports
+        nothing.
+        """
+        releases = super().latent_model_releases()
+        if _replacement_transcoders(self) is None:
+            return releases
+        from circuit_tracer.utils.hf_utils import HfUri
+
+        cfg = self.circuit_tracer_cfg
+        source = HfUri.from_str(cfg.transcoder_set) if cfg is not None else None
+        release: dict[str, str] = {}
+        if source is not None and source.revision:
+            release = {"hub": source.repo_id, "revision": source.revision}
+            if source.file_path:
+                release["path"] = source.file_path
+        return {**releases, "transcoder": release}
+
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
