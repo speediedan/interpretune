@@ -37,6 +37,48 @@ def test_references_follow_the_books_sets():
     )
 
 
+@pytest.mark.parametrize("point", ["unembed.hook_in", "ln_final.hook_normalized", "embed.hook_out", "hook_embed"])
+def test_a_global_point_resolves_once_to_its_layer_free_name(point):
+    assert resolve_sites(f"point:{point}", n_layers=4) == SiteSelection(sites=(point,), flow="value")
+    assert resolve_sites(f"point:{point} & of:grad", n_layers=4).flow == "grad"
+
+
+def test_global_points_join_block_sites_and_follow_them():
+    address = f"point:unembed.hook_in | (point:{POINT} & layers:-1:)"
+    assert resolve_sites(address, n_layers=3).sites == (f"blocks.2.{POINT}", "unembed.hook_in")
+    assert resolve_sites("@out", n_layers=3, sets={"out": "point:unembed.hook_in"}).sites == ("unembed.hook_in",)
+
+
+def test_a_layer_term_never_selects_a_global_point():
+    with pytest.raises(
+        MisconfigurationException, match=r"\['unembed.hook_in'\] are global points, which have no layer"
+    ):
+        resolve_sites("point:unembed.hook_in & layers:1", n_layers=4)
+    assert resolve_sites(f"(point:unembed.hook_in | point:{POINT}) & layers:1", n_layers=4).sites == (
+        f"blocks.1.{POINT}",
+    )
+
+
+def test_no_global_component_shares_a_name_with_a_block_component_in_any_bundled_map():
+    """The point alone decides whether it is global, so a resolver needs no model to say so."""
+    from interpretune.analysis.points import component_map_for, known_architectures
+
+    maps = [component_map_for(name) for name in known_architectures()]
+    assert maps
+    stacked = {c for m in maps for stack in m.stack_names() for c in m.block_components(stack)}
+    assert not stacked & {c for m in maps for c in m.global_components()}
+
+
+def test_an_intervention_address_at_a_global_point_expands_to_the_models_hook():
+    from interpretune.analysis.backends.interventions import expand_intervention_patterns
+
+    hooks = {name: name for name in ("blocks.0.hook_in", "blocks.1.hook_in", "unembed.hook_in")}
+    address = "point:unembed.hook_in"
+    assert expand_intervention_patterns([address], hooks) == {address: ["unembed.hook_in"]}
+    with pytest.raises(ValueError, match="selects ln_final.hook_in, which this model does not expose"):
+        expand_intervention_patterns(["point:ln_final.hook_in"], hooks)
+
+
 @pytest.mark.parametrize(
     "address, sets, match",
     [

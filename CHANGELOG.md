@@ -471,6 +471,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- A venngram site address names a point outside the block stack (`point:unembed.hook_in`, `point:ln_final.hook_normalized`) by its one layer-free name, in value and gradient addresses. It used to resolve to `blocks.<layer>.unembed.hook_in` for every layer, which a backend refused, so the tutorials' steering site had no address. A `layers` term never selects a global point, and a unit address or a readout term naming one is refused ([#1232](https://github.com/interpretune/interpretune/issues/1232))
+
 - A session no longer reads a prepared dataset another session is rewriting. The default `dataset_path` was one directory per task, for every model, tokenizer and prompt configuration, and each session rewrote in place the Arrow files another had memory-mapped, whose labels turned to garbage mid-training. The default is now keyed by what determines the rows (`<datasets cache>/<task>__<key>`; an explicit path is left alone), and `ITDataModule.save_prepared_dataset` moves whole files into place, which a datamodule's `prepare_data` calls in place of `save_to_disk`. The `knowing_using` example does ([#1220](https://github.com/interpretune/interpretune/issues/1220))
 
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
