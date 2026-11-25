@@ -1,0 +1,117 @@
+---
+# Collection identity: versions the op contract set (names, schemas), not a package. `peft` is imported only when the
+# op mounts an adapter (interpretune.utils.peft_mount), and the released checkpoint is fetched from the Hub on first use.
+collection:
+  name: oracle_lens
+  version: 0.1.0
+
+oracle_lens_read:
+  description: Read WorkspaceBench's oracle lens (sampled verbal readouts, optionally fit back by its reconstructor) from the session's Qwen3.6-27B
+  implementation: oracle_lens_ops.oracle_lens_read_impl
+  aliases: [oracle_lens]
+  input_schema:
+    oracle_lens_adapter:
+      # space (default), rl600, student or inverter; each has its own prompt and injection transform
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_layers:
+      # read layers, from the trained band 20 to 60 in steps of 4
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    oracle_lens_positions:
+      # read position per prompt, negative from the last real token; unset reads the last token
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    oracle_lens_ar:
+      # also fit each readout's bullets to the activation with the reconstructor
+      datasets_dtype: bool
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_samples:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_seed:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_temperature:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_top_p:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_max_new_tokens:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_revision:
+      # the released checkpoint's revision on the Hub (pinned by default)
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_root:
+      # a local copy of the released checkpoint, in place of the Hub snapshot
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+  output_schema:
+    oracle_lens_readouts:
+      # [prompt][layer][sample] readout text
+      datasets_dtype: string
+      array_shape: [null, null, null]
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_bullets:
+      # [prompt][layer][sample][bullet] the readout's '- ' bullets
+      datasets_dtype: string
+      array_shape: [null, null, null, null]
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_fve:
+      # [prompt][layer][sample] fraction of the whitened activation the bullets explain; None where a readout had no
+      # bullets (NaN when read back from a store). Absent unless `oracle_lens_ar` was asked for
+      datasets_dtype: float64
+      array_shape: [null, null, null]
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_coefs:
+      # [prompt][layer][sample][bullet] one non-negative coefficient per bullet; absent like `oracle_lens_fve`
+      datasets_dtype: float64
+      array_shape: [null, null, null, null]
+      required: false
+      non_tensor: true
+      sequence_type: false
+    oracle_lens_layers:
+      # the blocks whose output was read
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+      site: {binds: layer, point: hook_resid_post}
+    oracle_lens_positions:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+      site: {binds: tokens}
+    oracle_lens_sampling:
+      # adapter, checkpoint revision and sampling settings, as JSON: sampling is part of the result
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
