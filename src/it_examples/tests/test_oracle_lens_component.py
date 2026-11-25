@@ -144,6 +144,33 @@ def test_the_published_tree_carries_what_the_op_imports(tmp_path):
     assert "oracle_lens_read" in dispatcher._op_definitions
 
 
+def test_a_hub_copy_runs_the_runtime_of_its_own_revision(tmp_path, monkeypatch):
+    """The published tree, loaded as the Hub loader loads it, offline, beside a local copy imported first."""
+    from uuid import uuid4
+
+    from interpretune.analysis.ops import dynamic_module_utils
+    from interpretune.hub.publish import build_component_tree
+
+    revision = (uuid4().hex + uuid4().hex)[:40]
+    repo = tmp_path / "hub" / "models--Some-Org--oracle-lens"
+    (repo / "refs").mkdir(parents=True)
+    (repo / "refs" / "main").write_text(revision)
+    build_component_tree(COMPONENT, repo / "snapshots" / revision)
+    modules = tmp_path / "modules"
+    modules.mkdir()
+    monkeypatch.setattr(dynamic_module_utils, "IT_MODULES_CACHE", str(modules))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    for name in [n for n in sys.modules if n.partition(".")[0] == dynamic_module_utils.IT_DYNAMIC_MODULE_NAME]:
+        monkeypatch.delitem(sys.modules, name)
+    assert pathlib.Path(sys.modules["oracle_lens_runtime"].__file__).parent == COMPONENT  # the local copy
+    op = dynamic_module_utils.get_function_from_dynamic_module(
+        "oracle_lens_ops.oracle_lens_read_impl", "Some-Org.oracle-lens", cache_dir=tmp_path / "hub", revision=revision
+    )
+    runtime = sys.modules[op.__module__].R
+    assert revision in pathlib.Path(runtime.__file__).as_posix()
+    assert runtime.BASE_ID == R.BASE_ID and runtime is not R
+
+
 @pytest.mark.parametrize("kind", sorted(R.PROMPTS))
 @pytest.mark.parametrize("wrap", [False, True])
 def test_the_marker_is_one_token_appearing_once(tok, kind, wrap):

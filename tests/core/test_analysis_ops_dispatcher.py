@@ -1208,6 +1208,7 @@ test_op:
             importable_params={},
             required_ops=[],
             composition=None,
+            source="hub:user.repo",
         )
 
         mock_function = MagicMock()
@@ -1234,12 +1235,12 @@ test_op:
             revision=None,
         )
 
-    @patch("interpretune.analysis.ops.dispatcher.rank_zero_debug")
-    def test_import_hub_callable_invalid_format(self, mock_debug, dispatcher):
-        # Setup - invalid format (missing third part)
-        op_name = "user.repo"
+    @pytest.mark.parametrize("source", ["local", "bundled", "hub:", "hub:user"])
+    def test_import_hub_callable_refuses_a_source_that_names_no_repo(self, source, dispatcher):
+        """The repo comes from the source, so a source without one is refused rather than guessed from the op's
+        name."""
         op_def = OpDef(
-            name=op_name,
+            name="user.repo.function_name",
             implementation="module.function_name",
             description="",
             input_schema={},
@@ -1248,11 +1249,10 @@ test_op:
             importable_params={},
             required_ops=[],
             composition=None,
+            source=source,
         )
-
-        # Execute and verify raises error
-        with pytest.raises(ValueError, match="Invalid namespaced operation format"):
-            dispatcher._import_hub_callable(op_name, op_def)
+        with pytest.raises(ValueError, match="names no repository"):
+            dispatcher._import_hub_callable("user.repo.function_name", op_def)
 
     def test_import_hub_callable_missing_implementation(self, dispatcher):
         # Setup - missing implementation
@@ -1267,6 +1267,7 @@ test_op:
             importable_params={},
             required_ops=[],
             composition=None,
+            source="hub:user.repo",
         )
 
         # Execute and verify raises error
@@ -1286,6 +1287,7 @@ test_op:
             importable_params={},
             required_ops=[],
             composition=None,
+            source="hub:user.repo",
         )
 
         # Execute and verify raises error
@@ -1307,6 +1309,7 @@ test_op:
             importable_params={},
             required_ops=[],
             composition=None,
+            source="hub:user.repo",
         )
 
         mock_function = MagicMock()

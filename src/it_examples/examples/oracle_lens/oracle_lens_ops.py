@@ -16,9 +16,15 @@ from typing import Any
 
 import torch
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-# resolved from the component directory, which the line above puts on the path
-import oracle_lens_runtime as R  # noqa: E402  # pyright: ignore[reportMissingImports]
+try:
+    # a copy loaded from the Hub is a package, which holds the runtime of its own revision
+    from . import oracle_lens_runtime as R
+except ImportError:
+    if __package__:
+        raise
+    # loaded from a directory on IT_ANALYSIS_OP_PATHS, the module stands alone: its directory is the search path
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import oracle_lens_runtime as R  # pyright: ignore[reportMissingImports]
 
 _ARS: "weakref.WeakKeyDictionary[Any, dict]" = weakref.WeakKeyDictionary()
 

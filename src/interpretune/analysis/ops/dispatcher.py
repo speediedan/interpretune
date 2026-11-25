@@ -1325,14 +1325,15 @@ class AnalysisOpDispatcher:
         """Import a callable from a hub path."""
         rank_zero_debug(f"Attempting dynamic loading for namespaced operation: {op_name}")
 
-        # Extract repo name from the operation name and module/function from implementation field
-        # Format of op_name: "repo_name.function_name" or "user.repo.function_name"
-        parts = op_name.split(".")
-        if len(parts) >= 3:
-            # Take the first two parts as repo identifier
-            repo_name = ".".join(parts[:2])
-        else:
-            raise ValueError(f"Invalid namespaced operation format: {op_name}. Expected 'user.repo.function_name'")
+        # The repo is read from the definition's source, which keeps the repo's own spelling. The op's name cannot give
+        # it back: normalization case-folds it and maps `-` to `_`, so a repo spelled any other way would be requested
+        # under a name that does not exist.
+        namespace = op_def.source.partition(":")[2] if op_def.source.startswith("hub:") else ""
+        if "." not in namespace:
+            raise ValueError(
+                f"The hub operation {op_name!r} has source {op_def.source!r}, which names no repository "
+                "(expected 'hub:<user>.<repo>')"
+            )
 
         # Extract module and function names from implementation field
         if not op_def.implementation:
@@ -1354,7 +1355,7 @@ class AnalysisOpDispatcher:
         # commit revision that is already in the cache imports without any request.
         implementation = get_function_from_dynamic_module(
             function_reference=function_reference,
-            op_repo_name_or_path=repo_name,
+            op_repo_name_or_path=namespace,
             cache_dir=IT_ANALYSIS_HUB_CACHE,
             revision=self._revision_for(op_def),
         )

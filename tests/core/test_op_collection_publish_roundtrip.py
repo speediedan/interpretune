@@ -18,6 +18,7 @@ the real manifest routing and the real dispatcher.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,10 @@ def _isolate_module_cache(tmp_path: Path, monkeypatch) -> None:
     modules.mkdir(exist_ok=True)
     monkeypatch.setattr("interpretune.analysis.IT_MODULES_CACHE", str(modules))
     monkeypatch.setattr(dynamic_module_utils, "IT_MODULES_CACHE", str(modules))
+    # the package an earlier test imported keeps that test's directory as its search path
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    for name in [n for n in sys.modules if n.partition(".")[0] == dynamic_module_utils.IT_DYNAMIC_MODULE_NAME]:
+        monkeypatch.delitem(sys.modules, name)
 
 
 @pytest.fixture(scope="module")
@@ -326,3 +331,61 @@ class TestThePinnedImplementationIsTheOneExecuted:
         executed = Path(sys.modules[implementation.__module__].__file__).as_posix()
         assert self.PINNED in executed, f"executed {executed}, which is not the pinned snapshot"
         assert self.REPUBLISHED not in executed
+
+
+class TestARepoWhoseNameIsNormalizedRunsItsOps:
+    """The repo of a hub op is the repo it was published to, not the spelling its op name is registered under.
+
+    Op names are normalized (case-folded, ``-`` mapped to ``_``), so rebuilding the repo from the op's name requested a
+    repo that does not exist for any name normalization changes, and every published collection happened to be spelled
+    the way it leaves alone. The check is on the module executed, from an offline cache, which imports a module shipped
+    beside it in each form that can run from the Hub.
+    """
+
+    @pytest.mark.parametrize("repo_id", ["speediedan/plain_ops", "Some-Org/My-Ops", "Some-Org/My-Ops.v2"])
+    @pytest.mark.parametrize(
+        "sibling_import, answer",
+        [("from .my_runtime import ANSWER", "ANSWER"), ("from . import my_runtime as R", "R.ANSWER")],
+        ids=["members", "module"],
+    )
+    def test_the_op_runs_from_the_repo_as_published(self, sibling_import, answer, repo_id, tmp_path, monkeypatch):
+        import socket
+
+        revision = _fresh_revision()
+        hub_cache = tmp_path / "hub"
+        snapshot = hub_cache / f"models--{repo_id.replace('/', '--')}" / "snapshots" / revision
+        snapshot.mkdir(parents=True)
+        (snapshot / IT_COMPONENT_MANIFEST).write_text(
+            "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [my_ops.yaml]\n"
+            "extra_files: [my_ops.py, my_runtime.py]\n"
+        )
+        (snapshot / "my_ops.yaml").write_text(
+            "spelled_op:\n  description: a probe\n  implementation: my_ops.spelled_op\n"
+            "  input_schema: {}\n  output_schema: {}\n"
+        )
+        (snapshot / "my_ops.py").write_text(
+            f"{sibling_import}\n\n\ndef spelled_op(module, analysis_batch, batch, batch_idx):\n    return {answer}\n"
+        )
+        (snapshot / "my_runtime.py").write_text(f"ANSWER = {repo_id!r}\n")
+        refs = snapshot.parent.parent / "refs"
+        refs.mkdir()
+        (refs / "main").write_text(revision)
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
+        monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
+        monkeypatch.delenv("IT_OP_PRECEDENCE", raising=False)
+        _isolate_module_cache(tmp_path, monkeypatch)
+        dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+        (tmp_path / "cache").mkdir()
+        dispatcher._cache_manager.cache_dir = tmp_path / "cache"
+        dispatcher.load_definitions()
+        name, op_def = next((n, d) for n, d in dispatcher._op_definitions.items() if n.endswith(".spelled_op"))
+        monkeypatch.setattr(
+            socket.socket,
+            "connect",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("import reached the network")),
+        )
+        implementation = dispatcher._import_hub_callable(name, op_def)
+        assert implementation(None, None, None, 0) == repo_id
+        assert revision in Path(sys.modules[implementation.__module__].__file__).as_posix()
+        assert dispatcher._instantiate_op(name) is not None
