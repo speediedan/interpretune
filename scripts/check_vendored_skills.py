@@ -57,7 +57,7 @@ def _check_tree(skills_dir: Path) -> tuple[int, int]:
     missing: list[str] = []
     checked = 0
 
-    for line in manifest.read_text().splitlines():
+    for line in manifest.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue

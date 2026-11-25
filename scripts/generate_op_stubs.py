@@ -410,7 +410,7 @@ def _follow_lazy_reexports(init_path: Path, module: str, attr: str, _limit: int 
         if not candidate.is_file():
             return module, attr
         try:
-            sub = ast.parse(candidate.read_text())
+            sub = ast.parse(candidate.read_text(encoding="utf-8"))
         except SyntaxError:
             return module, attr
         # The map's NAME varies by package (`_LAZY_MODULE_ATTRS`, `_LAZY_ADAPTER_ATTRS`), so match the
@@ -460,7 +460,7 @@ def public_surface_imports(init_path: Path) -> List[str]:
     framework as a side effect of generating stubs, and the stale-stubs CI check has to stay hermetic
     and runnable without them.
     """
-    tree = ast.parse(init_path.read_text())
+    tree = ast.parse(init_path.read_text(encoding="utf-8"))
     lazy: Dict[str, str] = {}
     exported: List[str] = []
     from_imports: Dict[str, str] = {}
@@ -571,7 +571,7 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
 
     # Write to output file
     output_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         # Emit the protocol import line to match what the stub body actually references. The generator
         # runs `ruff-format`, which does NOT remove unused imports, but the repo's pre-commit runs
         # `ruff-check --fix`, which does. Emitting an unused `BaseAnalysisBatchProtocol` therefore

@@ -148,7 +148,7 @@ class BaseConfigImpl:
             log_file = target_log_dir / f"{logger_name.replace('.', '_')}.log"
             matched = self._existing_file_handler_matches(existing_files, logger_name, log_file)
             if not matched:
-                file_handler = logging.FileHandler(log_file, mode="a")
+                file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
                 file_handler.setLevel(level)
                 file_handler.setFormatter(formatter)
                 logger.addHandler(file_handler)

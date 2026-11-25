@@ -30,11 +30,11 @@ def _hub_snapshot(cache: Path, repo_id: str, sha: str, *, make_main: bool) -> Pa
     snap = repo_dir / "snapshots" / sha
     snap.mkdir(parents=True, exist_ok=True)
     (snap / "it_component.yaml").write_text(
-        yaml.safe_dump({"it_schema_version": 1, "kinds": ["ops"], "ops": {"files": ["x.yaml"]}})
+        yaml.safe_dump({"it_schema_version": 1, "kinds": ["ops"], "ops": {"files": ["x.yaml"]}}), encoding="utf-8"
     )
     if make_main:
         (repo_dir / "refs").mkdir(exist_ok=True)
-        (repo_dir / "refs" / "main").write_text(sha)
+        (repo_dir / "refs" / "main").write_text(sha, encoding="utf-8")
     return snap
 
 

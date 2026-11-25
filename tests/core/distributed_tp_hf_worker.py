@@ -61,7 +61,7 @@ def main() -> None:
     try:
         place_module(placed, run)
     except MisconfigurationException as err:
-        out.write_text(json.dumps({"refused": str(err)}))
+        out.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
     record["split_params"] = sorted(n for n, p in placed.named_parameters() if type(p.data).__name__ == "DTensor")
     input_ids = torch.arange(12).reshape(2, 6) % 128
@@ -79,7 +79,7 @@ def main() -> None:
             stepped[name] = model(input_ids)
     record["step_diff"] = float((stepped["placed"] - stepped["reference"]).abs().max())
     record["step_effect"] = float((stepped["reference"] - before).abs().max())
-    out.write_text(json.dumps(record))
+    out.write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

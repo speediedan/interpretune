@@ -97,9 +97,9 @@ def test_the_config_describes_the_phase_reports(config):
     assert {*config.required_versions, *config.shared_versions, *config.shared_builds} <= recorded
     # the release legs publish `<artifact_prefix>-<vendor>-<attempt>` holding the phase evidence directory: the shared
     # GPU job template names a release leg's artifact `<artifactPrefix>-release-<vendor>-<attempt>`
-    job = yaml.safe_load((ROOT / ".azure-pipelines" / "templates" / "it-gpu-job.yml").read_text())
+    job = yaml.safe_load((ROOT / ".azure-pipelines" / "templates" / "it-gpu-job.yml").read_text(encoding="utf-8"))
     assert f"{job['jobs'][0]['parameters']['artifactPrefix']}-release" == config.artifact_prefix
-    container = (ROOT / ".azure-pipelines" / "scripts" / "gpu_job_container.sh").read_text()
+    container = (ROOT / ".azure-pipelines" / "scripts" / "gpu_job_container.sh").read_text(encoding="utf-8")
     assert f"PHASES_OUT=/evidence/{config.phases_dir}" in container
 
 
@@ -138,8 +138,8 @@ def test_the_release_job_command_writes_a_verdict(config, tmp_path):
             for kind in ("reports", "manifests"):
                 (phases / kind).mkdir(parents=True)
             for phase, docs in leg.items():
-                (phases / "reports" / f"{phase}.json").write_text(json.dumps(docs["report"]))
-                (phases / "manifests" / f"{phase}.json").write_text(json.dumps(docs["manifest"]))
+                (phases / "reports" / f"{phase}.json").write_text(json.dumps(docs["report"]), encoding="utf-8")
+                (phases / "manifests" / f"{phase}.json").write_text(json.dumps(docs["manifest"]), encoding="utf-8")
     out = tmp_path / "it-release-eligibility.json"
     args = ["--config", str(CONFIG_PATH), "--artifacts", str(tmp_path), "--revision", REVISION, "--output", str(out)]
     args += [a for vendor in config.vendors for a in (f"--{vendor}-result", "Succeeded")]
@@ -147,4 +147,4 @@ def test_the_release_job_command_writes_a_verdict(config, tmp_path):
         [sys.executable, "-m", "gpu_epsilon.release_eligibility", *args], capture_output=True, text=True, check=False
     )
     assert run.returncode == 0, run.stderr
-    assert "ELIGIBLE" in run.stdout and json.loads(out.read_text())["eligible"]
+    assert "ELIGIBLE" in run.stdout and json.loads(out.read_text(encoding="utf-8"))["eligible"]

@@ -154,8 +154,10 @@ class TestCheckRecipe:
                 {"site": "mlp.hook_out", "ops": [{"op": "add", "target": {"set": "chess"}, "value": {"dose": 0.8}}]}
             ],
         }
-        (root / "book.yaml").write_text(yaml.safe_dump({**BOOK, "treatments": {"dose-the-units": treatment}}))
-        (root / "support.yaml").write_text(yaml.safe_dump(document))
+        (root / "book.yaml").write_text(
+            yaml.safe_dump({**BOOK, "treatments": {"dose-the-units": treatment}}), encoding="utf-8"
+        )
+        (root / "support.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
         store.publish(
             "local", str(root), root, documents=[("address_book", "book.yaml"), ("support_record", "support.yaml")]
         )

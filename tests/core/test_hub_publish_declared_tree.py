@@ -29,12 +29,12 @@ def _component(tmp_path: Path, extra_files) -> Path:
     (root / "tests").mkdir(parents=True)
     (root / "tests" / "__pycache__").mkdir()
     (root / ".pytest_cache").mkdir()
-    (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(extra_files=extra_files)))
-    (root / "ops.yaml").write_text("ops: {}\n")
-    (root / "tests" / "test_ops.py").write_text("def test_ok(): pass\n")
+    (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(extra_files=extra_files)), encoding="utf-8")
+    (root / "ops.yaml").write_text("ops: {}\n", encoding="utf-8")
+    (root / "tests" / "test_ops.py").write_text("def test_ok(): pass\n", encoding="utf-8")
     (root / "tests" / "__pycache__" / "test_ops.cpython-313.pyc").write_bytes(b"\x00")
-    (root / ".pytest_cache" / "CACHEDIR.TAG").write_text("tag\n")
-    (root / "NOTES.md").write_text("notes\n")
+    (root / ".pytest_cache" / "CACHEDIR.TAG").write_text("tag\n", encoding="utf-8")
+    (root / "NOTES.md").write_text("notes\n", encoding="utf-8")
     return root
 
 
@@ -87,20 +87,21 @@ class TestExtraFilesDeclaration:
         from interpretune.hub.publish import build_component_tree
 
         root = _component(tmp_path, ["tests"])
-        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n")
-        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n")
+        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n", encoding="utf-8")
+        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n", encoding="utf-8")
         with pytest.raises(ComponentManifestError, match=r"\['my_ops.py'\].*list them in `extra_files`"):
             build_component_tree(root, tmp_path / "out")
 
         root = _component(tmp_path / "declared", ["tests", "my_ops.py"])
-        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n")
-        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n")
+        (root / "ops.yaml").write_text("my_op:\n  implementation: my_ops.my_op_impl\n", encoding="utf-8")
+        (root / "my_ops.py").write_text("def my_op_impl(*a, **k): return None\n", encoding="utf-8")
         build_component_tree(root, tmp_path / "out2")
         assert (tmp_path / "out2" / "my_ops.py").is_file()
 
         root = _component(tmp_path / "installed", ["tests"])
         (root / "ops.yaml").write_text(
-            "my_op:\n  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n"
+            "my_op:\n  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n",
+            encoding="utf-8",
         )
         build_component_tree(root, tmp_path / "out3")
 
@@ -143,8 +144,8 @@ class TestPublishedTreeMatchesStaged:
     def test_stale_remote_files_are_reported_and_removed(self, tmp_path):
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / "it_component.yaml").write_text("x")
-        (staged / "adapter.py").write_text("x")
+        (staged / "it_component.yaml").write_text("x", encoding="utf-8")
+        (staged / "adapter.py").write_text("x", encoding="utf-8")
         remote = [".gitattributes", "it_component.yaml", "interp_engine_adapter.py", ".pytest_cache/CACHEDIR.TAG"]
         manager, api = self._manager(remote)
         with warnings.catch_warnings(record=True) as caught:
@@ -160,7 +161,7 @@ class TestPublishedTreeMatchesStaged:
     def test_a_matching_remote_deletes_nothing_and_warns_nothing(self, tmp_path):
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / "it_component.yaml").write_text("x")
+        (staged / "it_component.yaml").write_text("x", encoding="utf-8")
         manager, api = self._manager([".gitattributes", "it_component.yaml"])
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -171,7 +172,7 @@ class TestPublishedTreeMatchesStaged:
     def test_a_new_repo_needs_no_listing(self, tmp_path):
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / "it_component.yaml").write_text("x")
+        (staged / "it_component.yaml").write_text("x", encoding="utf-8")
         manager, api = self._manager([], exists=False)
         manager.upload(staged, "org/adapter", match_staged=True)
         api.list_repo_files.assert_not_called()
@@ -190,7 +191,7 @@ class TestPublishedTreeMatchesStaged:
 
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / "ops.yaml").write_text("x")
+        (staged / "ops.yaml").write_text("x", encoding="utf-8")
         _, api = self._manager([], exists=False)
         manager = HubAnalysisOpManager(cache_dir=tmp_path / "cache")
         manager.api = api

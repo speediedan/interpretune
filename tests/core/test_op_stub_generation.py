@@ -38,7 +38,8 @@ class TestLoadBundledDefinitions:
         for name in ("a.yaml", "b.yaml"):
             (tmp_path / name).write_text(
                 f"collection:\n  name: {name[0]}\n  version: 0.1.0\n"
-                f"op_{name[0]}:\n  description: fixture\n  implementation: x.y\n"
+                f"op_{name[0]}:\n  description: fixture\n  implementation: x.y\n",
+                encoding="utf-8",
             )
         merged = stub_script.load_bundled_definitions(sorted(tmp_path.glob("*.yaml")))
         assert set(merged) == {"op_a", "op_b"}
@@ -47,20 +48,21 @@ class TestLoadBundledDefinitions:
         """A tensor op is an executor a hook calls by name, with no top-level wrapper, so it gets no stub."""
         (tmp_path / "a.yaml").write_text(
             "op_a:\n  description: fixture\n  implementation: x.y\n"
-            "tensor_a:\n  description: fixture\n  implementation: x.z\n  op_spec:\n    operand: [vector]\n"
+            "tensor_a:\n  description: fixture\n  implementation: x.z\n  op_spec:\n    operand: [vector]\n",
+            encoding="utf-8",
         )
         assert set(stub_script.load_bundled_definitions([tmp_path / "a.yaml"])) == {"op_a"}
 
     def test_genuine_duplicate_op_names_still_raise(self, stub_script, tmp_path):
         """The duplicate check is load-bearing: two families must not silently claim one op name."""
         for name in ("a.yaml", "b.yaml"):
-            (tmp_path / name).write_text("same_op:\n  description: fixture\n  implementation: x.y\n")
+            (tmp_path / name).write_text("same_op:\n  description: fixture\n  implementation: x.y\n", encoding="utf-8")
         with pytest.raises(ValueError, match="Duplicate bundled op definition 'same_op'"):
             stub_script.load_bundled_definitions(sorted(tmp_path.glob("*.yaml")))
 
     def test_composite_operations_merge_rather_than_collide(self, stub_script, tmp_path):
-        (tmp_path / "a.yaml").write_text("composite_operations:\n  comp_a:\n    composition: [x]\n")
-        (tmp_path / "b.yaml").write_text("composite_operations:\n  comp_b:\n    composition: [y]\n")
+        (tmp_path / "a.yaml").write_text("composite_operations:\n  comp_a:\n    composition: [x]\n", encoding="utf-8")
+        (tmp_path / "b.yaml").write_text("composite_operations:\n  comp_b:\n    composition: [y]\n", encoding="utf-8")
         merged = stub_script.load_bundled_definitions(sorted(tmp_path.glob("*.yaml")))
         assert set(merged["composite_operations"]) == {"comp_a", "comp_b"}
 

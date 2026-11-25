@@ -275,7 +275,8 @@ class TestCollectionSelection:
             "collection:\n  name: staged_ops\n  version: 0.1.0\n\n"
             "staged_op:\n  description: fixture op\n"
             "  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n"
-            "  input_schema: {}\n  output_schema: {}\n"
+            "  input_schema: {}\n  output_schema: {}\n",
+            encoding="utf-8",
         )
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
@@ -450,7 +451,7 @@ class TestReportArtifact:
         report.record("TestX::case_b", "skipped-undeclared")
         path = tmp_path / "out" / "report.json"
         write_report_artifact(report, str(path), exitstatus=0)
-        artifact = json.loads(path.read_text())
+        artifact = json.loads(path.read_text(encoding="utf-8"))
         assert artifact["format"] == "interpretune.conformance.report/2"
         assert artifact["targets"]["TestX"]["intervention"]["model_backend"]["ops"] == ["add"]
         assert artifact["ran"] == ["TestX::case_a"] and artifact["skipped_undeclared"] == ["TestX::case_b"]

@@ -29,7 +29,7 @@ def _tree(tmp_path: Path, project: str | None) -> Path:
     if project == "interpretune":
         shutil.copy(_SCRIPTS / "infra_utils_project.sh", scripts / "infra_utils_project.sh")
     elif project is not None:
-        (scripts / "infra_utils_project.sh").write_text(project)
+        (scripts / "infra_utils_project.sh").write_text(project, encoding="utf-8")
     return scripts
 
 
@@ -87,7 +87,7 @@ def test_interpretunes_helpers_come_from_its_project_file(tmp_path):
 def test_the_torch_pre_config_reads_from_the_default_path(tmp_path, lines, expected):
     scripts = _tree(tmp_path, "interpretune")
     (tmp_path / "requirements" / "ci").mkdir(parents=True)
-    (tmp_path / "requirements" / "ci" / "torch-pre.txt").write_text(lines)
+    (tmp_path / "requirements" / "ci" / "torch-pre.txt").write_text(lines, encoding="utf-8")
     out = _run(scripts, 'read_torch_pre_config; echo "${TORCH_PRE_VERSION}|${TORCH_PRE_CUDA}|${TORCH_PRE_CHANNEL}"')
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == expected
@@ -96,7 +96,7 @@ def test_the_torch_pre_config_reads_from_the_default_path(tmp_path, lines, expec
 def test_an_explicit_torch_pre_path_and_a_missing_file(tmp_path):
     scripts = _tree(tmp_path, "interpretune")
     other = tmp_path / "elsewhere.txt"
-    other.write_text("2.9.0\ncu126\ntest\n")
+    other.write_text("2.9.0\ncu126\ntest\n", encoding="utf-8")
     out = _run(scripts, f'read_torch_pre_config "{other}"; echo "$TORCH_PRE_VERSION"')
     assert out.stdout.strip() == "2.9.0"
     missing = _run(scripts, 'read_torch_pre_config; echo "[$TORCH_PRE_VERSION]"')
@@ -106,7 +106,7 @@ def test_an_explicit_torch_pre_path_and_a_missing_file(tmp_path):
 def test_an_unknown_torch_channel_is_refused(tmp_path):
     scripts = _tree(tmp_path, "interpretune")
     bad = tmp_path / "bad.txt"
-    bad.write_text("2.9.0\ncu126\nbeta\n")
+    bad.write_text("2.9.0\ncu126\nbeta\n", encoding="utf-8")
     out = _run(scripts, f'read_torch_pre_config "{bad}" || echo "refused $?"')
     assert out.stdout.strip() == "refused 1"
     assert "Invalid torch channel 'beta'" in out.stderr and str(bad) in out.stderr

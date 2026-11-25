@@ -237,7 +237,7 @@ class TestCachedRevisionReporting:
         cache = tmp_path / "hub"
         refs = cache / "models--rival--ops" / "refs"
         refs.mkdir(parents=True)
-        (refs / "main").write_text("c0ffee" * 6 + "abcd")
+        (refs / "main").write_text("c0ffee" * 6 + "abcd", encoding="utf-8")
         monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", cache)
         assert _cached_op_revision("hub:rival.ops") == "c0ffee" * 6 + "abcd"
 

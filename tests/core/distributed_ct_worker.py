@@ -135,7 +135,7 @@ def main() -> None:
     else:
         placed = readings(model, TOY_PROMPT)
         record.update({f"{k}_diff": float((placed[k] - expected[k]).abs().max()) for k in expected})
-    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record))
+    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

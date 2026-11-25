@@ -139,7 +139,8 @@ class TestDefaultDatasetPathKey:
             "print(cfg.dataset_path)\n"
         )
         runs = [
-            subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True) for _ in range(2)
+            subprocess.run([sys.executable, "-c", script], capture_output=True, encoding="utf-8", check=True)
+            for _ in range(2)
         ]
         first, second = (run.stdout.strip().splitlines()[-1] for run in runs)
         assert first == second and Path(first).parent == cache_root

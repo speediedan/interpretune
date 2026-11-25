@@ -292,7 +292,7 @@ class TestBookSites:
         from interpretune.tuning.interventions import attach_configured_interventions
 
         path = tmp_path / "steering.yaml"
-        path.write_text(yaml.safe_dump(BOOK))
+        path.write_text(yaml.safe_dump(BOOK), encoding="utf-8")
         root = Core()
         attach_configured_interventions(root, [{"name": "steer", "site": "@resid1", "book": str(path), "shape": D}])
         assert intervention_sites(root) == {"steer": "@resid1"}

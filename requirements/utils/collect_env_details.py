@@ -117,7 +117,7 @@ def _editable_src_dir_from_pth(pkg_name: str) -> Path | None:
         for entry in site_packages_dir.iterdir():
             if not any(entry.name.startswith(prefix) for prefix in prefixes) or entry.suffix != ".pth":
                 continue
-            src = entry.read_text().strip()
+            src = entry.read_text(encoding="utf-8").strip()
             src_path = Path(src)
             if not src_path.is_dir():
                 continue

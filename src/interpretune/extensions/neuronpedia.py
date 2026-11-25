@@ -87,13 +87,13 @@ if _NEURONPEDIA_AVAILABLE:
 
             def get_cached_tag():
                 if cached_tag_path.exists():
-                    return cached_tag_path.read_text().strip()
+                    return cached_tag_path.read_text(encoding="utf-8").strip()
                 return None
 
             def cache_schema(schema_bytes, tag):
                 with open(cached_schema_path, "wb") as f:
                     f.write(schema_bytes)
-                with open(cached_tag_path, "w") as f:
+                with open(cached_tag_path, "w", encoding="utf-8") as f:
                     f.write(tag)
 
             if self.neuronpedia_cfg.dynamic_np_schema_validation:
@@ -129,13 +129,13 @@ if _NEURONPEDIA_AVAILABLE:
                             f"(tag: {get_cached_tag() or 'unknown'})"
                         )
                     )
-                    return json.loads(cached_schema_path.read_text())
+                    return json.loads(cached_schema_path.read_text(encoding="utf-8"))
 
             # Fallback to default schema
             if fallback_schema_path.exists():
                 if self.neuronpedia_cfg.dynamic_np_schema_validation:
                     rank_zero_warn("[NeuronpediaIntegration] Falling back to default graph-schema.json")
-                return json.loads(fallback_schema_path.read_text())
+                return json.loads(fallback_schema_path.read_text(encoding="utf-8"))
 
             raise FileNotFoundError("No graph-schema.json available (failed to fetch, no cache, no fallback)")
 
@@ -229,7 +229,7 @@ if _NEURONPEDIA_AVAILABLE:
                 change_log_path = log_dir / f"{slug}_qparam_changes_{dt}.log"
 
             try:
-                with open(change_log_path, "a") as f:
+                with open(change_log_path, "a", encoding="utf-8") as f:
                     f.write(f"=== qParams changes logged at {datetime.datetime.now().isoformat()} ===\n")
                     for entry in log:
                         f.write(
@@ -375,7 +375,7 @@ if _NEURONPEDIA_AVAILABLE:
                 raise FileNotFoundError(f"Graph file not found: {graph_path}")
 
             # Load the original graph
-            with open(graph_path, "r") as f:
+            with open(graph_path, "r", encoding="utf-8") as f:
                 graph_dict = json.load(f)
 
             rank_zero_info(f"[NeuronpediaIntegration] Transforming graph: {graph_path}")
@@ -415,7 +415,7 @@ if _NEURONPEDIA_AVAILABLE:
             else:
                 json_str = json.dumps(graph_dict)
 
-            with open(output_path, "w") as f:
+            with open(output_path, "w", encoding="utf-8") as f:
                 f.write(json_str)
 
         def validate_graph(self, graph_dict: dict[str, Any]) -> bool:
@@ -470,7 +470,7 @@ if _NEURONPEDIA_AVAILABLE:
             graph_path = Path(graph_path)
             if not graph_path.exists():
                 raise FileNotFoundError(f"Graph file not found: {graph_path}")
-            with open(graph_path, "r") as f:
+            with open(graph_path, "r", encoding="utf-8") as f:
                 graph_dict = json.load(f)
 
             # Validate graph before upload
