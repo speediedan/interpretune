@@ -24,7 +24,6 @@ from interpretune.runners.distributed import (
     _check_devices,
     _meta_offloads,
     _packed_groups,
-    _partial_gradient_params,
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
@@ -1226,7 +1225,9 @@ def test_two_rank_tp_sums_the_gradients_of_query_and_key_norms(tiny_gemma3_check
     own plan and with an explicit one.
 
     The control, without the sum, gives gradients that are wrong and no error. A plan that leaves attention whole gives
-    every rank the whole gradient, which must not be summed.
+    every rank the whole gradient, which must not be summed. A TransformerLens bridge wraps each component of the model
+    in one of its own, so its norms are found without the wrappers. (It runs in the workers only: building a bridge
+    replaces transformers' eager Gemma attention for the whole process.)
     """
     attention = [("q_proj", "colwise"), ("k_proj", "colwise"), ("v_proj", "colwise"), ("o_proj", "rowwise")]
     plans: dict[str, dict | None] = {
@@ -1237,40 +1238,22 @@ def test_two_rank_tp_sums_the_gradients_of_query_and_key_norms(tiny_gemma3_check
             for m, s in (("gate_proj", "colwise"), ("up_proj", "colwise"), ("down_proj", "rowwise"))
         },
     }
-    n_split = {"default": 14, "explicit": 8, "mlp_only": 6}
+    bridged = r"model\.blocks\.\d+\._original_component\.self_attn\._original_component"
+    plans["bridge"] = {rf"{bridged}\.{m}\._original_component": {"style": s} for m, s in attention}
+    n_split = {"default": 14, "explicit": 8, "mlp_only": 6, "bridge": 8}
     for name, plan in plans.items():
         extra = [] if plan is None else ["--tp-plan", json.dumps(plan)]
+        extra += ["--bridge"] if name == "bridge" else []
         for record in _launch_tp_hf(tiny_gemma3_checkpoint, tmp_path / name, *extra):
             assert len(record["split_params"]) == n_split[name]
             assert record["frozen_stayed_frozen"]
             assert record["forward_diff"] < 1e-5
             assert len(record["norm_grad_diff"]) == 4 and max(record["norm_grad_diff"].values()) < 1e-4
             assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
-    for record in _launch_tp_hf(tiny_gemma3_checkpoint, tmp_path / "control", "--no-gradient-sum"):
-        assert min(record["norm_grad_diff"].values()) > 1e-2
-
-
-def test_partial_gradients_are_found_under_a_transformer_lens_bridge(tiny_gemma3_checkpoint):
-    """A bridge wraps each component of its Hugging Face model in one of its own, so a declared name is matched
-    without the wrappers."""
-    from torch.distributed.tensor.parallel import ColwiseParallel
-    from transformer_lens.model_bridge import TransformerBridge
-    from transformers import AutoTokenizer, Gemma3ForCausalLM
-
-    tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")  # warmed for offline CI
-    hf_model = Gemma3ForCausalLM.from_pretrained(tiny_gemma3_checkpoint)
-    bridge = TransformerBridge.boot_transformers(
-        str(tiny_gemma3_checkpoint), hf_model=hf_model, tokenizer=tokenizer, device="cpu"
-    )
-    layer = "blocks.0._original_component"
-    attn = f"{layer}.self_attn._original_component"
-    split_q = {f"{attn}.q_proj._original_component": ColwiseParallel()}
-    assert _partial_gradient_params(bridge, split_q).keys() == {
-        f"model.layers.0._original_component.self_attn._original_component.{norm}._original_component.weight"
-        for norm in ("k_norm", "q_norm")
-    }
-    split_mlp = {f"{layer}.mlp._original_component.up_proj._original_component": ColwiseParallel()}
-    assert not _partial_gradient_params(bridge, split_mlp)
+    bridge = ("--bridge", "--tp-plan", json.dumps(plans["bridge"]))
+    for name, extra in (("control", ()), ("control_bridge", bridge)):
+        for record in _launch_tp_hf(tiny_gemma3_checkpoint, tmp_path / name, "--no-gradient-sum", *extra):
+            assert min(record["norm_grad_diff"].values()) > 1e-2
 
 
 @pytest.fixture(scope="module")

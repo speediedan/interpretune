@@ -8,7 +8,7 @@ backward passes.
 
 A checkpoint whose model has query and key norms (Gemma 3) has them frozen when the model is placed and thawed before
 the step, as a schedule would. ``--tp-plan`` gives the plan explicitly, and ``--no-gradient-sum`` is the control that
-leaves each rank's gradient of those norms its own.
+leaves each rank's gradient of those norms its own. ``--bridge`` runs the model inside a TransformerLens bridge.
 
 Writes ``<out_dir>/rank<rank>.json`` with the split parameters and the forward's and the stepped forward's distance
 from the reference, or the placement's refusal.
@@ -33,7 +33,8 @@ class Holder(nn.Module):
         self.model = model
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.model(input_ids).logits
+        out = self.model(input_ids)
+        return getattr(out, "logits", out)  # a bridge returns the logits
 
     def default_tp_plan(self, world_size: int) -> dict:
         from interpretune.runners.distributed import hf_tp_plan
@@ -41,15 +42,28 @@ class Holder(nn.Module):
         return hf_tp_plan(self.model, "model", world_size)
 
 
+def load(checkpoint: str, bridge: bool) -> Holder:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model = AutoModelForCausalLM.from_pretrained(checkpoint)
+    if bridge:
+        from transformer_lens.model_bridge import TransformerBridge
+
+        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")  # warmed for offline CI
+        model = TransformerBridge.boot_transformers(checkpoint, hf_model=model, tokenizer=tokenizer, device="cpu")
+        for param in model.parameters():
+            param.requires_grad_(True)
+    return Holder(model)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--tp-plan", type=json.loads, default=None)
+    parser.add_argument("--bridge", action="store_true")
     parser.add_argument("--no-gradient-sum", action="store_true")
     args = parser.parse_args()
-
-    from transformers import AutoModelForCausalLM
 
     import interpretune.runners.distributed as distributed
     from interpretune.runners.distributed import init_process_group, place_module, resolve_placement
@@ -60,8 +74,7 @@ def main() -> None:
     init_process_group(run)
     if args.no_gradient_sum:
         distributed._sum_partial_gradients = lambda *args: None
-    placed = Holder(AutoModelForCausalLM.from_pretrained(args.checkpoint))
-    reference = Holder(AutoModelForCausalLM.from_pretrained(args.checkpoint))
+    placed, reference = (load(args.checkpoint, args.bridge) for _ in range(2))
     norms = [n for n, _ in placed.named_parameters() if ".q_norm." in n or ".k_norm." in n]
     for name in norms:
         placed.get_parameter(name).requires_grad_(False)
