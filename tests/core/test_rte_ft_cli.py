@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.runif import RunIf
+
 pytest.importorskip(
     "finetuning_scheduler.core.tuning_scheduler", reason="finetuning-scheduler predates TuningScheduler"
 )
@@ -31,8 +33,7 @@ LIMITS = {"max_epochs": 6, "limit_train_batches": 2, "limit_val_batches": 2}
 MIN_DELTA = 2.0
 
 
-@pytest.fixture
-def rte_component(monkeypatch):
+def _publish_rte(monkeypatch) -> str:
     """The revision of a local publish of the pinned ``rte`` component, with its ``rte_boolq.py``.
 
     Every reference the run makes names this revision: a cache warmed at a pinned Hub revision (as CI's is) resolves an
@@ -41,9 +42,21 @@ def rte_component(monkeypatch):
     from interpretune.hub.components import local_publish
     from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
     return local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+
+
+@pytest.fixture
+def rte_component(monkeypatch):
+    """The published component's revision, for a run with no GPU visible."""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    return _publish_rte(monkeypatch)
+
+
+@pytest.fixture
+def rte_component_gpu(monkeypatch):
+    """The published component's revision, for a run on the visible GPU."""
+    return _publish_rte(monkeypatch)
 
 
 def _run_config(interface: str, revision: str, tmp_path: Path, record: Path) -> Path:
@@ -69,7 +82,7 @@ def _run_config(interface: str, revision: str, tmp_path: Path, record: Path) -> 
     return path
 
 
-def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed: bool = False) -> dict:
+def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed: bool = False, gpu: bool = False):
     from interpretune.base.components.cli import core_cli_main, l_cli_main
 
     work = tmp_path / interface
@@ -77,7 +90,11 @@ def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed:
     monkeypatch.chdir(work)  # checkpoints are written relative to the working directory
     record = work / "record.json"
     args = ["--config", str(_run_config(interface, revision, work, record))]
-    args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(work / "dataset")}})]
+    registered: dict = {"datamodule_cfg": {"dataset_path": str(work / "dataset")}}
+    if gpu:  # the shipped session is CPU-sized, and names the CPU
+        hf_cfg = {"pretrained_kwargs": {"device_map": "cuda:0", "dtype": "float32"}}
+        registered["module_cfg"] = {"init_args": {"hf_from_pretrained_cfg": {"init_args": hf_cfg}}}
+    args += ["--registered_cfg", json.dumps(registered)]
     # the bf16-mixed run's transitions land by epoch 4 (below), so it needs one epoch fewer than the fp32 run's 6
     limits = {**LIMITS, "max_epochs": 5} if bf16_mixed else LIMITS
     if interface == "core":
@@ -89,6 +106,8 @@ def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed:
         args += [f"--trainer.{k}={v}" for k, v in limits.items()]
         if bf16_mixed:
             args += ["--trainer.precision=bf16-mixed", "--trainer.accumulate_grad_batches=2"]
+        if gpu:
+            args.append("--trainer.accelerator=gpu")
         l_cli_main(run_mode=True, args=["fit", *args])
     result = json.loads(record.read_text(encoding="utf-8"))
     epochs = result["epochs"]
@@ -111,22 +130,21 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
     assert core["best_score"] == pytest.approx(lightning["best_score"], rel=1e-5)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32" or (sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true"),
-    reason="the bf16 CPU autocast path is the same torch code covered on the macOS leg and on local Linux runs, and "
-    "two full CLI comparisons exceed the Windows and ubuntu hosted legs' 90-minute job timeout",
-)
-def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component, clean_cli_env, tmp_path, monkeypatch):
-    """#697's configuration on both hosts (bf16-mixed, two-step accumulation), which the core loop could not
-    express before #836: the same thawed sets and transition epochs, and validation loss within bf16 tolerance
-    rather than exact.
+@RunIf(min_cuda_gpus=1, bf16_cuda=True, min_gpu_mem_gb=5.5)
+def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component_gpu, clean_cli_env, tmp_path, monkeypatch):
+    """bf16-mixed with two-step accumulation on both hosts: the same thawed sets and transition epochs, and
+    validation loss within bf16 tolerance rather than exact.
+
+    It runs on a GPU, where bf16 is the realistic configuration: a CPU without native bf16 emulates it, and the two
+    CLI runs then take from half an hour to over an hour.
 
     With accumulation over the CPU-sized limit of 2 batches, each epoch is one optimizer step on the two batches' mean
     loss rather than two steps, so the loss trajectory differs from the fp32 run's and the plateau transition lands an
     epoch earlier (4, not 5).
     """
-    core = _run("core", rte_component, tmp_path, monkeypatch, bf16_mixed=True)
-    lightning = _run("lightning", rte_component, tmp_path, monkeypatch, bf16_mixed=True)
+    core = _run("core", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
+    lightning = _run("lightning", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
+    assert core["devices"] == lightning["devices"] == ["cuda:0"]
     assert core["transition_epochs"] == lightning["transition_epochs"] == [2, 4]
     assert core["final_depth"] == lightning["final_depth"] == 2
     assert core["best_depth"] == lightning["best_depth"] == 2
