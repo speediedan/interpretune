@@ -259,6 +259,52 @@ class BaseCircuitTracerModule(BaseITModule):
             calls.extend(transcoder_direct_calls(transcoders))
         return calls
 
+    def refresh_tensor_references(self) -> None:
+        """Point the nnsight replacement model's ``embed_weight`` and ``unembed_weight`` at the tensors placement
+        registered.
+
+        circuit-tracer resolves both once, when it configures the model, and attribution reads its targets' unembedding
+        vectors from the reference. After a placement the reference still names the replaced tensor: the weights from
+        before any tuning, or a meta tensor when the model was built on the meta device.
+        """
+        super().refresh_tensor_references()
+        replacement_model: Any = getattr(self, "_replacement_model", None)
+        resolve = getattr(replacement_model, "_resolve_attr", None)
+        if resolve is None or isinstance(replacement_model, nn.Module):
+            return  # another backend's weights are its modules' own
+        from circuit_tracer.utils.tl_nnsight_mapping import get_mapping
+
+        mapping = get_mapping(replacement_model.config.architectures[0])
+        replacement_model.embed_weight = resolve(replacement_model, mapping.embed_weight)
+        replacement_model.unembed_weight = resolve(replacement_model, mapping.unembed_weight)
+
+    def meta_load_target(self) -> nn.Module:
+        """The base model registered under ``tune_base`` (or by the nnsight adapter) when there is one, since the
+        nnsight backend's model is a wrapper around it and not a torch module."""
+        hf_model = self._modules.get("hf_model")
+        return hf_model if isinstance(hf_model, nn.Module) else super().meta_load_target()
+
+    def default_tp_plan(self, world_size: int) -> dict[str, dict[str, Any]] | None:
+        """The base model's declared tensor-parallel plan, as for any Hugging Face model.
+
+        Raises:
+            MisconfigurationException: For a replacement model whose base model this module has not registered, so
+                that no plan could select its layers.
+        """
+        replacement_model = getattr(self, "_replacement_model", None)
+        base = getattr(replacement_model, "_module", None)
+        if (
+            isinstance(base, nn.Module)
+            and not isinstance(replacement_model, nn.Module)
+            and "hf_model" not in self._modules
+        ):
+            raise MisconfigurationException(
+                "Placement 'tp' splits the layers of modules this one registers, and an attribution-only circuit-tracer"
+                " composition registers only its transcoders. Set `circuit_tracer_cfg.tune_base: true`, which registers"
+                " the base model."
+            )
+        return super().default_tp_plan(world_size)
+
     def register_tunable_modules(self) -> None:
         """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their
         low-rank corrections when ``lazy_delta_rank`` is set.
@@ -301,6 +347,27 @@ class BaseCircuitTracerModule(BaseITModule):
         if any(p.is_meta or id(p) in registered for p in base.parameters()):
             return
         self._modules["hf_model"] = base
+
+    def latent_model_releases(self) -> dict[str, dict[str, str]]:
+        """Adds the transcoders, as ``transcoder``: their Hub repository and revision where ``transcoder_set``
+        states a revision (``<repository>@<revision>``).
+
+        A set named without one follows its repository's latest snapshot, which identifies nothing, so it reports
+        nothing.
+        """
+        releases = super().latent_model_releases()
+        if _replacement_transcoders(self) is None:
+            return releases
+        from circuit_tracer.utils.hf_utils import HfUri
+
+        cfg = self.circuit_tracer_cfg
+        source = HfUri.from_str(cfg.transcoder_set) if cfg is not None else None
+        release: dict[str, str] = {}
+        if source is not None and source.revision:
+            release = {"hub": source.repo_id, "revision": source.revision}
+            if source.file_path:
+                release["path"] = source.file_path
+        return {**releases, "transcoder": release}
 
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
@@ -584,8 +651,15 @@ class BaseCircuitTracerModule(BaseITModule):
             REFIT_SUGGESTION,
             attribution_frozen,
             offload_keeps_parameters,
+            refuse_split_base,
         )
 
+        if attribution_kwargs["offload"] == "disk":
+            refuse_split_base(
+                self.replacement_model,
+                "`offload='disk'`",
+                "it saves and reloads whole weights; use `offload='cpu'` or none",
+            )
         with (
             attribution_frozen(self.replacement_model, self) as thawed,
             offload_keeps_parameters(attribution_kwargs["offload"]),

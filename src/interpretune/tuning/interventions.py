@@ -59,7 +59,7 @@ import torch
 from torch import nn
 
 from interpretune.tuning.latents import _first, _require_reachable, _with_first
-from interpretune.tuning.sites import book_sets, is_site_address, resolve_site
+from interpretune.tuning.sites import book_sets, is_site_address, registered_path, resolve_site
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
@@ -361,6 +361,7 @@ def attach_intervention(
             raise ValueError(f"unit site {site!r} requires a UnitIntervention with units {units}")
         resolved = resolve_site(root, site_address, sets)
         path, io = resolved.path, resolved.io
+    path = registered_path(root, path)
     target = root.get_submodule(path)
     _require_reachable(root, "interventions", target)
     if (device := _site_device(root, target)) is not None:
@@ -529,7 +530,7 @@ def attach_configured_interventions(
         sets = None
         if cfg.book is not None:
             if cfg.book not in books:
-                books[cfg.book] = book_sets(cfg.book)
+                books[cfg.book] = book_sets(cfg.book, root)
             sets = books[cfg.book]
         units = _unit_splice(root, cfg.site, sets)[1] if is_site_address(cfg.site) else None
         if units is not None:

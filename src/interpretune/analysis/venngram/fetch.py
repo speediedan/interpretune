@@ -42,8 +42,12 @@ class FetchedRecipe:
     source: str  #: where the document was read from, for provenance (a path, or ``"<inline>"``)
 
 
-def _treatment(book: Any, name: str | None, source: str) -> Any:
-    """The treatment ``name`` of ``book``, or its only one when no name is given."""
+def _treatment(book: Any, name: str | None, source: str, module: Any, catalog: Any) -> Any:
+    """The treatment ``name`` of ``book``, or its only one when no name is given, once the models the book pins are
+    the ones ``module`` has loaded."""
+    from interpretune.tuning.pins import check_book_pins
+
+    check_book_pins(book, module, catalog=catalog)
     treatments = book.treatments
     if name is None and len(treatments) == 1:
         name = next(iter(treatments))
@@ -54,16 +58,22 @@ def _treatment(book: Any, name: str | None, source: str) -> Any:
     return treatments[name]
 
 
-def _read_local(path: str | Path, treatment: str | None, recipe_mod: Any) -> Any:
+def _read_local(path: str | Path, treatment: str | None, recipe_mod: Any, module: Any, catalog: Any) -> Any:
     with open(path, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
     if isinstance(doc, Mapping) and "treatments" in doc:
         book = _require("venngram.book").AddressBook.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
-        return _treatment(book, treatment, str(path))
+        return _treatment(book, treatment, str(path), module, catalog)
     return recipe_mod.Recipe.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
 
 
-def load_recipe(source: str | Path | Mapping[str, Any] | Any, *, treatment: str | None = None) -> FetchedRecipe:
+def load_recipe(
+    source: str | Path | Mapping[str, Any] | Any,
+    *,
+    treatment: str | None = None,
+    module: Any = None,
+    catalog: Any = None,
+) -> FetchedRecipe:
     """Read a recipe from a document reference, a local path, a mapping, or a recipe already in hand.
 
     Each document may be a recipe or a book carrying treatments (the form
@@ -74,7 +84,12 @@ def load_recipe(source: str | Path | Mapping[str, Any] | Any, *, treatment: str 
     manifest-first and hash-checked by venngram, and the returned reference is pinned. Any other string (or a
     ``Path``) is a local file. A mapping is an inline document. A ``venngram.recipe.Recipe`` passes through.
 
+    A book that pins the models it was written against is checked against those ``module`` has loaded, and the frames
+    it pins against ``catalog``'s (:func:`~interpretune.tuning.pins.check_book_pins`), so it needs the module.
+
     Raises:
+        PinMismatchError: ``module``'s models are not the ones the book pins.
+        ValueError: The book pins its models and no ``module`` was given.
         MisconfigurationException: If venngram is not installed, the fetched document is not a recipe or a book with
             the named treatment, or the source is none of these. A fetch or parse failure from venngram itself
             propagates unchanged.
@@ -85,14 +100,14 @@ def load_recipe(source: str | Path | Mapping[str, Any] | Any, *, treatment: str 
     if isinstance(source, Mapping):
         if "treatments" in source:
             book = _require("venngram.book").AddressBook.from_mapping(source)
-            return FetchedRecipe(_treatment(book, treatment, "<inline>"), None, "<inline>")
+            return FetchedRecipe(_treatment(book, treatment, "<inline>", module, catalog), None, "<inline>")
         return FetchedRecipe(recipe_mod.Recipe.from_mapping(source), None, "<inline>")
     if isinstance(source, Path) or (isinstance(source, str) and not store.is_reference(source)):
-        return FetchedRecipe(_read_local(source, treatment, recipe_mod), None, str(source))
+        return FetchedRecipe(_read_local(source, treatment, recipe_mod, module, catalog), None, str(source))
     if isinstance(source, str):
         loaded = store.load(source)
         if isinstance(loaded, _require("venngram.book").AddressBook) and loaded.treatments:
-            loaded = _treatment(loaded, treatment, source)
+            loaded = _treatment(loaded, treatment, source, module, catalog)
         if not isinstance(loaded, recipe_mod.Recipe):
             raise MisconfigurationException(
                 f"{source}: the fetched document is a {type(loaded).__name__} with no treatments, not a recipe."

@@ -4,6 +4,7 @@ import os
 import torch
 
 from interpretune.config.shared import ITSerializableCfg
+from interpretune.utils import _resolve_dtype
 
 
 @dataclass(kw_only=True)
@@ -35,7 +36,7 @@ class CircuitTracerConfig(ITSerializableCfg):
     Can be 'gemma', 'llama', or path to custom config.
     """
     transcoder_set: str = "gemma"
-    """Data type for model and transcoders."""
+    """Data type for model and transcoders, or its name (``float32``)."""
     dtype: torch.dtype = torch.bfloat16
 
     # Attribution parameters
@@ -162,6 +163,12 @@ class CircuitTracerConfig(ITSerializableCfg):
 
     def __post_init__(self):
         """Validate configuration after initialization."""
+        # A YAML configuration gives the dtype by name, and circuit-tracer takes only a `torch.dtype`.
+        dtype = _resolve_dtype(self.dtype)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"CircuitTracerConfig.dtype {self.dtype!r} is not a torch dtype or the name of one")
+        self.dtype = dtype
+
         # Resolve NDIF API key from environment if not explicitly set
         if self.ndif_api_key is None and self.nnsight_remote:
             self.ndif_api_key = os.environ.get("NDIF_API_KEY")

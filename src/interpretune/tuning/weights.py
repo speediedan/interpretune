@@ -1066,7 +1066,7 @@ def apply_recipe_weights(
     if not hasattr(recipe, "weights"):
         from interpretune.analysis.venngram import load_recipe
 
-        recipe = load_recipe(recipe).recipe
+        recipe = load_recipe(recipe, module=root).recipe
     stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
     bound = _view(root, view)
     structure = bound.structure()
@@ -1120,12 +1120,12 @@ WEIGHT_FORM_SITE = "mlp.out.hook_in"
 WEIGHT_FORM_OUT_SITE = "mlp.out.hook_out"
 
 
-def _as_recipe(recipe: Any) -> Any:
+def _as_recipe(recipe: Any, module: Any) -> Any:
     if hasattr(recipe, "stages"):
         return recipe
     from interpretune.analysis.venngram import load_recipe
 
-    return load_recipe(recipe).recipe
+    return load_recipe(recipe, module=module).recipe
 
 
 @dataclass
@@ -1223,7 +1223,7 @@ def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = 
             structure gives ``mlp.out``'s weight no unit axis where the recipe edits its units, or layers whose
             ``mlp.out`` widths differ (an activation payload takes one width per site).
     """
-    recipe = _as_recipe(recipe)
+    recipe = _as_recipe(recipe, root)
     bound = _unit_view(root, view)
     structure = _structure(bound)
     widths: dict[str, dict[int, int]] = {}
@@ -1287,7 +1287,7 @@ def weight_form(
             layer, or an ``add`` at a layer whose ``mlp.out`` has no bias. Edits applied before the failing one are
             taken back.
     """
-    recipe = _as_recipe(recipe)
+    recipe = _as_recipe(recipe, root)
     stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
     bound = _unit_view(root, view)
     structure = _structure(bound)

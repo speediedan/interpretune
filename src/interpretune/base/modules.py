@@ -9,7 +9,11 @@ from interpretune.tuning.interventions import (
     intervention_placements,
     intervention_role_addresses,
 )
-from interpretune.tuning.latents import latent_model_placements, latent_model_role_addresses
+from interpretune.tuning.latents import (
+    latent_model_placements,
+    latent_model_releases,
+    latent_model_role_addresses,
+)
 from interpretune.tuning.weights import weight_edit_roles
 from interpretune.tuning.views import attach_tunable_view, merge_roles
 from interpretune.utils import MisconfigurationException
@@ -59,6 +63,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers
         # (e.g., NNsight's LanguageModel/Envoy which don't support truthiness checks)
         if self.model is not None:
+            self._record_model_revision()
             self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model
@@ -94,6 +99,16 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
                 " `defer_model_init`) and the circuit-tracer composition over nnsight build on the meta device and load"
                 " from rank 0. Unset `meta_init` for this composition."
             )
+
+    def _record_model_revision(self) -> None:
+        """Record the commit the model was loaded from while the Hub cache still holds what this load resolved."""
+        from interpretune.hub.subject import loaded_revision
+
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        kwargs = hf_cfg.pretrained_kwargs if hf_cfg is not None else {}
+        self._it_state._model_revision = loaded_revision(
+            self, revision=kwargs.get("revision"), cache_dir=kwargs.get("cache_dir")
+        )
 
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""
@@ -155,7 +170,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return hf_tp_plan(target, prefix, world_size) or None
 
     def meta_load_target(self) -> torch.nn.Module:
-        """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
+        """The torch module a placement loads a meta-built model's weights into: ``self.model`` here.
 
         An adapter whose model wraps a torch module rather than being one (nnsight) returns the module it wraps.
         """
@@ -195,6 +210,17 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         :meth:`tunable_roles`: an adapter registering another spliced module adds its placement to ``super()``'s.
         """
         return {**latent_model_placements(self), **intervention_placements(self)}
+
+    def latent_model_releases(self) -> dict[str, dict[str, str]]:
+        """What each latent model of this composition was loaded from, by the name an address book gives it, as a
+        book pins it (``{"sae_lens": <release>, "id": <id>}``, ``{"hub": <repository>, "revision": <revision>}``),
+        empty where its source is not stated.
+
+        Cooperative, like :meth:`tunable_roles`: an adapter holding other latent models adds theirs to ``super()``'s.
+        This base reports those attached with :func:`~interpretune.tuning.latents.attach_latent_model`. Books that pin
+        their latent models are written and checked from it (:mod:`interpretune.tuning.pins`).
+        """
+        return latent_model_releases(self)
 
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, as venngram views take them (``roles=``): roles mapped

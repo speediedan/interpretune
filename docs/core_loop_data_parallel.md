@@ -45,9 +45,10 @@ same grammar as Fine-Tuning Scheduler's own interfaces:
 | `model\.layers\.\d+$` | every module whose name the regular expression matches from the start |
 | `class:GPT2Block` (or `class:<module>.<qualname>`) | every instance of that class or of a subclass |
 
-Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus two aliases: `act_ckpt: composable`
-applies composable activation checkpointing to the unit before it is sharded, and `cpu_offload_policy` (a mapping of
-`CPUOffloadPolicy` arguments) becomes its `offload_policy`. `fsdp_default_kwargs` gives every planned unit keyword
+Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus three aliases: `act_ckpt: composable`
+applies composable activation checkpointing to the unit before it is sharded, `cpu_offload_policy` (a mapping of
+`CPUOffloadPolicy` arguments) becomes its `offload_policy`, and `mp_policy` (a mapping of `MixedPrecisionPolicy`
+arguments, dtypes by name) becomes its mixed precision policy. `fsdp_default_kwargs` gives every planned unit keyword
 arguments its entry does not override; all but `act_ckpt` also apply to the root unit.
 
 ```yaml
@@ -57,7 +58,11 @@ run_cfg:
     class:GPT2Block: {act_ckpt: composable}
   fsdp_default_kwargs:
     cpu_offload_policy: {pin_memory: true}
+    mp_policy: {reduce_dtype: float32}
 ```
+
+Without a `param_dtype` every tensor computes in the dtype it is stored in, so a bf16 model keeps fp32 islands (its
+trainable parameters, say) and `reduce_dtype: float32` reduces their gradients in fp32.
 
 Pinned offload lets the copies between host and accelerator run asynchronously, but PyTorch's pinned host allocator
 rounds every allocation up to a power of two by default, so offloaded shards can take up to twice their size in host
@@ -100,12 +105,19 @@ A plan that leaves a called module to the root unit is refused, naming the `clas
 ## Tensor parallelism
 
 `tp` splits layers across ranks instead of data: the layers `tp_plan` selects are split with `parallelize_module`
-(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned. Every
-rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
+(Fine-Tuning Scheduler's `parallelize_model`), so a model whose weights do not fit on one device can be tuned: built
+with `meta_init` (below), it is split before it holds any weights, and each rank holds its slices of the split layers
+and the whole of the rest. Without it every rank builds the whole model first. Every rank sees the same batch in the same order, since the ranks compute one forward together. `tp_plan` takes the same keys
 as `fsdp_plan`, each mapped to a parallel style (`{style: colwise}`, `rowwise`, `sequence`, `prepare_input`, ...) and
 its layouts. Without one, the module's own default is used: a Hugging Face model's declared plan on the core and nnsight
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
 `fsdp_default_kwargs` under `tp`.
+
+The embedding and the LM head stay whole, and so do query and key norms (Gemma 3, Qwen3): they sit between split layers
+and normalize only the heads their rank computes. Each rank's gradient of such a norm covers its own heads, so the
+placement sums it across ranks, whether the plan is the model's own or given, and whether the norm is trainable at
+placement or thawed later. It takes the modules from the model's own declaration
+(`replicated_with_grad_allreduce` in transformers), so a whole module of yours between split layers is not covered.
 
 A latent model spliced with `tuning.latents`, and an SAE that SAE Lens splices into a TransformerLens bridge
 (`add_saes_on_init`), read and rewrite a whole activation. To splice one inside a layer the plan splits, set
@@ -127,10 +139,28 @@ run_cfg:
 Where a split layer hands on each rank's local shard instead (the default), the splice is refused, naming the site and
 this fix: a latent model's when the module is placed, an SAE's at the first forward pass.
 
+### Circuit-tracer attribution under `tp`
+
+A circuit-tracer composition over nnsight attributes a split model as it does a whole one. The plan transformers
+declares splits each attention and MLP block inside and makes the activation whole again at the block's output, and
+attribution reads, replaces and injects gradients only there. `generate_attribution_graph` (with live or frozen
+attention, and with `offload='cpu'`) and `feature_intervention` therefore need nothing from the caller, and every rank
+gets the same graph. Every rank makes every call, since the forward and backward passes are shared.
+
+- Set `circuit_tracer_cfg.tune_base: true`. It registers the base model, whose layers the plan selects; a composition
+  without it is refused.
+- Every rank holds the whole transcoders. A composition over nnsight can build the base model on the meta device
+  (`hf_from_pretrained_cfg.meta_init`), so that no rank holds the whole model on its accelerator; its transcoders are
+  then loaded eagerly, and rank 0 loads both on its host.
+- `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
+  weight, or a head inside a split layer.
+- The attribution runner itself takes one process (`AnalysisRunnerCfg` accepts `placement: single` only), so attribute
+  from a module a core-loop runner has placed.
+
 ## Models larger than one rank's accelerator
 
-By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
-with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
+By default every rank builds the whole model before it is sharded or split, so each rank must fit it once. For a model
+loaded with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
 
 ```yaml
 module_cfg:
@@ -141,10 +171,11 @@ module_cfg:
 ```
 
 Every rank then builds the model from its configuration without any weights, and the launcher's rank 0 also loads the
-checkpoint on the CPU. The placement shards the empty model with the plan, materializes each rank's shards on its
-device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
+checkpoint on the CPU. The placement shards the empty model with the plan (or splits it, under `tp`), materializes each
+rank's shards on its device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
 `broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
-state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
+state dict. No accelerator ever holds the whole model (under `tp`, each holds the layers the plan leaves whole and its
+slices of the rest); rank 0's host holds one copy of it while loading.
 
 When even one host copy is too much, `meta_init_load: dcp` loads each rank's shards straight from the checkpoint's
 safetensors files with distributed checkpointing (`torch.distributed.checkpoint` with `HuggingFaceStorageReader`), so
@@ -176,8 +207,10 @@ does not. For any other model with converters the conversion path decides, and t
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
 `lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
-base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
-module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
+base weights. A latent model or intervention attached beside the model (`interpretune.tuning`) is in no checkpoint of the
+model, so it is built with its values on a real device: the placement keeps them, rank 0's on every rank, and refuses one
+built on the meta device. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized
+parameters), a model built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
 not build on the meta device (a TransformerLens bridge, a plain nnsight model, or `defer_model_init`), rather than being
 ignored.
 
@@ -330,8 +363,8 @@ unit's, so the hook that applies it inside a block sees the whole operand, and b
 
 A schedule can be written in venngram addresses (`layers:-1: & component:mlp.*`, `role:latent:<name>`) under `ddp` and
 `fsdp2`: on a two-rank run each phase thaws the same tensors as in one process, with the same losses and latent-model
-values. A phase that promotes a role with `promote` is refused under both placements, by finetuning-scheduler, naming
-the phases: attach the latent model already trainable rather than `frozen=True`, or promote it in a one-process run.
+values. The same holds for a phase that promotes a frozen latent model with `promote` (attached with `frozen=True`, so
+its tensors are artifacts until then).
 
 ## Limits
 
@@ -340,9 +373,7 @@ the phases: attach the latent model already trainable rather than `frozen=True`,
 - The core loop's `checkpoint_state` is not distributed-aware.
 - Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
   process on the combined batch step for step) and, with an addressed three-phase schedule, under `ddp`, not yet on
-  accelerators. Promotion (`promote`) is refused under `ddp` and `fsdp2`.
-- FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
-  so a YAML run uses the loop's `torch.autocast`.
+  accelerators.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
