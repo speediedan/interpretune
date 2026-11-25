@@ -551,6 +551,32 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
     assert global_batch_reference["param_types"] == ["Parameter"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_an_fsdp_plan_from_configuration_sets_mixed_precision_and_activation_checkpointing(
+    global_batch_reference, tmp_path
+):
+    """A plan as a run configuration file holds it, where dtypes are names: each unit takes the mixed precision
+    policy (bf16 parameters, gradients reduced in fp32), and the blocks the plan lists are checkpointed.
+
+    The losses show the policy computes in bf16: they differ from the fp32 reference's, and stay near them.
+    """
+    extra = ("--fsdp-plan", '{"class:TransformerBlock": {"act_ckpt": "composable"}}')
+    defaults = '{"mp_policy": {"param_dtype": "bfloat16", "reduce_dtype": "float32"}}'
+    _launch("fsdp2", tmp_path, *extra, "--fsdp-default-kwargs", defaults)
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
+    for record in records:
+        settings = record["unit_settings"]
+        assert len(settings) == len(record["fsdp_units"]) == 3
+        assert {s["param_dtype"] for s in settings.values()} == {"torch.bfloat16"}
+        assert {s["reduce_dtype"] for s in settings.values()} == {"torch.float32"}
+        assert {name for name, s in settings.items() if s["act_ckpt"]} == set(settings) - {""}
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(global_batch_reference["losses"], rel=2e-2)
+    assert rank_mean != pytest.approx(global_batch_reference["losses"], rel=1e-5)
+
+
 # a trainable intervention adds a learned vector to the first block's output; a block is its own FSDP2 unit and the
 # intervention's parameters are the root unit's, so its operand is whole where the block's hooks apply it
 INTERVENTION = ("--intervention-site", "model.layers.0")
