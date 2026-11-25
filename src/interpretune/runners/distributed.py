@@ -431,6 +431,9 @@ def _resolve_plan(
 # the styles transformers declares for the parts of a model the default plan leaves whole (the embedding and the LM
 # head): splitting them needs a loss that reads split logits, which the core loop's losses do not
 _HF_WHOLE_STYLES = ("embedding_rowwise", "colwise_gather_output")
+# a module transformers leaves whole inside a split layer (query and key norms), whose input is one rank's part of an
+# activation: each rank's gradient covers that part, so the placement sums them (`_sum_partial_gradients`)
+_HF_PARTIAL_GRADIENT_STYLE = "replicated_with_grad_allreduce"
 
 
 def hf_tp_plan(model: torch.nn.Module, prefix: str, world_size: int) -> dict[str, dict[str, Any]]:
@@ -448,7 +451,9 @@ def hf_tp_plan(model: torch.nn.Module, prefix: str, world_size: int) -> dict[str
             ranks.
     """
     declared = dict(getattr(model, "tp_plan", None) or {})
-    config = getattr(model, "config", None)
+    config: Any = getattr(model, "config", None)
+    if hasattr(config, "get_text_config"):  # a multimodal model's heads are its text config's
+        config = config.get_text_config()
     for attr in ("num_attention_heads", "num_key_value_heads"):
         heads = getattr(config, attr, None)
         if declared and isinstance(heads, int) and heads % world_size:
@@ -458,7 +463,7 @@ def hf_tp_plan(model: torch.nn.Module, prefix: str, world_size: int) -> dict[str
             )
     plan: dict[str, dict[str, Any]] = {}
     for key, style in declared.items():
-        if style in _HF_WHOLE_STYLES:
+        if style in _HF_WHOLE_STYLES or style == _HF_PARTIAL_GRADIENT_STYLE:
             continue
         if style not in ("colwise", "rowwise"):
             raise MisconfigurationException(
@@ -585,6 +590,59 @@ def place_module(
     _refresh_tensor_references(module)
 
 
+def _partial_gradient_params(module: torch.nn.Module, styles: Mapping[str, Any]) -> dict[str, torch.nn.Parameter]:
+    """The whole parameters of ``module`` that see only one rank's part of an activation once ``styles`` is
+    applied.
+
+    transformers names the modules (its ``replicated_with_grad_allreduce`` style): a query or key norm normalizes the
+    heads its rank computes. Only one beside a layer ``styles`` splits column-wise sees part of an activation, whether
+    the plan is the model's own or given.
+    """
+    from torch.distributed.tensor.parallel import ColwiseParallel
+
+    split = {module.get_submodule(name) for name, style in styles.items() if isinstance(style, ColwiseParallel)}
+    names = {id(param): name for name, param in module.named_parameters()}
+    found: dict[str, torch.nn.Parameter] = {}
+    for holder in module.modules():
+        # a TransformerLens bridge reads its Hugging Face model's plan, and its own module tree is named differently
+        model = getattr(holder, "original_model", holder)
+        declared = dict(getattr(model, "tp_plan", None) or {})
+        keys = [key.split("*") for key, style in declared.items() if style == _HF_PARTIAL_GRADIENT_STYLE]
+        if not keys:
+            continue
+        pattern = re.compile("|".join(r"\d+".join(re.escape(part) for part in key) for key in keys))
+        for name, submodule in model.named_modules():
+            if not pattern.fullmatch(name.replace("._original_component", "")):  # the bridge's wrappers
+                continue
+            if split.isdisjoint(model.get_submodule(name.rpartition(".")[0]).modules()):
+                continue
+            found |= {names[id(param)]: param for param in submodule.parameters() if id(param) in names}
+    return found
+
+
+def _sum_partial_gradients(module: torch.nn.Module, styles: Mapping[str, Any], mesh: Any) -> None:
+    """Sum across ranks the gradients of the parameters :func:`_partial_gradient_params` finds: each rank's covers
+    the heads that rank computes, and without the sum the ranks' copies would train apart.
+
+    The hook is on the gradient of each backward pass rather than on the accumulated one, which a second backward pass
+    would sum again. A parameter frozen at placement takes it too, for a schedule that thaws it later.
+    """
+    import torch.distributed as dist
+
+    group = mesh.get_group()
+
+    def summed(grad: torch.Tensor) -> torch.Tensor:
+        total = grad.clone()  # a hook must not change the gradient it is given
+        dist.all_reduce(total, group=group)
+        return total
+
+    for param in _partial_gradient_params(module, styles).values():
+        trainable = param.requires_grad
+        param.requires_grad_(True)  # a frozen tensor takes no hook, and keeps one it has
+        param.register_hook(summed)
+        param.requires_grad_(trainable)
+
+
 def _refresh_tensor_references(module: torch.nn.Module) -> None:
     """Let the module refresh the references its model holds to tensors the placement replaced
     (``refresh_tensor_references``): sharding, splitting and materializing register new parameters."""
@@ -631,6 +689,7 @@ def _place_tensor_parallel(
     run.mesh = mesh
     if on_meta:
         _fill_meta_built(module, run, kept_params, offloaded=False)
+    _sum_partial_gradients(module, styles, mesh)  # after materializing, which registers new parameters
     _gather_activation_splices(module)
 
 
