@@ -113,6 +113,12 @@ its layouts. Without one, the module's own default is used: a Hugging Face model
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
 `fsdp_default_kwargs` under `tp`.
 
+The embedding and the LM head stay whole, and so do query and key norms (Gemma 3, Qwen3): they sit between split layers
+and normalize only the heads their rank computes. Each rank's gradient of such a norm covers its own heads, so the
+placement sums it across ranks, whether the plan is the model's own or given, and whether the norm is trainable at
+placement or thawed later. It takes the modules from the model's own declaration
+(`replicated_with_grad_allreduce` in transformers), so a whole module of yours between split layers is not covered.
+
 A latent model spliced with `tuning.latents`, and an SAE that SAE Lens splices into a TransformerLens bridge
 (`add_saes_on_init`), read and rewrite a whole activation. To splice one inside a layer the plan splits, set
 `use_local_output: false` on that layer's entry, so that the activation reaches the splice split across ranks: the
@@ -132,6 +138,24 @@ run_cfg:
 
 Where a split layer hands on each rank's local shard instead (the default), the splice is refused, naming the site and
 this fix: a latent model's when the module is placed, an SAE's at the first forward pass.
+
+### Circuit-tracer attribution under `tp`
+
+A circuit-tracer composition over nnsight attributes a split model as it does a whole one. The plan transformers
+declares splits each attention and MLP block inside and makes the activation whole again at the block's output, and
+attribution reads, replaces and injects gradients only there. `generate_attribution_graph` (with live or frozen
+attention, and with `offload='cpu'`) and `feature_intervention` therefore need nothing from the caller, and every rank
+gets the same graph. Every rank makes every call, since the forward and backward passes are shared.
+
+- Set `circuit_tracer_cfg.tune_base: true`. It registers the base model, whose layers the plan selects; a composition
+  without it is refused.
+- Every rank holds the whole transcoders. A composition over nnsight can build the base model on the meta device
+  (`hf_from_pretrained_cfg.meta_init`), so that no rank holds the whole model on its accelerator; its transcoders are
+  then loaded eagerly, and rank 0 loads both on its host.
+- `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
+  weight, or a head inside a split layer.
+- The attribution runner itself takes one process (`AnalysisRunnerCfg` accepts `placement: single` only), so attribute
+  from a module a core-loop runner has placed.
 
 ## Models larger than one rank's accelerator
 
