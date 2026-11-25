@@ -25,12 +25,14 @@ _SNAPSHOT = re.compile(r"models--([^/\\]+)--([^/\\]+)[/\\]snapshots[/\\]")
 
 @dataclass(frozen=True)
 class AdapterMount:
-    """What was mounted under ``name``: the adapter's source and revision, and the base it was trained on."""
+    """What was mounted under ``name``: the adapter's source and revision, the base it was trained on, and the
+    dtype its weights are held in."""
 
     name: str
     source: str
     revision: str | None
     base: str
+    dtype: torch.dtype = torch.float32
 
 
 def hf_model_of(model: Any) -> Any:
@@ -100,21 +102,33 @@ def _refuse_foreign_adapters(hf: Any, mounts: dict[str, AdapterMount]) -> None:
 
 
 def mount_adapter(
-    model: Any, source: str, *, name: str, base: str, revision: str | None = None, **load_kwargs: Any
+    model: Any,
+    source: str,
+    *,
+    name: str,
+    base: str,
+    revision: str | None = None,
+    dtype: torch.dtype = torch.float32,
+    **load_kwargs: Any,
 ) -> AdapterMount:
     """Attach the adapter at ``source`` (a Hub id or a local directory) to the session's HF model, switched off.
 
     ``base`` is the model the adapter was trained on, as a Hub id. The session's model and the adapter's own config
     must both name it (a Hub cache snapshot path counts as the id it came from); anything else is refused, since an
     adapter on the wrong base loads without error and reads nonsense. Mounting again under the same name returns the
-    existing mount when the source and revision match, and is refused when they differ.
+    existing mount when the source, revision and dtype match, and is refused when they differ.
+
+    ``dtype`` is what the adapter's weights are held in. The default, float32, keeps every bit of a float32, float16
+    or bfloat16 release and is what ``PeftModel.from_pretrained`` does. Left alone, ``load_adapter`` would round the
+    weights to the session model's dtype without saying so, and a lens released in float32 would read differently on a
+    bfloat16 session; pass the model's dtype to choose that (it is faster).
     """
     hf = hf_model_of(model)
     _require_peft()
     found = base_id(str(getattr(hf.config, "_name_or_path", "") or ""))
     if found != base:
         raise ValueError(f"the adapter {source!r} is for {base!r}, but the session's model is {found or 'unnamed'!r}")
-    want = AdapterMount(name, str(source), revision, base)
+    want = AdapterMount(name, str(source), revision, base, dtype)
     mounts: dict[str, AdapterMount] = hf.__dict__.setdefault(MOUNTS_ATTR, {})
     _refuse_foreign_adapters(hf, mounts)
     if vars(hf).get(ACTIVE_ATTR):
@@ -129,8 +143,15 @@ def mount_adapter(
     # the revision reaches the adapter's config and weights through `adapter_kwargs` (download options), not as a
     # top-level keyword, which `load_adapter` passes to its state-dict loader
     adapter_kwargs = {**load_kwargs.pop("adapter_kwargs", {}), **({"revision": revision} if revision else {})}
-    info = hf.load_adapter(str(source), adapter_name=name, adapter_kwargs=adapter_kwargs or None, **load_kwargs)
+    info = hf.load_adapter(
+        str(source),
+        adapter_name=name,
+        adapter_kwargs=adapter_kwargs or None,
+        dtype_plan={"*": dtype},
+        **load_kwargs,
+    )
     _check_fit(hf, name, str(source), info)
+    _check_dtype(hf, name, str(source), dtype)
     hf.disable_adapters()  # loading switches the adapter on; a mount leaves the session's model as it was
     mounts[name] = want
     return want
@@ -157,6 +178,16 @@ def _check_fit(hf: Any, name: str, source: str, info: Any) -> None:
             if keys
         ]
         raise ValueError(f"the adapter {source!r} does not fit the session's model: " + "; ".join(parts))
+
+
+def _check_dtype(hf: Any, name: str, source: str, dtype: torch.dtype) -> None:
+    """Refuse an adapter that did not load at ``dtype``: the plan is an option of ``load_adapter``'s state-dict
+    loader, and a loader that ignored it would round the weights silently."""
+    got = {p.dtype for n, p in hf.named_parameters() if f".{name}." in n and p.is_floating_point()}
+    if got != {dtype}:
+        hf.delete_adapter(name)
+        found = sorted(map(str, got)) or "no parameters"
+        raise RuntimeError(f"the adapter {source!r} was to be held in {dtype}, but loaded as {found}")
 
 
 @contextlib.contextmanager

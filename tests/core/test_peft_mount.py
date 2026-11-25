@@ -138,6 +138,42 @@ def test_a_session_that_runs_its_own_adapter_is_refused_and_unchanged(tmp_path, 
     assert torch.equal(_logits(tuned, ids), own)
 
 
+@pytest.mark.parametrize("stored", [torch.float32, torch.bfloat16])
+def test_a_lower_precision_session_reads_the_adapter_at_its_own_precision(tmp_path, ids, stored):
+    from safetensors.torch import load_file, save_file
+
+    path = tmp_path / "lens"
+    weights = load_file(_save_lora(path) + "/adapter_model.safetensors")
+    save_file({k: v.to(stored) for k, v in weights.items()}, str(path / "adapter_model.safetensors"))
+    reference = peft.PeftModel.from_pretrained(_tiny().to(torch.bfloat16), str(path))
+    model = _tiny().to(torch.bfloat16)
+    mount = pm.mount_adapter(model, str(path), name="lens", base="org/tiny")
+    assert mount.dtype is torch.float32
+    with pm.adapter_enabled(model, "lens"):
+        assert torch.equal(_logits(model, ids), _logits(reference, ids))
+    assert {p.dtype for n, p in model.named_parameters() if ".lens." not in n} == {torch.bfloat16}
+
+    # rounded to the session's dtype, the same adapter reads differently: what the default keeps out
+    rounded = _tiny().to(torch.bfloat16)
+    pm.mount_adapter(rounded, str(path), name="lens", base="org/tiny", dtype=torch.bfloat16)
+    with pm.adapter_enabled(rounded, "lens"):
+        assert not torch.equal(_logits(rounded, ids), _logits(reference, ids))
+    with pytest.raises(ValueError, match="already mounted as 'lens'"):
+        pm.mount_adapter(rounded, str(path), name="lens", base="org/tiny")
+
+
+def test_an_adapter_that_did_not_load_at_its_dtype_is_refused_and_removed(tmp_path, ids, monkeypatch):
+    model = _tiny().to(torch.bfloat16)
+    bare = _logits(model, ids)
+    load = type(model).load_adapter
+    # a loader that ignores the plan
+    monkeypatch.setattr(type(model), "load_adapter", lambda self, *a, dtype_plan=None, **k: load(self, *a, **k))
+    with pytest.raises(RuntimeError, match=r"was to be held in torch.float32, but loaded as \['torch.bfloat16'\]"):
+        pm.mount_adapter(model, _save_lora(tmp_path / "lens"), name="lens", base="org/tiny")
+    assert pm.mounted_adapters(model) == {}
+    assert torch.equal(_logits(model, ids), bare)
+
+
 def test_an_adapter_added_after_the_mount_is_refused_at_the_read(tmp_path, ids):
     model = _tiny()
     pm.mount_adapter(model, _save_lora(tmp_path / "lens"), name="lens", base="org/tiny")
