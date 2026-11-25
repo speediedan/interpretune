@@ -274,7 +274,7 @@ def refuse_split_base(replacement_model: Any, call: str, reason: str) -> None:
     """
     from interpretune.tuning.latents import _split
 
-    if not isinstance(replacement_model, nn.Module):  # nnsight's is an envoy, interp-engine's holds the HF model
+    if not isinstance(replacement_model, nn.Module):  # a wrapper: its torch module, or the HF model it holds
         replacement_model = getattr(replacement_model, "_module", getattr(replacement_model, "hf_model", None))
     if not isinstance(replacement_model, nn.Module):
         return
