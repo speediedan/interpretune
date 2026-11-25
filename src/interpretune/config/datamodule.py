@@ -1,8 +1,10 @@
-from typing import Any, Tuple, List
+from typing import Any, Mapping, Tuple, List
+import hashlib
+import json
 import logging
 import os
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 
 from interpretune.protocol import StrOrPath
@@ -163,6 +165,48 @@ def hf_datasets_cache_root() -> Path:
     return Path(xdg_cache).expanduser() / "huggingface" / "datasets"
 
 
+#: :class:`ITDataModuleConfig` fields that cannot change a prepared dataset's rows, so they are left out of its key.
+#: The tokenizer is identified separately, and ``signature_columns`` is filled in by preparation itself.
+_UNKEYED_FIELDS = frozenset(
+    {
+        "data_collator_cfg",
+        "dataloader_kwargs",
+        "dataset_path",
+        "defer_model_init",
+        "enable_datasets_cache",
+        "eval_batch_size",
+        "os_env_model_auth_key",
+        "signature_columns",
+        "tokenizer",
+        "tokenizers_parallelism",
+        "train_batch_size",
+    }
+)
+
+
+def _key_material(value: Any) -> Any:
+    """``value`` as JSON-serializable data that is the same in every process.
+
+    A value whose only text form is its ``repr`` contributes its class alone, since a ``repr`` may carry a memory
+    address, and the ranks of one run must agree on the key.
+    """
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        declared = {f.name: _key_material(getattr(value, f.name)) for f in fields(value)}
+        return {"class": f"{type(value).__module__}.{type(value).__qualname__}", "fields": declared}
+    if isinstance(value, Mapping):
+        return {str(k): _key_material(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_key_material(v) for v in value]
+    if isinstance(value, set | frozenset):
+        return sorted(json.dumps(_key_material(v), sort_keys=True) for v in value)
+    named = value if hasattr(value, "__qualname__") else type(value)
+    return f"{named.__module__}.{named.__qualname__}"
+
+
 @dataclass(kw_only=True)
 class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
     """The datamodule-side configuration: batch sizes and dataloading, over tokenization and dataset processing.
@@ -197,12 +241,44 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
 
         # Ensure proper platform-specific path separators
+        explicit_dataset_path = self.dataset_path is not None
         if self.dataset_path is None:
             self.dataset_path = default_dataset_save_path.resolve()
         else:
             # Convert existing path to use proper separators
             self.dataset_path = Path(self.dataset_path).resolve()
         rank_zero_debug(f"[DATAMODULE_CONFIG] Final dataset_path: {self.dataset_path}")
+        # the default directory, and the path last derived from it: ``dataset_path`` is the default while it is the
+        # latter, so a path set explicitly, here or on the config afterwards, is never rekeyed
+        self._default_dataset_path = default_dataset_save_path.resolve()
+        self._derived_dataset_path = self._default_dataset_path if not explicit_dataset_path else None
+
+    def prepared_dataset_identity(self, tokenizer: Any) -> dict[str, Any]:
+        """What determines a prepared dataset's rows: this configuration's own fields and ``tokenizer``."""
+        identity = {f.name: _key_material(getattr(self, f.name)) for f in fields(self) if f.name not in _UNKEYED_FIELDS}
+        identity["config_class"] = f"{type(self).__module__}.{type(self).__qualname__}"
+        identity["tokenizer_identity"] = [
+            type(tokenizer).__name__,
+            getattr(tokenizer, "name_or_path", ""),
+            len(tokenizer) if hasattr(tokenizer, "__len__") else None,
+        ]
+        return identity
+
+    def key_default_dataset_path(self, tokenizer: Any, **extra: Any) -> None:
+        """Key the default ``dataset_path`` by what determines the dataset, not by the task alone.
+
+        Sessions of one task differ in model, tokenizer and prompt configuration, and each writes and then memory-maps
+        its prepared splits, so in one directory they read each other's rows. The datamodule calls this once it has
+        configured its tokenizer, and again if the configuration is reused with another. ``extra`` adds what a
+        datamodule's preparation depends on beyond its configuration. An explicitly set path is left alone.
+        """
+        if self._derived_dataset_path is None or self.dataset_path != self._derived_dataset_path:
+            return
+        identity = {**self.prepared_dataset_identity(tokenizer), **{k: _key_material(v) for k, v in extra.items()}}
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
+        default = self._default_dataset_path
+        self.dataset_path = self._derived_dataset_path = default.with_name(f"{default.name}__{key}")
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Keyed default dataset_path: {self.dataset_path}")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation
