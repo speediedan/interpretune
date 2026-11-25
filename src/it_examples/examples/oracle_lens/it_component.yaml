@@ -1,0 +1,13 @@
+---
+# WorkspaceBench's oracle lens for Qwen3.6-27B as an interpretune ops component. Op discovery is manifest-routed: only
+# the files listed under `ops.files` are op definitions; the runtime and the card are ordinary files.
+it_schema_version: 1
+kinds: [ops]
+ops:
+  files:
+    - oracle_lens_ops.yaml
+# Published beside the op definitions: a publish copies only what the manifest declares, and the op's implementation
+# imports the runtime.
+extra_files:
+  - oracle_lens_ops.py
+  - oracle_lens_runtime.py
