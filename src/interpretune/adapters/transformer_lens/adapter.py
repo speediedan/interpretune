@@ -3,9 +3,12 @@ from typing import TYPE_CHECKING, Type, cast, Any
 import inspect
 import re
 from functools import reduce
+from importlib.metadata import version
 from copy import deepcopy
 
 import torch
+from packaging.version import Version
+from transformers import __version__ as transformers_version
 from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
 from transformer_lens.config import TransformerBridgeConfig
 from transformer_lens.utilities.multi_gpu import get_best_available_device
@@ -573,8 +576,10 @@ class BaseITLensModule(BaseITModule):
         # Call superclass to serialize HF PretrainedConfig (hf_preconversion_config)
         super()._capture_hyperparameters()
 
-    def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
-        """Generate from a batch, refusing tensor batches the bridge loop cannot start from.
+    def it_generate(
+        self, batch: BatchEncoding | torch.Tensor, *, use_past_kv_cache: bool | None = None, **kwargs
+    ) -> Any:
+        """Generate from a batch, checking padding and whether the bridge can use its generation cache.
 
         Defined here rather than on one composition because every TransformerLens-backed module (core,
         Lightning, and the SAE Lens and circuit-tracer TL backends) runs the same bridge generation loop. That
@@ -582,6 +587,9 @@ class BaseITLensModule(BaseITModule):
         post-pad logits: its continuation is conditioned on the padding (or ends at once when end-of-text is
         predicted), never on the prompt. Batched string lists are safe (the bridge left-pads those itself);
         right-padded tensors are not, so they are refused by name instead of generating plausible output.
+
+        With transformers 5.24 and later, generation defaults to full-sequence
+        forwards. Explicitly enabling the cache raises because the bridge would lose the prompt context.
         """
         if isinstance(batch, torch.Tensor):
             tokenizer = getattr(getattr(self, "datamodule", None), "tokenizer", None)
@@ -590,7 +598,18 @@ class BaseITLensModule(BaseITModule):
                 pad_token_id=getattr(tokenizer, "pad_token_id", None),
                 padding_side=getattr(tokenizer, "padding_side", None),
             )
-        return super().it_generate(batch, **kwargs)
+        if use_past_kv_cache is not False:
+            # Remove this check when the TransformerLens pin reads the new cache argument.
+            cache_supported = Version(transformers_version).release < (5, 24)
+            if use_past_kv_cache and not cache_supported:
+                tl_version = version("transformer-lens")
+                raise ValueError(
+                    f"use_past_kv_cache=True is unsupported with transformers {transformers_version} and "
+                    f"TransformerLens {tl_version}. Set use_past_kv_cache=False or omit it to generate "
+                    "with the full sequence at each step."
+                )
+            use_past_kv_cache = cache_supported
+        return super().it_generate(batch, use_past_kv_cache=use_past_kv_cache, **kwargs)
 
     def set_input_require_grads(self) -> None:
         """Not supported for TL modules; logs and returns rather than raising."""
