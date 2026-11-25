@@ -79,14 +79,14 @@ def fake_cli(tmp_path, monkeypatch):
     """An executable fake `opencode` on PATH plus a marker dir; returns (spec, marker_dir, set_output)."""
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
-    (tmp_path / "fakeopencode_impl.py").write_text(FAKE_IMPL)
+    (tmp_path / "fakeopencode_impl.py").write_text(FAKE_IMPL, encoding="utf-8")
     if os.name == "nt":
         # Only the .cmd trampoline: a bare same-named file could win shutil.which resolution
         # on Windows without being executable there.
-        (tmp_path / "fakeopencode.cmd").write_text(FAKE_CMD)
+        (tmp_path / "fakeopencode.cmd").write_text(FAKE_CMD, encoding="utf-8")
     else:
         exe = tmp_path / "fakeopencode"
-        exe.write_text("#!/usr/bin/env python3\n" + FAKE_IMPL)
+        exe.write_text("#!/usr/bin/env python3\n" + FAKE_IMPL, encoding="utf-8")
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_MARKER_DIR", str(marker_dir))
@@ -95,7 +95,7 @@ def fake_cli(tmp_path, monkeypatch):
 
     def set_output(*events, exit_code=0):
         out_file = tmp_path / f"canned_{len(list(tmp_path.glob('canned_*')))}.jsonl"
-        out_file.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        out_file.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
         monkeypatch.setenv("FAKE_STDOUT_FILE", str(out_file))
         monkeypatch.setenv("FAKE_EXIT_CODE", str(exit_code))
 
@@ -118,7 +118,7 @@ def fake_cli(tmp_path, monkeypatch):
 
 def _run_argv(marker_dir):
     """The run call's argv (the log's first line; the session delete follows it)."""
-    return (marker_dir / "argv.log").read_text().strip().splitlines()[0]
+    return (marker_dir / "argv.log").read_text(encoding="utf-8").strip().splitlines()[0]
 
 
 class TestArgvAssembly:
@@ -134,7 +134,7 @@ class TestArgvAssembly:
         file_arg = argv.split("-f ", 1)[1].split()[0]
         assert os.path.isabs(file_arg)
         # The prompt file is removed after the call; the fake kept a copy to prove delivery.
-        assert (marker_dir / "prompt_copy.md").read_text() == prompt
+        assert (marker_dir / "prompt_copy.md").read_text(encoding="utf-8") == prompt
         assert clean_explanation_text(result.response_text) == "test-widget"
 
     def test_prompt_file_removed_afterwards(self, fake_cli):
@@ -149,14 +149,14 @@ class TestSessionCleanup:
     def test_success_deletes_session(self, fake_cli):
         spec, marker_dir, _ = fake_cli
         invoke_explanation_cli("hi", cli_spec=spec)
-        assert (marker_dir / "deleted.log").read_text().strip() == "ses_ok1"
+        assert (marker_dir / "deleted.log").read_text(encoding="utf-8").strip() == "ses_ok1"
 
     def test_failure_still_cleans_up_then_raises(self, fake_cli):
         spec, marker_dir, set_output = fake_cli
         set_output(FAIL_EVENT, exit_code=3)
         with pytest.raises(NeuronpediaExplanationError, match="boom"):
             invoke_explanation_cli("hi", cli_spec=spec)
-        assert (marker_dir / "deleted.log").read_text().strip() == "ses_fail1"
+        assert (marker_dir / "deleted.log").read_text(encoding="utf-8").strip() == "ses_fail1"
 
     def test_failed_delete_warns_but_returns(self, fake_cli, monkeypatch):
         spec, _, _ = fake_cli
@@ -172,7 +172,7 @@ class TestSessionCleanup:
         monkeypatch.setenv("FAKE_MODE", "sleep")
         with pytest.raises(subprocess.TimeoutExpired):
             invoke_explanation_cli("hi", timeout_seconds=1, cli_spec=spec)
-        sleeper_pid = int((marker_dir / "sleeper.pid").read_text().strip())
+        sleeper_pid = int((marker_dir / "sleeper.pid").read_text(encoding="utf-8").strip())
         if os.name == "nt":
             # os.kill(pid, 0) terminates on Windows; tasklist is the safe liveness probe.
             seen = subprocess.run(["tasklist", "/FI", f"PID eq {sleeper_pid}"], capture_output=True, text=True).stdout

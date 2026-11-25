@@ -310,7 +310,7 @@ class TestSkippedCompositionsAreVisible:
         import yaml
 
         component = _write_component(tmp_path, REGISTERS_DECLARED)
-        manifest = yaml.safe_load((component / "it_component.yaml").read_text())
+        manifest = yaml.safe_load((component / "it_component.yaml").read_text(encoding="utf-8"))
         manifest["adapters"]["compositions"].append(
             {
                 "component": "datamodule",
@@ -318,7 +318,7 @@ class TestSkippedCompositionsAreVisible:
                 "requires": {"pip": ["a-package-nobody-has"]},
             }
         )
-        (component / "it_component.yaml").write_text(yaml.safe_dump(manifest))
+        (component / "it_component.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
         return component
 
     def test_the_load_returns_the_skip_report(self, tmp_path, monkeypatch, restore_adapter_enum):
@@ -397,7 +397,7 @@ class TestLoadingTwiceIsIdempotent:
         assert [m.name for m in second.members] == [m.name for m in first.members] == [FIXTURE_ADAPTER]
         assert second.skipped == first.skipped
         assert set(registry.keys()) == keys_after_first, "a repeat load must not grow the registry"
-        assert marker.read_text() == "x", "the entrypoint executed more than once"
+        assert marker.read_text(encoding="utf-8") == "x", "the entrypoint executed more than once"
         assert loaded_adapter_module("org/twice", cache_dir=cache) is loaded_adapter_module(
             "org/twice", cache_dir=cache
         )

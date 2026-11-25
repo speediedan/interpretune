@@ -647,7 +647,7 @@ class Setup:
         hint = ""
         if np_repo and (Path(np_repo) / "Makefile").is_file():
             try:
-                if re.search(r"^db-check:", (Path(np_repo) / "Makefile").read_text(), re.M):
+                if re.search(r"^db-check:", (Path(np_repo) / "Makefile").read_text(encoding="utf-8"), re.M):
                     hint = f" (`cd {np_repo} && make db-check` diagnoses it)"
             except OSError:
                 pass

@@ -42,7 +42,7 @@ def _collection_yaml(header: str, op_name: str = "my_collection_op") -> str:
 def _load(tmp_path, text: str) -> AnalysisOpDispatcher:
     op_dir = tmp_path / "collection"
     op_dir.mkdir()
-    (op_dir / "ops.yaml").write_text(text)
+    (op_dir / "ops.yaml").write_text(text, encoding="utf-8")
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     dispatcher = AnalysisOpDispatcher(yaml_paths=[op_dir], enable_hub_ops=False)

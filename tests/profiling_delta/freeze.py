@@ -38,7 +38,7 @@ def load_pairs(paths: list[Path]) -> list[dict[str, Any]]:
     files = [f for p in paths for f in (sorted(p.rglob("*.pair.json")) if p.is_dir() else [p])]
     if not files:
         raise SystemExit(f"no *.pair.json artifacts under {[str(p) for p in paths]}")
-    return [json.loads(f.read_text()) for f in files]
+    return [json.loads(f.read_text(encoding="utf-8")) for f in files]
 
 
 def freeze(pairs: list[dict[str, Any]], allow_single_vendor: bool = False, multiplier: float = 3.0) -> dict:
@@ -79,8 +79,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--allow-single-vendor", action="store_true")
     args = ap.parse_args(argv)
     bounds = freeze(load_pairs(args.artifacts), args.allow_single_vendor, args.multiplier)
-    header = [ln for ln in args.out.read_text().splitlines() if ln.startswith("#")] if args.out.exists() else []
-    args.out.write_text("\n".join(header + [yaml.safe_dump(bounds, sort_keys=True)]))
+    header = (
+        [ln for ln in args.out.read_text(encoding="utf-8").splitlines() if ln.startswith("#")]
+        if args.out.exists()
+        else []
+    )
+    args.out.write_text("\n".join(header + [yaml.safe_dump(bounds, sort_keys=True)]), encoding="utf-8")
 
 
 if __name__ == "__main__":

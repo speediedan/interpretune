@@ -53,7 +53,7 @@ def main() -> None:
         place_module(placed, run, tp_plan=args.tp_plan)
     except MisconfigurationException as err:
         record["refused"] = str(err)
-        Path(args.out_dir, f"rank{run.rank}.json").write_text(json.dumps(record))
+        Path(args.out_dir, f"rank{run.rank}.json").write_text(json.dumps(record), encoding="utf-8")
         return
     record["split_params"] = sorted(n for n, p in placed.named_parameters() if type(p.data).__name__ == "DTensor")
     input_ids = torch.arange(12).reshape(2, 6) % 128
@@ -100,7 +100,7 @@ def main() -> None:
     record["aliased_after_step"] = aliased()
     # the views were stepped, the packed weight never is (no forward reads it): it moved only through shared storage
     record["packed_diff_after_step"] = packed_matches_reference()
-    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record))
+    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

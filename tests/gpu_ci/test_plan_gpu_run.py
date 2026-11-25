@@ -118,7 +118,7 @@ def test_scheduled_runs_wait_longer_and_cancel_instead_of_failing(spec):
 
 def test_the_weekly_schedule_name_matches_the_pipeline(spec):
     """The planner knows the weekly run by its schedule's name; a rename must break this test, not the run."""
-    pipeline = (ROOT / ".azure-pipelines" / "gpu-tests.yml").read_text()
+    pipeline = (ROOT / ".azure-pipelines" / "gpu-tests.yml").read_text(encoding="utf-8")
     assert f'displayName: "{WEEKLY_SCHEDULE}"' in pipeline
 
 
@@ -148,18 +148,18 @@ def _pr_merge_repo(tmp_path: Path, check_before_merge: bool = False) -> Path:
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.email", "ci@example.com")
     _git(repo, "config", "user.name", "ci")
-    (repo / "a.txt").write_text("a")
+    (repo / "a.txt").write_text("a", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
     if check_before_merge:
         with pytest.raises(RuntimeError, match="not a merge commit"):
             merge_commit_changes(repo)
     _git(repo, "checkout", "-q", "-b", "pr")
-    (repo / "b.txt").write_text("b")
+    (repo / "b.txt").write_text("b", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "pr change")
     _git(repo, "checkout", "-q", "main")
-    (repo / "c.txt").write_text("c")  # a target-branch change the pull request did not make
+    (repo / "c.txt").write_text("c", encoding="utf-8")  # a target-branch change the pull request did not make
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "main moved")
     _git(repo, "merge", "-q", "--no-ff", "-m", "merge", "pr")
@@ -185,7 +185,7 @@ def test_a_checkout_owned_by_another_user_is_read_once_trusted(tmp_path, monkeyp
     """
     repo = _pr_merge_repo(tmp_path)
     empty_global = tmp_path / "empty.gitconfig"
-    empty_global.write_text("")
+    empty_global.write_text("", encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
@@ -215,7 +215,7 @@ def test_selection_covers_a_target(tmp_path, mode, lines, covered):
     sel = None
     if lines is not None:
         sel = tmp_path / "it_gpu_selection.txt"
-        sel.write_text(lines)
+        sel.write_text(lines, encoding="utf-8")
     assert selection_covers(NOTEBOOKS, mode, str(sel) if sel else None) is covered
 
 
@@ -228,7 +228,7 @@ def test_covers_cli_exit_codes(tmp_path, monkeypatch):
     from tests.gpu_ci.plan_gpu_run import main
 
     sel = tmp_path / "it_gpu_selection.txt"
-    sel.write_text("tests/core/\n")
+    sel.write_text("tests/core/\n", encoding="utf-8")
     monkeypatch.setenv("IT_GPU_SELECTION_MODE", "selected")
     monkeypatch.setenv("IT_GPU_SELECTION_FILE", str(sel))
     assert main(["--covers", NOTEBOOKS]) == 1
@@ -268,6 +268,6 @@ def test_an_unwritable_plan_record_does_not_fail_the_plan(tmp_path, capsys):
     from tests.gpu_ci.plan_gpu_run import write_plan_record
 
     blocker = tmp_path / "file"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
     write_plan_record({"schema": "x"}, blocker / "telemetry" / "plan.json")
     assert "could not write the plan record" in capsys.readouterr().out

@@ -125,7 +125,7 @@ def run_diagnostics(config_path: str, output_path: str | None = None) -> dict:
     output = buf.getvalue()
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "a") as f:
+        with open(output_path, "a", encoding="utf-8") as f:
             f.write(f"\n\n{'=' * 70}\nRTE/BoolQ Specific Diagnostics\n{'=' * 70}\n")
             f.write(output)
             f.write("\n\nResults JSON:\n")

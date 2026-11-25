@@ -1073,7 +1073,7 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
     index = os.path.join(path, "model.safetensors.index.json")
     single = os.path.join(path, "model.safetensors")
     if os.path.isfile(index):
-        with open(index) as f:
+        with open(index, encoding="utf-8") as f:
             keys = list(json.load(f)["weight_map"])
     elif os.path.isfile(single):
         from safetensors import safe_open

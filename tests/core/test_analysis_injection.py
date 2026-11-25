@@ -46,7 +46,7 @@ def test_framework():
         variants: {}
     """
     )
-    cfg_path.write_text(cfg_text)
+    cfg_path.write_text(cfg_text, encoding="utf-8")
     print(f"   [OK] Config written to: {cfg_path}")
 
     # Step 2: Import and test the new API
@@ -179,7 +179,7 @@ def test_orchestrator_access():
               enabled: true
         """
     )
-    cfg_path.write_text(cfg_text)
+    cfg_path.write_text(cfg_text, encoding="utf-8")
     print(f"   [OK] Config written to: {cfg_path}")
 
     # Step 2: Define test analysis functions
@@ -394,7 +394,7 @@ def test_install_updates_stale_submodule_attributes(tmp_path):
 
     pkg_dir = tmp_path / "staleattr_pkg"
     pkg_dir.mkdir()
-    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
     (pkg_dir / "worker.py").write_text(
         textwrap.dedent(
             """\
@@ -402,7 +402,8 @@ def test_install_updates_stale_submodule_attributes(tmp_path):
                 result = 21 * 2
                 return result
             """
-        )
+        ),
+        encoding="utf-8",
     )
 
     sys.path.insert(0, str(tmp_path))
@@ -486,10 +487,11 @@ def test_patched_import_follows_future_import(tmp_path, docstring):
     source = tmp_path / "prefixed_docstring_module.py"
     source.write_text(
         docstring + "\nfrom __future__ import annotations\n\nimport math\n\n\ndef run():\n    value = math.sqrt(4.0)\n"
-        "    return value\n"
+        "    return value\n",
+        encoding="utf-8",
     )
     hook = FileHook(point_id="ap_after_value", file_path=source, regex_pattern=r"^\s*value = math\.sqrt")
-    patched = patch_file_with_hooks(source, [hook], output_path=tmp_path / "patched.py").read_text()
+    patched = patch_file_with_hooks(source, [hook], output_path=tmp_path / "patched.py").read_text(encoding="utf-8")
 
     compile(patched, "patched.py", "exec")  # raises SyntaxError if the import precedes the __future__ import
     lines = patched.splitlines()
@@ -519,6 +521,6 @@ def test_attention_notebook_hooks_match_the_pinned_package(tmp_path, notebook_tr
     assert validate_file_hooks(config.file_hooks, package_root) == {"missing": [], "multiple": []}
     for index, hook in enumerate(enabled_hooks):
         patched = patch_file_with_hooks(package_root / hook.file_path, [hook], tmp_path / f"hook_{index}.py")
-        source = patched.read_text()
+        source = patched.read_text(encoding="utf-8")
         assert f"HOOK_REGISTRY.execute('{hook.point_id}', locals())" in source
         compile(source, str(patched), "exec")

@@ -124,7 +124,8 @@ def test_junit_failures_reads_failures_and_errors_in_file_order(tmp_path):
         "</testcase>"
         '<testcase classname="tests.c" name="test_errors"><error message="failed on setup">setup tb</error></testcase>'
         '<testcase classname="tests.d" name="test_skip"><skipped message="no"/></testcase>'
-        "</testsuite></testsuites>"
+        "</testsuite></testsuites>",
+        encoding="utf-8",
     )
     failures = junit_failures(junit)
     assert [n for n, _ in failures] == ["tests.b::test_fails", "tests.c::test_errors"]
@@ -145,14 +146,14 @@ def test_git_dirty_paths_sees_modified_and_untracked_collection_files(tmp_path):
     git("init", "-q")
     for d in COLLECT_DIRS:
         (tmp_path / d).mkdir(parents=True)
-        (tmp_path / d / "test_kept.py").write_text("def test_kept():\n    pass\n")
-    (tmp_path / "README.md").write_text("outside the collection roots\n")
+        (tmp_path / d / "test_kept.py").write_text("def test_kept():\n    pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("outside the collection roots\n", encoding="utf-8")
     git("add", ".")
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
     assert git_dirty_paths(tmp_path) == []
-    (tmp_path / "tests" / "test_kept.py").write_text("def test_kept():\n    assert True\n")
-    (tmp_path / "tests" / "test_new.py").write_text("def test_new():\n    pass\n")
-    (tmp_path / "README.md").write_text("changed, but no collection root\n")
+    (tmp_path / "tests" / "test_kept.py").write_text("def test_kept():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_new.py").write_text("def test_new():\n    pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("changed, but no collection root\n", encoding="utf-8")
     assert git_dirty_paths(tmp_path) == ["tests/test_kept.py", "tests/test_new.py"]
 
 

@@ -255,7 +255,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         self._git(repo, "init", "-q")
         self._git(repo, "config", "user.email", "t@example.invalid")
         self._git(repo, "config", "user.name", "t")
-        (repo / "component" / "adapter.py").write_text("x = 1\n")
+        (repo / "component" / "adapter.py").write_text("x = 1\n", encoding="utf-8")
         self._git(repo, "add", "-A")
         self._git(repo, "commit", "-q", "-m", "component")
         return repo
@@ -272,7 +272,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         measured = directory_revision(component)
         assert measured is not None and measured == self._git(repo, "rev-parse", "HEAD")
         # an unrelated commit elsewhere in the repository
-        (repo / "README.md").write_text("unrelated\n")
+        (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
         self._git(repo, "add", "-A")
         self._git(repo, "commit", "-q", "-m", "unrelated")
         assert repo_head(repo) != measured, "the repository head moved"
@@ -294,7 +294,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         }
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / CONFORMANCE_REPORT_FILE).write_text(json.dumps(report))
+        (staged / CONFORMANCE_REPORT_FILE).write_text(json.dumps(report), encoding="utf-8")
         body = str(
             generate_component_card(
                 _manifest(TWO_COMPOSITIONS), REPO, tree=staged, source_revision=source_revision_of(component)
@@ -321,7 +321,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         }
         staged = tmp_path / "staged"
         staged.mkdir()
-        (staged / CONFORMANCE_REPORT_FILE).write_text(json.dumps(report))
+        (staged / CONFORMANCE_REPORT_FILE).write_text(json.dumps(report), encoding="utf-8")
         assert "### Measured capabilities" in str(
             generate_component_card(_manifest(TWO_COMPOSITIONS), REPO, tree=staged, source_revision=head)
         )
