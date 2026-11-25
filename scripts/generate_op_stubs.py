@@ -361,7 +361,9 @@ def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
 
     Non-op top-level keys are skipped. Every family declares a ``collection:`` header, and treating it as an
     op made the generator fail on its second family with a misleading "Duplicate bundled op definition
-    'collection'" -- the same shape of bug the header caused in the op compiler.
+    'collection'" -- the same shape of bug the header caused in the op compiler. Tensor ops (a definition carrying
+    an ``op_spec`` block) are skipped too: they are executors a backend's hook calls, registered by name, and the
+    dispatcher exposes no top-level wrapper for them.
     """
     non_op_keys = {COLLECTION_HEADER_KEY}
     merged: Dict[str, Any] = {}
@@ -369,7 +371,7 @@ def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
         with open(yaml_path, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {}
         for op_name, op_def in content.items():
-            if op_name in non_op_keys:
+            if op_name in non_op_keys or (isinstance(op_def, dict) and "op_spec" in op_def):
                 continue
             if op_name == "composite_operations":
                 merged.setdefault("composite_operations", {}).update(op_def)
@@ -408,7 +410,7 @@ def _follow_lazy_reexports(init_path: Path, module: str, attr: str, _limit: int 
         if not candidate.is_file():
             return module, attr
         try:
-            sub = ast.parse(candidate.read_text())
+            sub = ast.parse(candidate.read_text(encoding="utf-8"))
         except SyntaxError:
             return module, attr
         # The map's NAME varies by package (`_LAZY_MODULE_ATTRS`, `_LAZY_ADAPTER_ATTRS`), so match the
@@ -458,7 +460,7 @@ def public_surface_imports(init_path: Path) -> List[str]:
     framework as a side effect of generating stubs, and the stale-stubs CI check has to stay hermetic
     and runnable without them.
     """
-    tree = ast.parse(init_path.read_text())
+    tree = ast.parse(init_path.read_text(encoding="utf-8"))
     lazy: Dict[str, str] = {}
     exported: List[str] = []
     from_imports: Dict[str, str] = {}
@@ -569,7 +571,7 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
 
     # Write to output file
     output_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         # Emit the protocol import line to match what the stub body actually references. The generator
         # runs `ruff-format`, which does NOT remove unused imports, but the repo's pre-commit runs
         # `ruff-check --fix`, which does. Emitting an unused `BaseAnalysisBatchProtocol` therefore

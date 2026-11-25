@@ -25,8 +25,10 @@ from interpretune.tuning.weights import (  # noqa: E402
     bias_patch,
     check_weight_equivalence,
     resolve_weight_targets,
+    weight_edit_role_addresses,
     weight_edit_roles,
 )
+from interpretune.tuning.views import expand_declared_roles  # noqa: E402
 from interpretune.utils import MisconfigurationException  # noqa: E402
 
 D, H, LAYERS, VOCAB = 6, 10, 2, 11
@@ -225,6 +227,13 @@ def test_a_trainable_patch_is_an_adapter_and_a_permanent_one_is_written_into_the
     patch = _patch(tmp_path, model, form="sparse")
     handle = apply_weight_patch(model, patch, name="steer", role="adapter", view=_view(model))
     assert set(weight_edit_roles(model).values()) == {"adapter:steer"}
+    # declared by address (#875): the operands, and not the edit's index buffer, which stays `base`
+    by_address = weight_edit_role_addresses(model)
+    assert by_address == {"adapter:steer": "module:layers.1.mlp.down.parametrizations.weight.0 & leaf:values"}
+    assert expand_declared_roles(model, by_address) == weight_edit_roles(model)
+    assert MappedView(model, from_document(MAP), roles=by_address).roles() == _view(model).roles() | {
+        "layers.1.mlp.down.parametrizations.weight.0.values": "adapter:steer"
+    }
     assert handle.edit.values.requires_grad
     # a view built after the edit schedules its operand by role and still places the base tensor
     view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
@@ -359,23 +368,25 @@ def test_parameter_targets_are_declared_only_where_weights_are_materialized():
     assert {"param", "param_units"} <= supported.targets and check_support(recipe, supported) == []
 
 
+def _stage_doc(ops, tokens="all", site="mlp.out.hook_in"):
+    return {
+        "schema_version": 2,
+        "kind": "recipe",
+        "name": "neurons",
+        "model": {"id": "tiny", "revision": "r1"},
+        "book": {
+            "schema_version": 1,
+            "name": "tiny",
+            "portability": "checkpoint",
+            "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
+            "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
+        },
+        "stages": [{"site": site, "tokens": tokens, "ops": ops}],
+    }
+
+
 def _stage_recipe(ops, tokens="all", site="mlp.out.hook_in"):
-    return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "neurons",
-            "model": {"id": "tiny", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "tiny",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
-                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
-            },
-            "stages": [{"site": site, "tokens": tokens, "ops": ops}],
-        }
-    ).recipe
+    return load_recipe(_stage_doc(ops, tokens=tokens, site=site)).recipe
 
 
 def _hooked(model, recipe):
@@ -519,3 +530,206 @@ def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
         attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
     with pytest.raises(ValueError, match="names a gradient"):
         attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))
+
+
+FOUR = [1, 2, 5, 7]  # four of the down projection's H columns of D entries: the rank crossover is 4 * 6 / 10 = 2.4
+
+
+def test_a_low_rank_unit_adapter_starts_as_the_identity_and_moves_only_its_units(model):
+    """#868: with ``rank``, the selected slices' delta is (alpha / r) B A, B zero at first, both factors
+    adapters."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base, out = down.weight.detach().clone(), model(IDS).detach()
+    (handle,) = attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2)
+    edit = handle.edit
+    assert edit.lora_B.shape == (4, 2) and edit.lora_A.shape == (2, D) and edit.scale == 1.0  # alpha defaults to r
+    torch.testing.assert_close(model(IDS), out)
+    assert set(weight_edit_roles(model).values()) == {"adapter:hot"}
+    assert {n.rsplit(".", 1)[-1] for n in weight_edit_roles(model)} == {"lora_A", "lora_B"}
+    model(IDS).sum().backward()
+    assert edit.lora_B.grad is not None and edit.lora_B.grad.abs().sum() > 0  # B learns first, as in LoRA
+    with torch.no_grad():
+        edit.lora_B.copy_(torch.arange(8.0).reshape(4, 2) / 8)
+    delta = down.weight - base
+    torch.testing.assert_close(delta[:, FOUR], (edit.lora_B @ edit.lora_A).T)  # unit axis 1: units are columns
+    assert delta[:, [0, 3, 4, 6, 8, 9]].abs().sum() == 0
+    handle.remove()
+    assert torch.equal(down.weight, base)
+
+
+def test_alpha_scales_the_low_rank_delta(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base = down.weight.detach().clone()
+    (handle,) = attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2, alpha=6.0)
+    assert handle.edit.scale == 3.0
+    with torch.no_grad():
+        handle.edit.lora_B.fill_(1.0)
+    torch.testing.assert_close((down.weight - base)[:, FOUR], 3.0 * (handle.edit.lora_B @ handle.edit.lora_A).T)
+
+
+def test_a_rank_that_saves_nothing_is_refused_naming_the_bound(model):
+    """Full slices hold |S| k entries and the factors r (|S| + k): at r >= |S| k / (|S| + k) nothing is saved."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="rank 3 on .* saves nothing .* below 2.4"):
+        attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=3)
+    with pytest.raises(ValueError, match="saves nothing"):
+        attach_unit_adapter(model, DOWN, [2, 7], name="hot", view=_view(model), rank=2)  # bound 1.5
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"rank": 0}, "positive integer"),
+        ({"rank": 1.5}, "positive integer"),
+        ({"rank": True}, "positive integer"),
+        ({"rank": 1, "alpha": 0.0}, "positive number"),
+        ({"alpha": 2.0}, "give `rank` with it"),
+    ],
+)
+def test_an_unusable_rank_or_alpha_is_refused_by_name(model, kwargs, match):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match=match):
+        attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), **kwargs)
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")
+
+
+def test_a_low_rank_site_adapter_factors_the_matrices_and_keeps_a_bias_whole(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    out = model(IDS).detach()
+    handles = attach_unit_adapter(
+        model, "point:mlp.out.hook_in & layers:1", FOUR, name="hot", view=_view(model), rank=1
+    )
+    kinds = {h.target: type(h.edit).__name__ for h in handles}
+    assert kinds["layers.1.mlp.up.weight"] == kinds["layers.1.mlp.down.weight"] == "_UnitLowRank"
+    if model.layers[1].mlp.up.bias is not None:
+        assert kinds["layers.1.mlp.up.bias"] == "_UnitDelta"
+    torch.testing.assert_close(model(IDS), out)
+    for handle in handles:
+        handle.remove()
+
+
+def test_a_schedule_thaws_both_low_rank_factors_by_role(model):
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    attach_unit_adapter(model, DOWN, FOUR, name="hot", view=_view(model), rank=2)
+    view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
+    compiled = compile_schedule({0: {"params": ["role:adapter"]}}, view)
+    assert sorted(compiled.phases[0].physical) == [
+        "layers.1.mlp.down.parametrizations.weight.0.lora_A",
+        "layers.1.mlp.down.parametrizations.weight.0.lora_B",
+    ]
+
+
+SPAN = torch.tensor([[1.0, 0.5, -0.25, 0.0, 2.0, 1.0], [0.0, 1.0, 1.0, -1.0, 0.5, 0.0]])
+VECTOR = torch.tensor([0.5, -1.0, 0.25, 2.0, 0.0, 1.0])
+
+
+def _output_stage(ops, site="blocks.1.mlp.out.hook_out", tokens="all"):
+    return {"site": site, "tokens": tokens, "ops": ops}
+
+
+def _output_recipe(*stages, operand=SPAN):
+    doc = _stage_doc([SCALE])  # its book and model; the stages below replace its own
+    values, shape = operand.flatten().tolist(), list(operand.shape)
+    doc["operands"] = {"span": {"values": values, "shape": shape, "basis": "unfolded"}}
+    doc["stages"] = list(stages)
+    return load_recipe(doc).recipe
+
+
+def _hooked_both(model, recipe):
+    """The recipe through interpretune's activation path, at each layer's ``down`` input and output."""
+    from interpretune.analysis.backends.interventions import apply_intervention
+    from interpretune.tuning.weights import weight_form_site_widths
+
+    payload = recipe_interventions(recipe, site_widths=weight_form_site_widths(model, recipe, view=_view(model)))
+    hooks = []
+    for pattern, specs in payload.items():
+        down = model.layers[int(pattern.split(".")[1])].mlp.down
+
+        def edit(x, specs=specs):
+            for spec in specs:
+                x = apply_intervention(x.clone(), spec, last_pos=x.shape[1] - 1)
+            return x
+
+        if pattern.endswith(".hook_in"):
+            hooks.append(down.register_forward_pre_hook(lambda _, args, edit=edit: (edit(args[0]),)))
+        else:
+            hooks.append(down.register_forward_hook(lambda _, __, out, edit=edit: edit(out)))
+
+    class _Hooks:
+        def remove(self):
+            for h in hooks:
+                h.remove()
+
+    return _Hooks()
+
+
+REJECT = {"op": "reject", "operand": "span", "params": {"fraction": 0.5}}
+
+
+@pytest.mark.parametrize(
+    "op, operand",
+    [(REJECT, SPAN), ({"op": "project", "operand": "span"}, VECTOR)],
+    ids=["reject-a-span", "project-onto-a-vector"],
+)
+def test_an_output_span_op_has_a_weight_form_equal_to_its_hooked_form(model, op, operand):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    recipe = _output_recipe(_output_stage([op]), operand=operand)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_out": D}
+    handles = weight_form(model, recipe, view=view)
+    assert [h.target for h in handles] == ["layers.1.mlp.down.weight", "layers.1.mlp.down.bias"]
+    for handle in reversed(handles):
+        handle.remove()
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, f"the hooked form left the output unmoved ({moved}), so equivalence would be vacuous"
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")
+
+
+def test_an_output_rejection_composes_with_the_unit_ops_at_the_input(model):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    # the rejection's stage comes first, yet acts after the input's ops, as in the forward
+    units = {"site": "mlp.out.hook_in", "tokens": "all", "ops": [SCALE, SHIFT]}
+    recipe = _output_recipe(_output_stage([REJECT]), units)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_in": H, "mlp.out.hook_out": D}
+    base = model(IDS)
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, moved
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert torch.equal(model(IDS), base)
+
+
+@pytest.mark.parametrize(
+    "stage, match",
+    [
+        (_output_stage([REJECT], site="mlp.out.hook_out"), "names no layer"),
+        (_output_stage([REJECT], tokens="last"), "tokens `last`"),
+        (_output_stage([{"op": "add", "operand": "span"}]), "only a whole-activation `reject` or `project`"),
+    ],
+    ids=["layer-free", "token-scoped", "add-at-the-output"],
+)
+def test_an_output_stage_with_no_exact_weight_form_is_refused(model, stage, match):
+    from interpretune.tuning.weights import weight_form
+
+    with pytest.raises(ValueError, match=match):
+        weight_form(model, _output_recipe(stage, operand=VECTOR), view=_view(model))

@@ -11,7 +11,7 @@ collection:
 compute_attribution_graph:
   description: Generate an attribution graph with circuit-tracer
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.compute_attribution_graph_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_graph]
   input_schema:
     concept_direction:
@@ -48,6 +48,10 @@ compute_attribution_graph:
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
+      site:
+        - {binds: layer, slot: 0, point: hook_mlp_out}
+        - {binds: tokens, slot: 1}
+        - {binds: latent_feature, slot: 2}
     selected_features:
       datasets_dtype: int64
       required: false
@@ -60,6 +64,7 @@ compute_attribution_graph:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: tokens}
     logit_target_tokens:
       datasets_dtype: string
       required: false
@@ -72,6 +77,7 @@ compute_attribution_graph:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: tokens}
     graph_cfg_json:
       datasets_dtype: string
       required: false
@@ -82,6 +88,7 @@ compute_attribution_graph:
       required: false
       non_tensor: true
       sequence_type: false
+      site: {binds: latent_feature}
     graph_vocab_size:
       datasets_dtype: int64
       required: false
@@ -101,7 +108,7 @@ compute_attribution_graph:
 head_loadings:
   description: Split the edges into one attribution target across the attention heads of each layer
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_loadings_impl
-  required_capabilities: [head_attribution]
+  required_techniques: [head_attribution]
   # `head_target` is a call-time kwarg because a target can be a token string, a tensor or a `CustomTarget`.
   normal_params:
     head_layers: null
@@ -112,6 +119,7 @@ head_loadings:
     head_loading_layers:
       datasets_dtype: int64
       sequence_type: true
+      site: {binds: layer}
     head_loading_shares:
       datasets_dtype: float32
       array_shape: [null, null]
@@ -129,7 +137,7 @@ head_loadings:
 head_conductance:
   description: Credit each attention head for the measured change of a target between two prompts of the same length
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_conductance_impl
-  required_capabilities: [head_attribution]
+  required_techniques: [head_attribution]
   # `counterfactual_prompt` and `target_weights` are required call-time kwargs, with no default to declare.
   normal_params:
     n_steps: 32
@@ -207,6 +215,10 @@ extract_top_features:
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
+      site:
+        - {binds: layer, slot: 0, point: hook_mlp_out}
+        - {binds: tokens, slot: 1}
+        - {binds: latent_feature, slot: 2}
     top_feature_scores:
       datasets_dtype: float32
       sequence_type: true
@@ -218,7 +230,7 @@ extract_top_features:
 graph_prune:
   description: Prune a circuit-tracer attribution graph
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.graph_prune_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_graph_prune]
   input_schema:
     input_string:
@@ -289,6 +301,10 @@ graph_prune:
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
+      site:
+        - {binds: layer, slot: 0, point: hook_mlp_out}
+        - {binds: tokens, slot: 1}
+        - {binds: latent_feature, slot: 2}
     selected_features:
       datasets_dtype: int64
       required: false
@@ -301,6 +317,7 @@ graph_prune:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: tokens}
     logit_target_tokens:
       datasets_dtype: string
       required: false
@@ -313,6 +330,7 @@ graph_prune:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: tokens}
     graph_cfg_json:
       datasets_dtype: string
       required: false
@@ -323,6 +341,7 @@ graph_prune:
       required: false
       non_tensor: true
       sequence_type: false
+      site: {binds: latent_feature}
     graph_vocab_size:
       datasets_dtype: int64
       required: false
@@ -341,7 +360,7 @@ graph_prune:
 graph_node_influence:
   description: Compute node influence scores for an attribution graph
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.graph_node_influence_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [ct_node_influence]
   input_schema:
     adjacency_matrix:
@@ -412,6 +431,10 @@ graph_node_influence:
       datasets_dtype: int64
       array_shape: [null, 3]
       sequence_type: false
+      site:
+        - {binds: layer, slot: 0, point: hook_mlp_out}
+        - {binds: tokens, slot: 1}
+        - {binds: latent_feature, slot: 2}
 
 feature_intervention_forward:
   description: Run feature interventions and return pre/post intervention outputs
@@ -458,26 +481,40 @@ feature_intervention_forward:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     intervention_specs_json:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
+      site:
+        - {binds: layer}
+        - {binds: tokens}
+        - {binds: latent_feature}
     feature_intervention_dict_json:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
+      site:
+        - {binds: layer}
+        - {binds: tokens}
+        - {binds: latent_feature}
     intervention_layers:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: layer}
     intervention_positions:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: tokens}
     intervention_feature_ids:
       datasets_dtype: int64
       required: false
       sequence_type: true
+      site: {binds: latent_feature}
     intervention_values:
       datasets_dtype: float32
       required: false

@@ -290,17 +290,18 @@ scope to `function` scope. This further reduces peak resource usage at the cost 
 each test method gets a fresh fixture instance rather than sharing one across the test session.
 This tradeoff intentionally prioritises cross-platform validation in the normal CI suite over
 runtime efficiency; the self-hosted standalone runner is reserved for tests that require subprocess
-isolation for correctness reasons (e.g., `sys.settrace` / coverage conflicts).
+isolation for correctness reasons (a test that changes process-wide state, for example).
 
 **Tradeoff summary:** Using `cleanup_memory` at the function level means some fixtures with wider
 scope are still shared across test methods — fixture teardown is not accelerated by the gc sweep
 alone. The combination of `cleanup_memory` + `function`-scoped fixtures provides the strongest
 memory containment short of standalone isolation.
 
-**When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation,
-e.g., when a library uses `sys.settrace()` (which interferes with pytest-cov). The current canonical
-example is `test_nnsight_trace_context` in `tests/core/test_adapters_nnsight.py`, which must stay
-`@RunIf(standalone=True)`.
+**When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation, e.g., because
+they change process-wide state that later tests would see. One that needs no GPU takes
+`@RunIf(standalone_cpu=True)`, which runs it in the hosted Linux job. nnsight traces no longer need it: nnsight 0.8
+restores the trace function it displaces, and CI records coverage through `sys.monitoring`
+(`COVERAGE_CORE=sysmon`), which a trace function cannot disable.
 
 ### Shared Low-Memory Extraction Helpers
 
@@ -382,7 +383,7 @@ Recommended triage flow:
 
 ```bash
 # Inspect the failed job summary first
-gh run view --repo speediedan/interpretune --job <job_id>
+gh run view --repo interpretune/interpretune --job <job_id>
 
 # Download the raw job log when artifacts are missing or upload steps were skipped
 gh api "repos/speediedan/interpretune/actions/jobs/<job_id>/logs" > /tmp/ci_job_<job_id>.log
@@ -503,21 +504,26 @@ Where a scheduled build still waits for an approval, `python -m tests.gpu_ci.sch
 - `HOLD`: the host is busy, and the verdict names what is busy;
 - `REJECT stale`: still not releasable after two hours, so a `batch: true` schedule is never stuck behind an old build.
 
-**Device placement.** Each GPU phase runs in two stages, and each stage takes its own lease through the host's lease
-tool:
+**Device placement.** Each GPU phase runs in up to three stages, and each stage takes its own lease through the host's
+lease tool:
 
 | stage | lease | tests |
 | --- | --- | --- |
 | small | one device sized to the smallest card, best fit | single-device tests declaring no more than that card's memory, none marked `bf16_cuda` |
-| large | the whole server | everything else: larger declarations, multi-device and `bf16_cuda` tests, then the extended tiers |
+| large | one device that holds the largest of its tests (best fit), no `cpu-heavy` | the other single-device tests: larger declarations and `bf16_cuda` tests |
+| multi | the whole server, with `cpu-heavy` | multi-device tests and the extended tiers; taken only when the run has either |
 
-- The two memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`) partition every phase, so together the stages run it
-  whole.
+- The memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`: `small`, `large`, `multi`) partition every phase, so
+  together the stages run it whole.
+- The large stage is sized before any lease is taken: the job's collect step writes each phase's GPU tests' declared
+  needs (`IT_GPU_STAGE_NEEDS_DIR`), narrowed by the run's selection, and `tests/gpu_ci/stage_needs.py` reads them.
+  Without them the large stage takes the whole server for every class above small (`IT_GPU_MEM_CLASS=rest`), and the
+  multi stage is a no-op. `IT_GPU_LARGE_CPU_HEAVY=1` makes the large stage take `cpu-heavy` too.
 - `bf16_cuda` tests always go to the large stage, because the small card may lack bf16, and there they would be skipped
   rather than run.
-- Strict mode (`IT_GPU_STRICT=1`) is on in both stages, so a test placed on a device smaller than it declares fails
+- Strict mode (`IT_GPU_STRICT=1`) is on in every stage, so a test placed on a device smaller than it declares fails
   rather than skips.
-- Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
+- Any class may be empty on its own. A full run fails only when a phase ran nothing in every class.
 - Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
 
 **Build telemetry.** Every GPU build that collects its phases publishes `it-phases/telemetry/build_telemetry.json`

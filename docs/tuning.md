@@ -53,7 +53,7 @@ Tuning is one of several places Interpretune consumes venngram:
 - **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
   backends' native intervention ops or an analysis backend's feature interventions, and a support record derived from
   each backend's own refuses what it cannot express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
-  [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
+  [#905](https://github.com/interpretune/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
 - **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
   returned with its pinned reference for provenance), a local file or an inline mapping, so an experiment's treatment is
   shared as data rather than code.
@@ -73,21 +73,74 @@ A composition on Lightning, today's framework adapter loop, uses Fine-Tuning Sch
 callback with the same schedule. Both interfaces see the same view, so a schedule thaws the same tensors on either (the
 RTE example's tests check this phase by phase). [Phased fine-tuning on the core loop](#phased-fine-tuning-on-the-core-loop) below has the details.
 
+## One schedule across compositions
+
+The `speediedan/rte` component ships one GPT-2 schedule written only in addresses,
+`ft_schedules/rte_ft.gpt2.addresses.yaml`, and a run configuration for each composition that runs it:
+
+```bash
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.core.addresses.yaml
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.transformer_lens.yaml
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gpt2.nnsight.yaml
+```
+
+```yaml
+0:
+  params:
+  - "component:ln_final"
+  - "layers:-2: & component:mlp.*"
+1:
+  params:
+  - "layers:-2: & (component:attn.* | component:ln*)"
+2:
+  params:
+  - "layers:-6:-2"
+```
+
+Quote each address: `&` and `*` begin YAML anchors and aliases. The three compositions name the same tensor three ways
+(`model.transformer.h.10.mlp.c_fc.weight` on the core/HF composition, `hf_model.transformer.h.10.mlp.c_fc.weight` on
+nnsight, a bridge path under `blocks.10` on TransformerLens), and each address resolves to the composition's own
+names through GPT-2's component map. The example's test runs all three through the CLI and maps every epoch's thawed
+tensors back to GPT-2's own names: the sets must be equal in every epoch. Two settings make them so:
+
+- **The TransformerLens composition turns `implicit_norm_thaw` off** (`tunable_view` in its session configuration).
+  With the default, thawing any tensor of a block also thaws that block's norms on that composition alone, so phase 0
+  would thaw blocks 10 and 11's norms there and in phase 1 everywhere else.
+- **A TransformerLens bridge reads some fused tensors through splits it makes of them.** GPT-2's bridge computes
+  attention from `q`, `k` and `v` views of the fused `c_attn`, which itself receives no gradient. The view places
+  those splits where the fused tensor is, so `component:attn.qkv` thaws the tensors a step reaches
+  ([#1107](https://github.com/interpretune/interpretune/issues/1107)), and `TransformerBridgeView.wrapped_names()` maps
+  each of its physical names to the wrapped model's name, a split to the tensor it views, for comparisons like this
+  one.
+
+The schedule leaves adapters out: a `lora_cfg` is applied on the core/HF and TransformerLens compositions but not on
+nnsight, so `role:adapter` would select tensors on two of the three.
+
 ## Roles
 
 Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found by venngram's overlay maps and
-become `adapter:<name>`. A composition declares anything else with `tunable_roles()`:
+become `adapter:<name>`. A composition declares anything else with `tunable_roles()`, by address or by name, as
+venngram views take a `roles` mapping: a role mapped to an address is resolved against the view's own names and
+structure when the view is built, and a tensor name mapped to a role names one tensor.
 
 ```python
+from interpretune.tuning.views import merge_roles
+
+
 class MyInterventionMixin:
     def tunable_roles(self) -> dict[str, str]:
-        roles = super().tunable_roles()
-        roles.update({f"steer.{n}": "intervention:steer" for n, _ in self.steer.named_parameters()})
-        return roles
+        return merge_roles(super().tunable_roles(), {"intervention:steer": "module:steer"})
 ```
 
-Overrides are cooperative: each calls `super()` and adds to its result, so a backend's roles and another mixin's
-compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
+Overrides are cooperative: each calls `super()` and merges its declarations into the result, so a backend's roles and
+another mixin's compose; `merge_roles` joins two addresses given for one role into their union, and a later name entry
+replaces an earlier one. An address states no `role` term, since roles are what it assigns, and venngram refuses one
+that selects nothing, or two addresses giving one tensor different roles unless a name entry settles it. The roles
+Interpretune declares itself are addresses: `module:latent_models.<name>` for an attached latent model,
+`module:interventions.<name>` for an intervention, `module:attached_saes.<key>` for a spliced SAE Lens SAE, and a
+`name:` pattern for each LoRA adapter of a TransformerLens composition. The address grammar is venngram's; on a
+mapped model, `{"adapter:lora": "component:attn.* & leaf:lora_*"}` reads the same on every architecture its map
+describes. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
 optimizer never steps `fitted` or `artifact` tensors. A `fitted` tensor is computed in the run and checkpointed; an
 `artifact` is loaded from a published or saved source, so it is reloaded from that source rather than checkpointed.
 
@@ -205,6 +258,23 @@ A repository subclasses it and sets `target`, as it does for `ModelBackendConfor
 that applies to it; a refused composition runs the refusal case; a run in which no case applies fails. Each case builds
 a fresh session, because cases change parameters and `requires_grad`.
 
+An address means the same tensors on every composition of one model, and a test can check that across backends.
+`assert_same_selection` (in `interpretune.testing.conformance.tuning`) resolves each address on every view it is given
+and compares the selections by the wrapped model's own tensor names: a TransformerLens view's tensors by the names the
+bridge recorded for them, and a view mounted at a submodule (`model` on a core/HF composition, `hf_model` on an nnsight
+one) without that mount. It fails naming the address and each backend whose selection differs, or on which the address
+does not resolve:
+
+```python
+from interpretune.testing.conformance.tuning import assert_same_selection
+
+views = {"core/HF": core_view, "nnsight": nnsight_view, "TransformerLens": bridge_view}  # one model, three backends
+assert_same_selection(views, ["layers:-3: & component:attn.*", "role:latent & layers:3:"])
+```
+
+Interpretune's own tests run it on GPT-2's core/HF, nnsight and TransformerLens compositions, for addresses by layer
+and component and for latent models spliced by site address (`tests/core/test_cross_backend_addresses.py`).
+
 ## What each composition declares
 
 | Composition | View | Roles |
@@ -212,9 +282,9 @@ a fresh session, because cases change parameters and `requires_grad`.
 | [core / HF](tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
 | [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | LoRA tensors from `lora_cfg` as `adapter:<name>` (see [LoRA adapters](tuning_transformer_lens.md#lora-adapters)); the rest as on its page |
 | [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
-| [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
-| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
-| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
+| [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/interpretune/interpretune/issues/942)) |
+| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; remote compositions train session-created adapter or intervention tensors in [bounded remote sessions](tuning_nnsight.md#remote-ndif-tuning-in-bounded-sessions) instead; local paths tracked in [#814](https://github.com/interpretune/interpretune/issues/814) | |
+| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/interpretune/interpretune/issues/813) |
 | [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view, which fits `(core, interp_engine)` with no override (measured by the adapter's tuning conformance); its circuit-tracer composition takes the circuit-tracer view | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 

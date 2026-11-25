@@ -45,12 +45,12 @@ def pull(
     module_cls = it.hub.pull("org/repo", "<key>")``. Without ``key``, returns
     ``(manifest, resolved_commit)`` so callers can inspect the available configurations first.
 
-    A key-less pull also materializes the payloads the manifest's non-configuration kinds need (the
-    adapters and promptconfigs entrypoints, the hookmaps documents), pinned to the resolved commit, so the
-    cache-only loaders (``load_hub_adapter``, ``load_hookmaps``, ``compose_ref``) can complete from the
-    snapshot, and the manifest's ``extra_files`` (fine-tuning schedules, CLI run configurations), which
-    configurations and the CLI reference as ``hub://<repo_id>/<path>``. Loading never downloads; this is the verb
-    that downloads on purpose.
+    A key-less pull also materializes the payloads the manifest's non-configuration kinds need (the adapters and
+    promptconfigs entrypoints, the hookmaps documents, the helper modules), pinned to the resolved commit, so the
+    cache-only loaders (``load_hub_adapter``, ``load_hookmaps``, ``load_helpers``, ``compose_ref``) can complete from
+    the snapshot, and the manifest's ``extra_files`` (fine-tuning schedules, CLI run configurations), which
+    configurations and the CLI reference as ``hub://<repo_id>/<path>``. Loading never downloads; this is the verb that
+    downloads on purpose.
     """
     from interpretune.hub.components import (
         pull_component_config,

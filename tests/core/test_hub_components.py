@@ -25,7 +25,7 @@ class TestComponentManifest:
     def test_in_repo_manifest_validates(self):
         manifest = load_component_manifest(RTE_COMPONENT_DIR / "it_component.yaml")
         assert manifest["kinds"] == ["module", "datamodule"]
-        assert len(manifest["module"]["configs"]) == 12
+        assert len(manifest["module"]["configs"]) == 15
 
     def test_schema_version_is_mandatory(self):
         with pytest.raises(ComponentManifestError, match="it_schema_version"):
@@ -573,6 +573,10 @@ class TestExperimentKindSpec:
         resolved = load_experiment_config(root / "configs" / "child.yaml", _root=root)
         assert resolved["EXPERIMENT_NAME"] == "demo"
         assert resolved["A"] == 1 and resolved["B"] == 2
+        # named and located by the snapshot path, not the blob it links to: a consumer reading the config's directory
+        # for sibling files (a concept-pair file, a schedule) would otherwise look in `blobs/`
+        assert resolved["EXPERIMENT_CONFIG_NAME"] == "child"
+        assert Path(resolved["EXPERIMENT_CONFIG_PATH"]) == root / "configs" / "child.yaml"
 
     def test_absolute_extends_outside_snapshot_refused(self, tmp_path):
         """An existing absolute path with a colon takes the path branch, not the exemption.

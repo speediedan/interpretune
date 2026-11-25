@@ -33,11 +33,13 @@ def _component(tmp_path, architecture="ToyForCausalLM", rows=None, properties=No
     """An in-tree-shaped hookmaps component directory with one document."""
     root = tmp_path / "component"
     (root / "maps").mkdir(parents=True)
-    (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(hookmaps={"files": [f"maps/{name}"]})))
+    (root / "it_component.yaml").write_text(
+        yaml.safe_dump(_manifest(hookmaps={"files": [f"maps/{name}"]})), encoding="utf-8"
+    )
     doc = {"schema_version": schema_version, "architecture": architecture, "components": rows or GPT2_ROWS}
     if properties is not None:
         doc["properties"] = properties
-    (root / "maps" / name).write_text(yaml.safe_dump(doc))
+    (root / "maps" / name).write_text(yaml.safe_dump(doc), encoding="utf-8")
     return root
 
 
@@ -87,14 +89,15 @@ class TestPublishStructuralCheck:
 
         root = _component(tmp_path)
         (root / "maps" / "toy.yaml").write_text(
-            yaml.safe_dump({"schema_version": 1, "architecture": "X"})
+            yaml.safe_dump({"schema_version": 1, "architecture": "X"}), encoding="utf-8"
         )  # no components
         with pytest.raises(ValueError, match="missing the 'components' key"):
             build_component_tree(root, tmp_path / "out")
         (root / "maps" / "toy.yaml").write_text(
             yaml.safe_dump(
                 {"schema_version": 1, "architecture": "X", "components": {"embed": {"module": "m", "kind": "sorcery"}}}
-            )
+            ),
+            encoding="utf-8",
         )
         with pytest.raises(ValueError, match="unknown component kind 'sorcery'"):
             build_component_tree(root, tmp_path / "out")
@@ -291,7 +294,7 @@ class TestPullMaterializesDeclaredPayloads:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes((root / filename).read_bytes())
             (snap.parent.parent / "refs").mkdir(exist_ok=True)
-            (snap.parent.parent / "refs" / "main").write_text("abc123def456")
+            (snap.parent.parent / "refs" / "main").write_text("abc123def456", encoding="utf-8")
             return str(dest)
 
         monkeypatch.setattr(components, "hf_hub_download", fake_download)

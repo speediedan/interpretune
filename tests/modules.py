@@ -57,7 +57,7 @@ class BaseTestDataModule:
         self._key_default_dataset_path_by_tokenizer()
 
     def _key_default_dataset_path_by_tokenizer(self) -> None:
-        """Give the cached test subset one directory per tokenizer, not one per task.
+        """Give the cached test subset one directory per tokenizer and entrypoint, not one per task.
 
         ``pytest_rte_hf`` is shared by the gpt2, gemma2, gemma3 and llama3 compositions (``pytest_rte_tl`` by gpt2 and
         gemma2), and :meth:`prepare_data` reuses an existing subset rather than rebuilding it. So on a fresh datasets
@@ -72,7 +72,10 @@ class BaseTestDataModule:
         if path.parent != cache_root or not (path.name == task_dir or path.name.startswith(f"{task_dir}__")):
             return
         tokenizer = self.tokenizer
-        identity = f"{type(tokenizer).__name__}|{getattr(tokenizer, 'name_or_path', '')}|{len(tokenizer)}"
+        # the entrypoint encodes the subset, so a revision that renders prompts differently must not reuse one prepared
+        # by another: keyed by tokenizer alone, a warm cache served the old rendering and every test still passed
+        entrypoint = hashlib.sha256(Path(RTE_ENTRYPOINT_MODULE.__file__).read_bytes()).hexdigest()[:12]
+        identity = f"{type(tokenizer).__name__}|{getattr(tokenizer, 'name_or_path', '')}|{len(tokenizer)}|{entrypoint}"
         key = hashlib.sha256(identity.encode()).hexdigest()[:12]
         self.itdm_cfg.dataset_path = cache_root / f"{task_dir}__{key}"
 
@@ -448,7 +451,7 @@ class StateLogInspectMixin:
         dump_path = Path(self.state_log_dir)
         state_log = dump_path / "dev_state_log.yaml"
         fs = get_filesystem(state_log)
-        with fs.open(state_log, "a", newline="") as fp:
+        with fs.open(state_log, "a", newline="", encoding="utf-8") as fp:
             fp.write(f"State log for test `{self.test_alias}`:{os.linesep}")
             for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
                 fp.write(os.linesep)

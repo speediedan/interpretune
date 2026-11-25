@@ -38,16 +38,23 @@ sites. For $y = W x + b$:
 
 - scaling column $j$ of $W$ by $k$ is ``scale`` of unit $j$ of $x$ by $k$;
 - the bias patch $b' = b + d W_{:,j}$ is ``add`` of dose $d$ to unit $j$ of $x$;
-- $W' = (I - \alpha u u^{\top}) W$ is ``reject`` of $u$ with fraction $\alpha$ from $W x$, at the output.
+- $W' = (I - \alpha u u^{\top}) W$ and $b' = (I - \alpha u u^{\top}) b$ are ``reject`` of $u$ with fraction $\alpha$
+  from $W x + b$, at the output (a span of several vectors takes the projector $V V^{+}$ in place of $u u^{\top}$, and
+  ``project`` keeps the span instead).
 
-:func:`weight_form` materializes a recipe's unit ops at ``mlp.out``'s input in these weight forms (:func:`bias_patch`
-builds the second), and :func:`check_weight_equivalence` compares the two forms of an edit on a batch. A token-scoped
-op has no weight form, and a general low-rank or dense patch has no activation form at one site.
+:func:`weight_form` materializes a recipe's unit ops at ``mlp.out``'s input and its whole-activation ``reject`` and
+``project`` at ``mlp.out``'s output in these weight forms (:func:`bias_patch` builds the second),
+:func:`weight_form_site_widths` gives the site widths the recipe's activation form is built with, and
+:func:`check_weight_equivalence` compares the two forms of an edit on a batch (the ``weight_equivalence_check`` analysis
+op runs that comparison through a model backend). A token-scoped op has no weight form, and a general low-rank
+or dense patch has no activation form at one site.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
 
 from __future__ import annotations
+
+import math
 
 import re
 import warnings
@@ -167,6 +174,57 @@ class _UnitDelta(WeightEdit):
         return w.index_add(self.dim, self.units, self.delta.to(w.dtype))
 
 
+class _UnitLowRank(WeightEdit):
+    r"""A low-rank unit adapter: :math:`W_0 + \Delta`, where the selected units' slices take
+    :math:`\Delta_S = \tfrac{\alpha}{r} B A`, with :math:`B \in \mathbb{R}^{|S| \times r}` (zero at first) and
+    :math:`A \in \mathbb{R}^{r \times k}` over the :math:`k` entries of each slice, and the tensor is unchanged
+    elsewhere."""
+
+    units: torch.Tensor
+
+    def __init__(self, name: str, dim: int, units: Sequence[int], shape: Sequence[int], rank: int, alpha: float):
+        super().__init__(name, "adapter")
+        self.dim = dim
+        self.shape = tuple(shape)
+        self.scale = alpha / rank
+        self.register_buffer("units", torch.tensor(list(units), dtype=torch.long))
+        k = math.prod(n for i, n in enumerate(self.shape) if i != dim)
+        a = torch.empty(rank, k)
+        nn.init.kaiming_uniform_(a, a=math.sqrt(5))  # LoRA's initialization: with B at zero the model is unchanged
+        self.lora_A = self.operand(a)
+        self.lora_B = self.operand(torch.zeros(len(self.units), rank))
+
+    def forward(self, w: torch.Tensor) -> torch.Tensor:
+        others = [n for i, n in enumerate(self.shape) if i != self.dim]
+        delta = (self.lora_B @ self.lora_A * self.scale).reshape(len(self.units), *others).movedim(0, self.dim)
+        return w.index_add(self.dim, self.units, delta.to(w.dtype))
+
+
+def _low_rank(name: str, rank: int | None, alpha: float | None) -> tuple[int, float] | None:
+    """The validated ``(rank, alpha)`` of a unit adapter, or None for a full slice delta."""
+    if rank is None:
+        if alpha is not None:
+            raise ValueError(f"The unit adapter {name!r}: `alpha` scales a low-rank delta; give `rank` with it")
+        return None
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
+        raise ValueError(f"The unit adapter {name!r}: `rank` must be a positive integer, not {rank!r}")
+    alpha = float(rank if alpha is None else alpha)
+    if not math.isfinite(alpha) or alpha <= 0:
+        raise ValueError(f"The unit adapter {name!r}: `alpha` must be a positive number, not {alpha!r}")
+    return rank, alpha
+
+
+def _check_crossover(name: str, tensor: str, shape: Sequence[int], dim: int, rank: int) -> None:
+    """Refuse a rank at which the factored delta has as many entries as the full one, or more."""
+    units, k = shape[dim], math.prod(n for i, n in enumerate(shape) if i != dim)
+    if rank * (units + k) >= units * k:
+        raise ValueError(
+            f"The unit adapter {name!r}: rank {rank} on `{tensor}` saves nothing over its full delta ({units} slices "
+            f"of {k}: {units * k} entries, against {rank * (units + k)} factored); a rank below "
+            f"{units * k / (units + k):.3g} does, or omit `rank` for the full delta"
+        )
+
+
 class _Vector(WeightEdit):
     """``add`` or ``replace`` of an operand of the tensor's own shape."""
 
@@ -242,6 +300,20 @@ def weight_edit_roles(root: nn.Module) -> dict[str, str]:
     return roles
 
 
+def weight_edit_role_addresses(root: nn.Module) -> dict[str, str]:
+    """The roles of :func:`weight_edit_roles`, declared by address: each role mapped to its edits' operands
+    (``module:<edit> & leaf:<operand>``; an edit's buffers, such as its unit indices, stay ``base``), as venngram
+    views take them (``roles=``)."""
+    from interpretune.tuning.views import merge_roles
+
+    declared = [
+        {module.declared_role(): " | ".join(f"module:{path} & leaf:{n}" for n in operands)}
+        for path, module in root.named_modules()
+        if isinstance(module, WeightEdit) and (operands := [n for n, _ in module.named_parameters(recurse=False)])
+    ]
+    return merge_roles(*declared)
+
+
 def _view(root: nn.Module, view: Any | None) -> Any:
     if view is not None:
         return view
@@ -249,6 +321,41 @@ def _view(root: nn.Module, view: Any | None) -> Any:
 
     attached = root.__dict__.get(VIEW_ATTR)
     return attached if attached is not None else default_view(root)
+
+
+def _places_units(view: Any) -> bool:
+    structure = getattr(view, "structure", None)
+    return callable(structure) and callable(getattr(structure(), "unit_dim", None))
+
+
+def _unit_view(root: nn.Module, view: Any | None) -> Any:
+    """The view a unit target resolves through: ``view``, else ``root``'s attached view when its structure places
+    units (a venngram ``MappedView``, or the view of a ``TransformerBridge``), else ``root``'s default view
+    (venngram's registry map for the model it carries).
+
+    An attached view that names tensors without placing their units (an identity view) addresses the same tensors
+    under the same root, so the default view is asked instead; where no map describes the root's module names either,
+    the unit target is refused when it resolves.
+    """
+    if view is not None:
+        return view
+    attached = _view(root, None)
+    if _places_units(attached):
+        return attached
+    from interpretune.tuning.views import default_view
+
+    return default_view(root)
+
+
+def _structure(view: Any) -> Any:
+    structure = getattr(view, "structure", None)
+    if not callable(structure):
+        raise ValueError(
+            f"{type(view).__name__} gives no structure, so no tensor's unit axis is known. Units of a tensor are "
+            "addressed through a venngram MappedView whose component map records each row's `layout` (component map "
+            "schema 5)."
+        )
+    return structure()
 
 
 _PARAMETRIZED = ".parametrizations."
@@ -479,15 +586,28 @@ def apply_weight_patch(
 
 #: The unit spaces a site's units project onto: a point (its component and side) and the components whose units are
 #: that space (``venngram.maps.schema.UNIT_SIDES``). The MLP's hidden neurons are the down projection's inputs and the
-#: up and gate projections' outputs.
+#: up and gate projections' outputs. An attention head's value output (``attn.hook_z``, the output projection's input)
+#: is a block of the output projection's inputs and of its key/value group's value projection outputs.
 SITE_UNIT_SPACES: dict[tuple[str, str], tuple[str, ...]] = {
-    (component, side): ("mlp.in", "mlp.gate", "mlp.out")
-    for component, side in (("mlp.out", "in"), ("mlp.in", "out"), ("mlp.gate", "out"))
+    **{
+        (component, side): ("mlp.in", "mlp.gate", "mlp.out")
+        for component, side in (("mlp.out", "in"), ("mlp.in", "out"), ("mlp.gate", "out"))
+    },
+    ("attn.o", "in"): ("attn.o", "attn.v"),
 }
 
+#: The unit spaces whose units are attention heads, each a block of ``unit_block`` coordinates.
+HEAD_UNIT_SPACES = frozenset({("attn.o", "in")})
 
-def _site_unit_tensors(root: nn.Module, site: str, view: Any, structure: Any) -> list[str]:
-    """The tensors a site's units are slices of: every tensor of the site's unit space at each layer it selects."""
+_HEAD_BLOCK_HELP = (
+    "a head's block size is the map row's `unit_block` (component map schema 6, recorded by "
+    "`venngram.maps.verification.with_layouts`)"
+)
+
+
+def _site_unit_tensors(root: nn.Module, site: str, view: Any, structure: Any) -> tuple[bool, list[list[str]]]:
+    """The tensors a site's units are slices of, one list per layer it selects (every tensor of the site's unit
+    space there), and whether its units are attention heads."""
     from interpretune.analysis.points import parse
     from interpretune.analysis.venngram.sites import resolve_sites
 
@@ -500,28 +620,142 @@ def _site_unit_tensors(root: nn.Module, site: str, view: Any, structure: Any) ->
         raise ValueError(f"The site {site!r}: {err}") from err
     if selection.flow != "value":
         raise ValueError(f"The site {site!r} names a gradient (`of: grad`); a unit adapter tunes parameters")
-    tensors: list[str] = []
+    layers: list[list[str]] = []
+    kinds = set()
     for hook in selection.sites:
         point = parse(hook)
-        space = SITE_UNIT_SPACES.get((point.component or "", getattr(point.slot, "value", "")))
+        key = (point.component or "", getattr(point.slot, "value", ""))
+        space = SITE_UNIT_SPACES.get(key)
         if space is None:
             raise ValueError(
                 f"The site {site!r}: `{hook}` is not a unit space a unit adapter projects onto (supported: the MLP's "
-                "hidden units, `point:mlp.out.hook_in`); address the tensors themselves instead"
+                "hidden units, `point:mlp.out.hook_in`, and attention heads, `point:attn.hook_z`); address the "
+                "tensors themselves instead"
             )
-        layer = resolve_weight_targets(root, f"component:mlp.* & layers:{point.layer}", view=view)
-        tensors += [t for t in layer if getattr(structure.locate(t), "component", None) in space]
-    return tensors
+        kinds.add(key in HEAD_UNIT_SPACES)
+        family = space[0].partition(".")[0]
+        layer = resolve_weight_targets(root, f"component:{family}.* & layers:{point.layer}", view=view)
+        layers.append([t for t in layer if getattr(structure.locate(t), "component", None) in space])
+    if len(kinds) > 1:
+        raise ValueError(f"The site {site!r} mixes attention heads and MLP neurons, which are different units")
+    return kinds == {True}, layers
+
+
+def _unit_request(name: str, units: Any, heads: bool) -> Any:
+    """``units`` as coordinates (a sorted list) or as a venngram unit set of whole heads (``{"heads": [...]}``, and
+    a per-head site's plain indices, which are heads)."""
+    from venngram.address import UnitSet
+    from venngram.errors import AddressError
+
+    if isinstance(units, Mapping) or heads:
+        raw = dict(units) if isinstance(units, Mapping) else {"heads": sorted({int(u) for u in units})}
+        if set(raw) == {"heads"} and not raw["heads"]:
+            raise ValueError(f"The unit adapter {name!r} selects no units")
+        try:
+            unit_set = UnitSet.parse(raw)
+        except AddressError as err:
+            raise ValueError(f"The unit adapter {name!r}: {err}") from err
+        if unit_set.heads is None:
+            raise ValueError(
+                f"The unit adapter {name!r}: its units are indices along the unit axis, or whole heads "
+                f"(`{{'heads': [2, 5]}}`), not {raw!r}"
+            )
+        return unit_set
+    chosen = sorted({int(u) for u in units})
+    if not chosen:
+        raise ValueError(f"The unit adapter {name!r} selects no units")
+    return chosen
+
+
+def _require_block(name: str, structure: Any, tensor: str) -> int:
+    """``tensor``'s recorded head block size, refused by name when its map row records none."""
+    block = _block_of(structure, tensor)
+    if block is None:
+        raise ValueError(f"The unit adapter {name!r}: `{tensor}` has no recorded head block size; {_HEAD_BLOCK_HELP}")
+    return block
+
+
+def _expand_heads(name: str, tensor: str, unit_set: Any, width: int, block: int) -> list[int]:
+    """The unit-axis coordinates of ``unit_set``'s heads on ``tensor``, whose unit axis is ``width`` long."""
+    from venngram.errors import AddressError
+
+    try:
+        return list(unit_set.for_layer(None, width, unit_block=block))
+    except AddressError as err:
+        raise ValueError(f"The unit adapter {name!r}: `{tensor}`: {err}") from err
+
+
+def _head_units(
+    name: str, root: nn.Module, structure: Any, tensors: Sequence[str], unit_set: Any, value_side: bool
+) -> dict[str, list[int]]:
+    """The coordinates a per-head site's heads are on each of one layer's attention tensors: the heads' blocks of
+    the output projection's inputs and, with ``value_side``, the blocks of the value heads they read, which under
+    grouped-query attention must be whole groups (a value head shared with an unselected head would move it
+    too)."""
+    by_component: dict[str, list[str]] = {}
+    for t in tensors:
+        by_component.setdefault(getattr(structure.locate(t), "component", None) or "", []).append(t)
+    o_weights = [t for t in by_component.get("attn.o", []) if _tensor(root, t).ndim == 2]
+    if len(o_weights) != 1:
+        raise ValueError(
+            f"The unit adapter {name!r}: one output projection weight per layer is needed, got {o_weights}"
+        )
+    (o_weight,) = o_weights
+    o_width = _tensor(root, o_weight).shape[_unit_dim(structure, o_weight, 2)]
+    o_block = _require_block(name, structure, o_weight)
+    out = {o_weight: _expand_heads(name, o_weight, unit_set, o_width, o_block)}
+    if not value_side:
+        return out
+    v_weights = [t for t in by_component.get("attn.v", []) if _tensor(root, t).ndim == 2]
+    v_block = _block_of(structure, v_weights[0]) if len(v_weights) == 1 else None
+    if v_block is None:
+        raise ValueError(
+            f"The unit adapter {name!r}: the heads' value side needs the layer's value projection with a recorded head "
+            f"block size ({_HEAD_BLOCK_HELP}; a fused QKV projection records none); pass `value_side=False` to tune "
+            f"only the output projection's blocks"
+        )
+    (v_weight,) = v_weights
+    v_width = _tensor(root, v_weight).shape[_unit_dim(structure, v_weight, 2)]
+    n_heads, n_kv = o_width // o_block, v_width // v_block
+    if n_heads % n_kv:
+        raise ValueError(
+            f"The unit adapter {name!r}: `{o_weight}`'s {n_heads} heads do not group evenly over `{v_weight}`'s {n_kv} "
+            "value heads"
+        )
+    group = n_heads // n_kv
+    heads = sorted({c // o_block for c in out[o_weight]})
+    for kv in sorted({h // group for h in heads}):
+        members = list(range(kv * group, (kv + 1) * group))
+        if missing := [h for h in members if h not in heads]:
+            raise ValueError(
+                f"The unit adapter {name!r}: value head {kv} of `{v_weight}` serves query heads {members}, and the "
+                f"selection lacks {missing}: tuning its rows would move those heads too. Select whole key/value groups "
+                f"({group} query heads each), or pass `value_side=False` to tune only the output projection's blocks"
+            )
+    kv_units = sorted({h // group for h in heads})
+    coords = [c for kv in kv_units for c in range(kv * v_block, (kv + 1) * v_block)]
+    for t in by_component.get("attn.v", []):
+        if _tensor(root, t).ndim == 2 or isinstance(_unit_dim_or_refusal(structure, t), int):
+            out[t] = coords
+    return out
+
+
+def _block_of(structure: Any, tensor: str) -> int | None:
+    unit_block = getattr(structure, "unit_block", None)
+    return unit_block(tensor) if unit_block is not None else None
 
 
 def attach_unit_adapter(
     root: nn.Module,
     target: Any,
-    units: Sequence[int],
+    units: Sequence[int] | Mapping[str, Any],
     *,
     name: str,
     view: Any | None = None,
     sets: Mapping[str, Any] | None = None,
+    rank: int | None = None,
+    alpha: float | None = None,
+    value_side: bool = True,
 ) -> list[WeightEditHandle]:
     r"""Tune only the selected units of the tensors ``target`` addresses, through a unit adapter on each (#868).
 
@@ -532,56 +766,209 @@ def attach_unit_adapter(
     weight decay and optimizer state moving the other units. Attach it before the module's tunable view is built, as
     an intervention is, so the view declares the role.
 
+    With ``rank``, each matrix's delta is factored as LoRA factors it, but over the selected slices only:
+    :math:`\Delta_S = \tfrac{\alpha}{r} B A`, with :math:`B` (one row per selected unit, zero at first) and
+    :math:`A` (one column per entry of a slice) the trainable operands, both taking the adapter's role. Full slices hold
+    :math:`|S| k` entries and the factors :math:`r (|S| + k)`, so a rank at or above :math:`|S| k / (|S| + k)` saves
+    nothing and is refused, naming that bound. A 1-D tensor (a bias) has nothing to factor and keeps its full delta.
+
     Args:
         root: The module the target resolves under (an interpretune module is its view's root).
         target: A venngram address of the tensors (``component:mlp.out & layers:1 & leaf:weight``), a reference to one
             of ``sets``, or a tensor's own name. Or a site address (``point:mlp.out.hook_in & layers:12``), whose units
             are projected onto the parameter slices they are: neuron :math:`n` of the MLP's hidden layer is column
             :math:`n` of the down projection and row :math:`n` of the up and gate projections (and their biases'
-            entry :math:`n`), at each layer the site selects (:data:`SITE_UNIT_SPACES`). Its units are the ``units``
-            argument, never part of the address.
-        units: The units to tune, along each tensor's unit axis, which the view's component map records (``layout``).
+            entry :math:`n`), at each layer the site selects (:data:`SITE_UNIT_SPACES`). At an attention site
+            (``point:attn.hook_z & layers:12``) the units are heads: head :math:`h` is the block of columns
+            :math:`[h d_{head}, (h+1) d_{head})` of the output projection and, with ``value_side``, the rows (and bias
+            entries) of the value head it reads. Its units are the ``units`` argument, never part of the address.
+        units: The units to tune, along each tensor's unit axis, which the view's component map records (``layout``):
+            coordinates, which may cross head boundaries, or whole heads, ``{"heads": [2, 5]}``, each a block of the
+            map row's ``unit_block`` coordinates (component map schema 6). At an attention site plain indices are
+            heads.
         name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
         view: The view addresses and unit axes resolve through; ``root``'s attached view, else its default view.
         sets: Named sets a reference in the target resolves against.
+        rank: The rank :math:`r` of a low-rank delta over the selected slices; None (the default) for the full delta.
+        alpha: The low-rank delta's scale numerator, :math:`\alpha / r`; :math:`r` by default (a scale of 1). Only with
+            ``rank``.
+        value_side: At an attention site, also tune the value projection's blocks of the selected heads (the
+            default). Under grouped-query attention a value head serves a group of query heads, so the selection
+            must cover whole groups; ``False`` tunes only the output projection's blocks, for any heads.
 
     Returns:
         A :class:`WeightEditHandle` per tensor; ``remove()`` restores each tensor exactly.
 
     Raises:
-        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, or a unit is
-            outside a tensor's units. Nothing is attached when any tensor is refused.
+        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, a unit is
+            outside a tensor's units, whole heads are asked of a tensor whose map row records no ``unit_block``, an
+            attention site's value side is asked for partial key/value groups or without a value projection that
+            records its head block size, ``rank`` or ``alpha`` is not a positive number (or ``alpha`` comes without
+            ``rank``), or a rank saves nothing over a tensor's full delta. Nothing is attached when any tensor is
+            refused.
     """
     _require_venngram()
     _check_role(name, "adapter")
+    low_rank = _low_rank(name, rank, alpha)
     if isinstance(target, Mapping) and "units" in target or isinstance(target, str) and "units:" in target:
         raise ValueError("A unit adapter's units are its `units` argument, not part of the target address")
-    chosen = sorted({int(u) for u in units})
-    if not chosen:
-        raise ValueError(f"The unit adapter {name!r} selects no units")
     resolved = _view(root, view)
     structure = resolved.structure() if hasattr(resolved, "structure") else None
     from venngram.address import is_address
 
     site = target if isinstance(target, str) and is_address(target) and "point:" in target else None
-    tensors = (
-        _site_unit_tensors(root, site, resolved, structure)
-        if site is not None
-        else resolve_weight_targets(root, target, sets=sets, view=resolved)
-    )
+    if site is not None:
+        per_head, layers = _site_unit_tensors(root, site, resolved, structure)
+    else:
+        per_head, layers = False, [resolve_weight_targets(root, target, sets=sets, view=resolved)]
+    if not value_side and not per_head:
+        raise ValueError(f"The unit adapter {name!r}: `value_side` applies to an attention site's heads only")
+    request = _unit_request(name, units, per_head)
+    if site is not None and not per_head and not isinstance(request, list):
+        raise ValueError(f"The unit adapter {name!r}: whole heads are attention units; the site {site!r} has neurons")
+    coords: dict[str, list[int]] = {}
+    for tensors in layers:
+        if per_head:
+            coords |= _head_units(name, root, structure, tensors, request, value_side)
+            continue
+        for tensor in tensors:
+            w = _tensor(root, tensor)
+            if site is not None and w.ndim == 1 and not isinstance(_unit_dim_or_refusal(structure, tensor), int):
+                continue  # a bias on the other side of the unit space (the down projection's) carries no hidden unit
+            width = w.shape[_unit_dim(structure, tensor, w.ndim)]
+            coords[tensor] = (
+                request
+                if isinstance(request, list)
+                else _expand_heads(name, tensor, request, width, _require_block(name, structure, tensor))
+            )
     plans = []
-    for tensor in tensors:
+    for tensor, chosen in coords.items():
         w = _tensor(root, tensor)
-        if site is not None and w.ndim == 1 and not isinstance(_unit_dim_or_refusal(structure, tensor), int):
-            continue  # a bias on the other side of the unit space (the down projection's) carries no hidden unit
         dim = _unit_dim(structure, tensor, w.ndim)
         if chosen[-1] >= w.shape[dim] or chosen[0] < 0:
             raise ValueError(f"The unit adapter {name!r}: `{tensor}` has {w.shape[dim]} units along its unit axis")
         shape = list(w.shape)
         shape[dim] = len(chosen)
-        plans.append((tensor, dim, shape))
+        if low_rank is not None and w.ndim > 1:
+            _check_crossover(name, tensor, shape, dim, low_rank[0])
+        plans.append((tensor, dim, chosen, shape, low_rank if w.ndim > 1 else None))
     _warn_if_viewed(root, "adapter")
-    return [_register(root, tensor, _UnitDelta(name, dim, chosen, shape), True) for tensor, dim, shape in plans]
+    return [
+        _register(
+            root,
+            tensor,
+            _UnitDelta(name, dim, chosen, shape)
+            if factors is None
+            else _UnitLowRank(name, dim, chosen, shape, *factors),
+            True,
+        )
+        for tensor, dim, chosen, shape, factors in plans
+    ]
+
+
+def attach_feature_adapter(
+    root: nn.Module,
+    catalog: Any,
+    target: Any,
+    *,
+    name: str,
+    n_layers: int,
+    axes: Mapping[str, int] | None = None,
+    sets: Mapping[str, Any] | None = None,
+) -> list[WeightEditHandle]:
+    r"""Tune only the selected feature blocks of an attached latent model, through a unit adapter on each of its
+    tensors (#868).
+
+    ``target`` is a feature address (``features:bsf & layers:4 & units:[2, 5]``), resolved through ``catalog`` (an
+    :class:`~interpretune.analysis.venngram.latents.LatentCatalog`, #865) to whole feature blocks, so a block-sparse
+    featurizer's feature and an SAE's latent use one grammar. Block :math:`b` of a model whose blocks hold :math:`s`
+    latent coordinates is coordinates :math:`bs` to :math:`bs + s - 1`. Each tensor of the latent model with a latent
+    axis (the encoder's rows and bias, the decoder's rows) takes a trainable delta over those coordinates' slices,
+    as :func:`attach_unit_adapter` gives a base-model tensor, :math:`W = W_0 + \Delta`, zero at first. A tensor with no
+    latent axis (the decoder's bias) is left as it is. The deltas take the role ``adapter:<name>``, so a schedule thaws
+    them by role while the rest of the latent model keeps its own role: a frozen (``artifact``) featurizer can be
+    tuned at a few blocks only.
+
+    Args:
+        root: The module the latent model is registered under
+            (:func:`~interpretune.tuning.latents.attach_latent_model`), so the adapter is in its state, view and
+            optimizer.
+        catalog: The latent catalog the address resolves through; each selected model's binding gives the loaded
+            model and its block size.
+        target: A feature address, or a reference to one of ``sets``. A named subspace is refused: it is a span, not a
+            set of coordinates.
+        name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
+        n_layers: The model's depth, which per-layer unit sets and negative layers resolve against.
+        axes: The tensors to adapt, each with its latent axis, by its name under the latent model
+            (``{"W_enc": 1, "W_dec": 0, "b_enc": 0}``); the rest are left as they are. Without it, each tensor with
+            one axis as long as the latent width is adapted along it, and a tensor with several such axes (a
+            featurizer as wide as its site) is refused, naming it.
+        sets: Named sets a reference in the target resolves against.
+
+    Returns:
+        A :class:`WeightEditHandle` per adapted tensor; ``remove()`` restores each tensor exactly.
+
+    Raises:
+        ValueError: If the address selects a subspace, a selected model is not registered under ``root``, a tensor's
+            latent axis is ambiguous or out of range, or no tensor of a model has a latent axis. Nothing is attached
+            when any tensor is refused.
+    """
+    _require_venngram()
+    _check_role(name, "adapter")
+    selection = catalog.resolve(target, n_layers=n_layers, sets=sets)
+    blocks: dict[int, tuple[Any, list[int]]] = {}
+    for selected in selection.targets:
+        if selected.kind != "feature":
+            raise ValueError(
+                f"The feature adapter {name!r}: `{target}` selects the subspace {selected.name!r}, a span with no "
+                "coordinates to adapt; select feature blocks"
+            )
+        binding = catalog.binding(selected)
+        blocks.setdefault(id(binding), (binding, []))[1].append(selected.unit)
+    paths = {id(module): path for path, module in root.named_modules()}
+    plans = []
+    for binding, units in blocks.values():
+        if (path := paths.get(id(binding.model))) is None or not path:
+            raise ValueError(
+                f"The feature adapter {name!r}: latent model {binding.name!r} is not registered under "
+                f"{type(root).__name__}; attach it (`attach_latent_model`) before adapting its blocks"
+            )
+        size, width = binding.block_size, binding.decoder_rows.shape[0]
+        coords = sorted(c for u in units for c in range(u * size, (u + 1) * size))
+        found = []
+        held = _held_names(binding.model)
+        if axes is not None and (unknown := sorted(set(axes) - set(held))):
+            raise ValueError(f"The feature adapter {name!r}: latent model {binding.name!r} has no tensor {unknown}")
+        for leaf in held if axes is None else [n for n in held if n in axes]:
+            w = _tensor(binding.model, leaf)
+            if axes is not None:
+                dim = axes[leaf]
+                if not 0 <= dim < w.ndim or w.shape[dim] != width:
+                    raise ValueError(
+                        f"The feature adapter {name!r}: `{path}.{leaf}` has no latent axis {dim} of width {width} "
+                        f"(its shape is {list(w.shape)})"
+                    )
+            else:
+                matches = [d for d, n in enumerate(w.shape) if n == width]
+                if not matches:
+                    continue  # no latent axis: the decoder's bias, at the site's width
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"The feature adapter {name!r}: `{path}.{leaf}` has several axes of the latent width {width} "
+                        f"(its shape is {list(w.shape)}); give its latent axis in `axes`"
+                    )
+                (dim,) = matches
+            shape = list(w.shape)
+            shape[dim] = len(coords)
+            found.append((f"{path}.{leaf}", dim, coords, shape))
+        if not found:
+            raise ValueError(
+                f"The feature adapter {name!r}: no tensor of latent model {binding.name!r} has an axis of its latent "
+                f"width {width}"
+            )
+        plans.extend(found)
+    _warn_if_viewed(root, "adapter")
+    return [_register(root, tensor, _UnitDelta(name, dim, coords, shape), True) for tensor, dim, coords, shape in plans]
 
 
 def _tensors_of(root: nn.Module, recipe: Any, op: Any, view: Any) -> list[str]:
@@ -727,6 +1114,139 @@ def bias_patch(weight: torch.Tensor, units: Mapping[int, float], *, dim: int = 1
 #: its weight, in venngram's vocabulary), at token scope ``all``.
 WEIGHT_FORM_SITE = "mlp.out.hook_in"
 
+#: The activation site whose whole-activation ``reject`` and ``project`` have an exact weight form: the output of
+#: ``mlp.out`` (the span is removed from, or kept in, the output side of its weight and its bias), at token scope
+#: ``all``. A whole-activation op names its layer in its stage's site, ``blocks.<layer>.mlp.out.hook_out``.
+WEIGHT_FORM_OUT_SITE = "mlp.out.hook_out"
+
+
+def _as_recipe(recipe: Any) -> Any:
+    if hasattr(recipe, "stages"):
+        return recipe
+    from interpretune.analysis.venngram import load_recipe
+
+    return load_recipe(recipe).recipe
+
+
+@dataclass
+class _LayerForm:
+    """One layer's weight form: the affine map the unit ops at ``mlp.out``'s input compose into (its unit scales
+    and unit shifts), then the spans removed from or kept in ``mlp.out``'s output, in order."""
+
+    scale: dict[int, float]
+    shift: dict[int, float]
+    spans: list[tuple[str, torch.Tensor, float]]
+
+
+def _out_stage_spans(recipe: Any, i: int, stage: Any) -> tuple[int, list[tuple[str, torch.Tensor, float]]]:
+    """A stage at ``mlp.out``'s output as its layer and its spans (op, basis, fraction); anything else there with
+    no exact weight form is refused (see :func:`weight_form`)."""
+    from interpretune.analysis.venngram.apply import split_site
+
+    layer, site = split_site(stage.site)
+    if layer is None:
+        raise ValueError(
+            f"stage {i} ({stage.site}) names no layer: write a whole-activation op's site as "
+            f"`blocks.<layer>.{WEIGHT_FORM_OUT_SITE}`"
+        )
+    spans = []
+    for j, op in enumerate(stage.ops):
+        if op.op not in ("reject", "project") or op.target is not None or op.operand is None:
+            raise ValueError(
+                f"stage {i} op {j} (`{op.op}`) has no exact weight form: only a whole-activation `reject` or "
+                f"`project` with a basis operand does at `{WEIGHT_FORM_OUT_SITE}`"
+            )
+        values, shape = recipe.operands[op.operand].load(recipe.base_dir or ".")
+        basis = torch.tensor(values, dtype=torch.float32).reshape(shape)
+        spans.append((op.op, basis, float(op.params.get("fraction", 1.0))))
+    return layer, spans
+
+
+def _weight_form_by_layer(recipe: Any) -> dict[int, _LayerForm]:
+    """A recipe's ops with an exact weight form, by layer: unit ops at ``mlp.out``'s input composed into the affine
+    map they apply, and whole-activation spans at its output; anything else is refused (see
+    :func:`weight_form`)."""
+    # The ops on mlp.out's input compose, in order, into one affine map per layer, x -> s * x + a (a later scale also
+    # scales an earlier add), and W (s * x + a) + b = (W diag(s)) x + (W a + b): a scale of W's units and a bias patch
+    # taken from the unedited W. A span op at the output acts on that result, y -> y - f P y (reject) or y -> f P y
+    # (project), so it applies to the edited weight and bias alike: (I - f P) (W diag(s)) x + (I - f P) (W a + b).
+    forms: dict[int, _LayerForm] = {}
+    for i, stage in enumerate(recipe.stages):
+        at_out = stage.site == WEIGHT_FORM_OUT_SITE or stage.site.endswith(f".{WEIGHT_FORM_OUT_SITE}")
+        if stage.tokens.kind != "all" or not (stage.site == WEIGHT_FORM_SITE or at_out):
+            raise ValueError(
+                f"stage {i} ({stage.site}, tokens `{stage.tokens.kind}`) has no exact weight form: only unit ops at "
+                f"`{WEIGHT_FORM_SITE}` and spans at `{WEIGHT_FORM_OUT_SITE}` at token scope `all` do"
+            )
+        if at_out:
+            layer, spans = _out_stage_spans(recipe, i, stage)
+            forms.setdefault(layer, _LayerForm({}, {}, [])).spans.extend(spans)
+            continue
+        for j, op in enumerate(stage.ops):
+            if op.op not in ("scale", "add") or op.target_kind(recipe.book) != "units" or op.operand is not None:
+                raise ValueError(
+                    f"stage {i} op {j} (`{op.op}`) has no exact weight form: only a unit `scale` or `add` "
+                    f"with a dose does at `{WEIGHT_FORM_SITE}`"
+                )
+            for (layer, unit), dose in op.unit_doses(recipe.book).items():
+                form = forms.setdefault(layer, _LayerForm({}, {}, []))
+                if op.op == "scale":
+                    form.scale[unit] = form.scale.get(unit, 1.0) * dose
+                    if unit in form.shift:
+                        form.shift[unit] *= dose
+                else:
+                    form.shift[unit] = form.shift.get(unit, 0.0) + dose
+    return forms
+
+
+def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = None) -> dict[str, int]:
+    """The width of each site a recipe's weight form acts at, as
+    :func:`~interpretune.analysis.venngram.recipe_interventions` takes it for the recipe's activation form: the
+    size of ``mlp.out``'s weight along its unit axis (for unit ops at its input) and along its output side (for
+    spans at its output), at the layers the recipe edits.
+
+    The width is read from the checkpoint through the view, rather than from a model configuration, so the activation
+    form is built against the same units the weight form edits.
+
+    Args:
+        root: The module the targets resolve under.
+        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
+            its default view (venngram's registry map for the model it carries).
+
+    Returns:
+        ``{WEIGHT_FORM_SITE: width}`` when the recipe has unit ops at ``mlp.out``'s input, and
+        ``{WEIGHT_FORM_OUT_SITE: width}`` when it has spans at its output.
+
+    Raises:
+        ValueError: For a recipe with no exact weight form (the reasons :func:`weight_form` gives), a view whose
+            structure gives ``mlp.out``'s weight no unit axis where the recipe edits its units, or layers whose
+            ``mlp.out`` widths differ (an activation payload takes one width per site).
+    """
+    recipe = _as_recipe(recipe)
+    bound = _unit_view(root, view)
+    structure = _structure(bound)
+    widths: dict[str, dict[int, int]] = {}
+    for layer, form in sorted(_weight_form_by_layer(recipe).items()):
+        (weight,) = resolve_weight_targets(
+            root, {"component": "mlp.out", "layers": [layer], "leaf": "weight"}, view=bound
+        )
+        w = _tensor(root, weight)
+        if form.scale or form.shift:
+            widths.setdefault(WEIGHT_FORM_SITE, {})[layer] = int(w.shape[_unit_dim(structure, weight, w.ndim)])
+        for _, basis, _ in form.spans:
+            dim = _out_dim(structure, weight, w, basis.shape[-1])
+            widths.setdefault(WEIGHT_FORM_OUT_SITE, {})[layer] = int(w.shape[dim])
+    for site, by_layer in widths.items():
+        if len(set(by_layer.values())) > 1:
+            raise ValueError(f"`{site}`'s width differs across the recipe's layers ({by_layer}), so no one site width")
+    if not widths:
+        raise ValueError(
+            f"recipe {recipe.name!r} edits nothing at `{WEIGHT_FORM_SITE}` or `{WEIGHT_FORM_OUT_SITE}`, so it has no "
+            "site width"
+        )
+    return {site: next(iter(by_layer.values())) for site, by_layer in widths.items()}
+
 
 def weight_form(
     root: nn.Module,
@@ -737,80 +1257,71 @@ def weight_form(
     view: Any | None = None,
 ) -> list[WeightEditHandle]:
     """Materialize a recipe's activation stages as the weight edits they equal, at token scope ``all``: a unit
-    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, and a unit ``add`` as the bias patch
-    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`).
+    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, a unit ``add`` as the bias patch.
 
-    This is the weight form of a per-neuron recipe (neuronary's, for example), so it can be exported or compared with
-    the hooked form (:func:`check_weight_equivalence`).
+    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`), and a whole-activation ``reject`` (``project``) of a span
+    at its output as the same edit of the output side of its weight and of its bias, :math:`(I - f P) W` and
+    :math:`(I - f P) b` (:math:`f P W` and :math:`f P b`) with :math:`P = V V^{+}`.
+
+    This is the weight form of a per-neuron recipe (neuronary's, for example) or of an output rejection, so it can be
+    exported or compared with the hooked form (:func:`check_weight_equivalence`).
 
     Args:
         root: The module the targets resolve under.
         recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
         role: Every edit's operand role (see :func:`apply_weight_patch`).
-        name: The edits' name stem (``<name>-<layer>-scale`` and ``<name>-<layer>-shift``); the recipe's name by
+        name: The edits' name stem (``<name>-<layer>-scale``, ``<name>-<layer>-shift``, and
+            ``<name>-<layer>-<op><k>`` and ``<name>-<layer>-<op><k>-bias`` for the ``k``-th span); the recipe's name by
             default.
-        view: The view addresses resolve through; ``root``'s attached view, else its default view.
+        view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
+            its default view (venngram's registry map for the model it carries).
 
     Returns:
-        One :class:`WeightEditHandle` per edited tensor (each layer's weight, then its bias), in application order.
+        One :class:`WeightEditHandle` per edit, in application order: per layer, the unit scale of its weight, the
+        bias patch, then each span on its weight and on its bias.
 
     Raises:
-        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op other than a
-            unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, or an ``add`` at a layer whose ``mlp.out`` has
-            no bias. Edits applied before the failing one are taken back.
+        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op at
+            ``mlp.out``'s input other than a unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, an op at its
+            output other than a whole-activation ``reject`` or ``project`` with a basis operand, a span stage naming no
+            layer, or an ``add`` at a layer whose ``mlp.out`` has no bias. Edits applied before the failing one are
+            taken back.
     """
-    if not hasattr(recipe, "stages"):
-        from interpretune.analysis.venngram import load_recipe
-
-        recipe = load_recipe(recipe).recipe
+    recipe = _as_recipe(recipe)
     stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
-    bound = _view(root, view)
-    structure = bound.structure()
+    bound = _unit_view(root, view)
+    structure = _structure(bound)
     _check_role(f"{stem}-0", role)
-    # The ops on mlp.out's input compose, in order, into one affine map per layer, x -> s * x + a (a later scale also
-    # scales an earlier add), and W (s * x + a) + b = (W diag(s)) x + (W a + b): a scale of W's units and a bias patch
-    # taken from the unedited W.
-    affine: dict[int, tuple[dict[int, float], dict[int, float]]] = {}
-    for i, stage in enumerate(recipe.stages):
-        if stage.site != WEIGHT_FORM_SITE or stage.tokens.kind != "all":
-            raise ValueError(
-                f"stage {i} ({stage.site}, tokens `{stage.tokens.kind}`) has no exact weight form: only "
-                f"unit ops at `{WEIGHT_FORM_SITE}` at token scope `all` do"
-            )
-        for j, op in enumerate(stage.ops):
-            if op.op not in ("scale", "add") or op.target_kind(recipe.book) != "units" or op.operand is not None:
-                raise ValueError(
-                    f"stage {i} op {j} (`{op.op}`) has no exact weight form: only a unit `scale` or `add` "
-                    "with a dose does"
-                )
-            for (layer, unit), dose in op.unit_doses(recipe.book).items():
-                scale, shift = affine.setdefault(layer, ({}, {}))
-                if op.op == "scale":
-                    scale[unit] = scale.get(unit, 1.0) * dose
-                    if unit in shift:
-                        shift[unit] *= dose
-                else:
-                    shift[unit] = shift.get(unit, 0.0) + dose
+    forms = _weight_form_by_layer(recipe)
     handles: list[WeightEditHandle] = []
     try:
-        for layer, (scale, shift) in sorted(affine.items()):
+        for layer, form in sorted(forms.items()):
             at = {"component": "mlp.out", "layers": [layer]}
             (weight,) = resolve_weight_targets(root, {**at, "leaf": "weight"}, view=bound)
             bias = resolve_weight_targets(root, {**at, "leaf": "bias", "optional": True}, view=bound)
-            if shift and not bias:
+            if form.shift and not bias:
                 raise ValueError(
                     f"`mlp.out` at layer {layer} has no bias, so an `add` to its input has no weight form there"
                 )
             w = _tensor(root, weight).detach().clone()
-            dim = _unit_dim(structure, weight, w.ndim)
-            if scale:
-                edit: WeightEdit = _Units(
-                    f"{stem}-{layer}-scale", role, "scale", dim, tuple(scale), tuple(scale.values())
-                )
-                handles.append(_register(root, weight, edit, True))
-            if shift:
-                patch = bias_patch(w, shift, dim=dim)
-                handles.append(_register(root, bias[0], _Vector(f"{stem}-{layer}-shift", role, "add", patch), True))
+            if form.scale or form.shift:
+                dim = _unit_dim(structure, weight, w.ndim)
+                if form.scale:
+                    edit: WeightEdit = _Units(
+                        f"{stem}-{layer}-scale", role, "scale", dim, tuple(form.scale), tuple(form.scale.values())
+                    )
+                    handles.append(_register(root, weight, edit, True))
+                if form.shift:
+                    patch = bias_patch(w, form.shift, dim=dim)
+                    shift = _Vector(f"{stem}-{layer}-shift", role, "add", patch)
+                    handles.append(_register(root, bias[0], shift, True))
+            for k, (op, basis, fraction) in enumerate(form.spans):
+                out = _out_dim(structure, weight, w, basis.shape[-1])
+                span = _Span(f"{stem}-{layer}-{op}{k}", role, op, basis, fraction, out)
+                handles.append(_register(root, weight, span, True))
+                if bias:
+                    span = _Span(f"{stem}-{layer}-{op}{k}-bias", role, op, basis, fraction, 0)
+                    handles.append(_register(root, bias[0], span, True))
     except Exception:
         for handle in reversed(handles):
             handle.remove()
@@ -877,12 +1388,14 @@ def check_weight_equivalence(
 __all__ = [
     "EDIT_ROLES",
     "EquivalenceResult",
+    "HEAD_UNIT_SPACES",
     "SITE_UNIT_SPACES",
     "WEIGHT_OPS",
     "WeightEdit",
     "WeightEditHandle",
     "apply_recipe_weights",
     "apply_weight_patch",
+    "attach_feature_adapter",
     "attach_unit_adapter",
     "bias_patch",
     "check_weight_equivalence",
@@ -890,4 +1403,5 @@ __all__ = [
     "WEIGHT_FORM_SITE",
     "weight_edit_roles",
     "weight_form",
+    "weight_form_site_widths",
 ]

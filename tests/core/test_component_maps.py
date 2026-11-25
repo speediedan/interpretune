@@ -412,7 +412,9 @@ class TestEverySupportedArchitectureIsServed:
         from venngram.maps.schema import ComponentMapDeprecationWarning
 
         path = tmp_path / "retired.yaml"
-        path.write_text(yaml.safe_dump(_doc(architecture="RetiredToyModel", deprecated_since="0.9.0")))
+        path.write_text(
+            yaml.safe_dump(_doc(architecture="RetiredToyModel", deprecated_since="0.9.0")), encoding="utf-8"
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ComponentMapDeprecationWarning)
             register(load_component_map(path))
@@ -487,6 +489,8 @@ _GATED_DELTA_NET = {
 EXPECTED_WITHOUT_TL_COUNTERPART = {
     "GPT2LMHeadModel": set(),
     "LlamaForCausalLM": set(),
+    "MistralForCausalLM": set(),
+    "Qwen3ForCausalLM": set(),
     "Gemma2ForCausalLM": set(),
     "Gemma3ForCausalLM": set(),
     "Gemma3ForConditionalGeneration": {

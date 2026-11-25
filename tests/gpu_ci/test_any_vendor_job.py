@@ -27,7 +27,7 @@ DIGEST = re.compile(r"^speediedan/interpretune:[\w.-]+@sha256:[0-9a-f]{64}$")
 
 
 def _load(name: str) -> dict:
-    return yaml.safe_load((PIPELINES / name).read_text())
+    return yaml.safe_load((PIPELINES / name).read_text(encoding="utf-8"))
 
 
 def _template_use(pipeline: dict) -> dict:
@@ -41,7 +41,7 @@ def _steps(params: dict) -> list[dict]:
     steps = []
     for step in params["steps"]:
         if "template" in step:
-            steps.extend(yaml.safe_load((PIPELINES / step["template"]).read_text())["steps"])
+            steps.extend(yaml.safe_load((PIPELINES / step["template"]).read_text(encoding="utf-8"))["steps"])
         else:
             steps.append(step)
     return steps
@@ -52,7 +52,7 @@ class TestCtr:
     @staticmethod
     def _run(tmp_path: Path, **env):
         fake = tmp_path / "docker"
-        fake.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+        fake.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n', encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         base = {k: v for k, v in os.environ.items() if not k.startswith("IT_")}
         full = {**base, "PATH": f"{tmp_path}:{os.environ['PATH']}", **env}
@@ -97,7 +97,7 @@ def test_both_pipelines_pin_the_same_images_by_digest():
 
 
 def _shared_use() -> dict:
-    (job,) = yaml.safe_load(WRAPPER.read_text())["jobs"]
+    (job,) = yaml.safe_load(WRAPPER.read_text(encoding="utf-8"))["jobs"]
     assert job["template"] == "templates/gpu-job.yml@ci"
     return job["parameters"]
 
@@ -131,8 +131,8 @@ def test_the_shared_template_sets_the_variables_the_step_scripts_read():
     # IT_CTR (ctr.sh), IT_GPU_ONE_STAGE (gpu_stage_lease.sh, set on an AMD agent, whose identical cards make
     # placement moot) and IT_PHASES_COLLECTED (the evidence publish condition) are named by this prefix
     assert shared["variablePrefix"] == "IT"
-    assert "IT_GPU_ONE_STAGE" in (PIPELINES / "scripts" / "gpu_stage_lease.sh").read_text()
-    assert "IT_PHASES_COLLECTED" in (PIPELINES / "scripts" / "gpu_job_container.sh").read_text()
+    assert "IT_GPU_ONE_STAGE" in (PIPELINES / "scripts" / "gpu_stage_lease.sh").read_text(encoding="utf-8")
+    assert "IT_PHASES_COLLECTED" in (PIPELINES / "scripts" / "gpu_job_container.sh").read_text(encoding="utf-8")
     # the wrapper's own commands run in the container too, and the cleanup releases every stage's lease
     for step in shared["steps"]:
         if "bash" in step:
@@ -145,9 +145,15 @@ def test_every_gpu_phase_runs_while_its_stage_holds_its_lease():
     """One phase's failure must not hide the others (it once hid standalone and profiling on the AMD agent)."""
     steps = _steps(_template_use(_load("gpu-tests.yml")))
     phases = [s for s in steps if s["displayName"].startswith("Testing: ") and "extended" not in s["displayName"]]
-    assert len(phases) == 6
+    assert len(phases) == 9
     for step in phases:
-        held = "IT_GPU_LARGE_HELD" if "(large)" in step["displayName"] else "IT_GPU_LEASE_HELD"
+        held = (
+            "IT_GPU_LARGE_HELD"
+            if "(large)" in step["displayName"]
+            else "IT_GPU_MULTI_HELD"
+            if "(multi)" in step["displayName"]
+            else "IT_GPU_LEASE_HELD"
+        )
         assert step["condition"].startswith("and(succeededOrFailed(),") and held in step["condition"], step
 
 
@@ -190,6 +196,6 @@ def test_release_pipeline_demands_each_vendor_and_checks_both():
 def test_the_gpu_epsilon_pin_is_one_commit_url():
     """The release job reads the checker's commit from this file's one requirement line, so it keeps the ``gpu-
     epsilon @ git+<url>@<commit>`` form (#877)."""
-    text = (ROOT / "requirements" / "ci" / "gpu_epsilon.txt").read_text()
+    text = (ROOT / "requirements" / "ci" / "gpu_epsilon.txt").read_text(encoding="utf-8")
     (line,) = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
     assert re.fullmatch(r"gpu-epsilon @ git\+https://\S+@[0-9a-f]{40}", line)

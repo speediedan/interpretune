@@ -8,10 +8,15 @@ transcoders, whichever backend it runs over:
 - **Transcoders start as `artifact`.** Every transcoder tensor is a published artifact: never thawed, optimized or
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
   `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
-  that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
+  that drift after fine-tuning ([interpretune#709](https://github.com/interpretune/interpretune/issues/709)) works this way.
+- **Transcoders locate at their layer.** Each per-layer transcoder's tensors (its low-rank corrections included) sit at
+  the layer whose MLP it replaces, so a promotion or a phase names a layer range by address:
+  `promote: {"role:artifact & layers:-4:": "latent:transcoder"}` promotes the top four layers' transcoders, and
+  `role:latent:transcoder & layers:-4:` thaws them. A cross-layer transcoder holds every layer in each tensor, so its
+  tensors locate at no layer and a layer range is refused; promote it whole, by role.
 - **The base model is refused.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
-  path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).
+  path ([interpretune#813](https://github.com/interpretune/interpretune/issues/813)).
 - **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
   meta device and reloads it with `load_state_dict(assign=True)`, and by default both steps replace its parameter
   objects, which an optimizer built before an attribution would not see. The composition attributes under torch's
@@ -54,7 +59,7 @@ three rules of its own:
 - **Attribution sees the intervention and never trains it.** An attached intervention runs in every forward pass
   circuit-tracer makes, so a graph attributes the intervened model. Attribution runs with every thawed tensor frozen,
   the module's own included, so attribution's backward passes never reach an intervention's or latent model's
-  `.grad`. As with base tuning ([#813](https://github.com/speediedan/interpretune/issues/813)), a thawed intervention
+  `.grad`. As with base tuning ([#813](https://github.com/interpretune/interpretune/issues/813)), a thawed intervention
   changes what the transcoders read: the graph stays complete, since error nodes absorb what the transcoders no longer
   reconstruct, and the cost is interpretability. Attributing with any tensor outside the transcoders thawed warns,
   suggesting a fit measurement (below).
@@ -79,6 +84,6 @@ Without a rank, lazily loaded weights are left out of the view, and building the
 `interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter` measures how well a set of transcoders still fits a
 model's MLPs, per layer, over chunks of MLP inputs and outputs: the fraction of variance unexplained, the mean number
 of active features per position ($L_0$), and the counts of dead and dense features. These are the measures
-[interpretune#709](https://github.com/speediedan/interpretune/issues/709) reads before and after fine-tuning.
+[interpretune#709](https://github.com/interpretune/interpretune/issues/709) reads before and after fine-tuning.
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/interpretune/interpretune/issues/812).

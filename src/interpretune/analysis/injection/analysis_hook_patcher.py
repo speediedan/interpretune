@@ -15,6 +15,9 @@ import logging
 
 from .config_parser import FileHook
 
+# the opening of a triple-quoted string, with any string prefix Python accepts before it (r, u, b, f and their pairs)
+_DOCSTRING_OPEN = re.compile(r'^(?:[rRuUbBfF]{1,2})?("""|\'\'\')')
+
 
 class HookRegistry:
     """Global registry for managing analysis hook functions."""
@@ -108,7 +111,7 @@ def find_line_by_regex(file_path: Path, regex_pattern: str) -> int | None:
         Line number (0-indexed) if found, None otherwise
     """
     pattern = re.compile(regex_pattern)
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         for line_num, line in enumerate(f):
             if pattern.search(line):
                 # Debug: log match location
@@ -142,7 +145,7 @@ def patch_file_with_hooks(
         Path to patched file
     """
     # Read original file
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Find line numbers for each hook
@@ -197,11 +200,14 @@ def patch_file_with_hooks(
                 multiline_delimiter = None
             continue
 
-        # Check for start of multi-line string (docstring)
-        if stripped.startswith(('"""', "'''")):
-            delimiter = '"""' if stripped.startswith('"""') else "'''"
+        # Check for start of multi-line string (docstring). A docstring may carry a string prefix (``r"""`` for one
+        # holding LaTeX backslashes): missing it reads the docstring as the first statement, which puts the import
+        # above a following ``from __future__`` import and makes the patched module a SyntaxError.
+        docstring_open = _DOCSTRING_OPEN.match(stripped)
+        if docstring_open:
+            delimiter = docstring_open.group(1)
             # Check if it's a single-line docstring (starts and ends on same line)
-            if stripped.count(delimiter) >= 2:
+            if stripped[docstring_open.start(1) :].count(delimiter) >= 2:
                 # Single-line docstring, continue to next line
                 continue
             else:
@@ -242,12 +248,12 @@ def patch_file_with_hooks(
 
     # Write patched file
     if output_path is None:
-        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
         output_path = Path(temp_file.name)
         temp_file.writelines(lines)
         temp_file.close()
     else:
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
     return output_path
@@ -412,7 +418,7 @@ def count_regex_matches(file_path: Path, regex_pattern: str) -> int:
     """
     pattern = re.compile(regex_pattern)
     matches = 0
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         for line in f:
             if pattern.search(line):
                 matches += 1
@@ -487,7 +493,7 @@ def get_module_debug_info(module_name: str) -> dict[str, Any]:
 
         # Check source code
         try:
-            with open(module.__file__) as f:
+            with open(module.__file__, encoding="utf-8") as f:
                 source = f.read()
                 info["hook_call_count"] = source.count("HOOK_REGISTRY.execute")
                 info["has_analysis_import"] = "from interpretune.analysis.injection" in source

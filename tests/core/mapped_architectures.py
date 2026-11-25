@@ -14,6 +14,8 @@ import pytest
 EXPECTED_RMSNORM_OFFSET = {
     "GPT2LMHeadModel": False,
     "LlamaForCausalLM": False,
+    "MistralForCausalLM": False,
+    "Qwen3ForCausalLM": False,
     "Gemma2ForCausalLM": True,
     "Gemma3ForCausalLM": True,
     "Gemma3ForConditionalGeneration": True,
@@ -44,6 +46,8 @@ def tiny_model(architecture: str):
     builders = {
         "GPT2LMHeadModel": lambda: tr.GPT2LMHeadModel(tr.GPT2Config(n_layer=3, n_embd=16, n_head=2, vocab_size=64)),
         "LlamaForCausalLM": lambda: tr.LlamaForCausalLM(tr.LlamaConfig(num_hidden_layers=3, **small)),
+        "MistralForCausalLM": lambda: tr.MistralForCausalLM(tr.MistralConfig(num_hidden_layers=3, **small)),
+        "Qwen3ForCausalLM": lambda: tr.Qwen3ForCausalLM(tr.Qwen3Config(num_hidden_layers=3, head_dim=8, **small)),
         "Gemma2ForCausalLM": lambda: tr.Gemma2ForCausalLM(tr.Gemma2Config(num_hidden_layers=3, head_dim=8, **small)),
         "Gemma3ForCausalLM": lambda: tr.Gemma3ForCausalLM(
             tr.Gemma3TextConfig(num_hidden_layers=3, head_dim=8, **small)

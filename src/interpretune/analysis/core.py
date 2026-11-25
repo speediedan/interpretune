@@ -4,7 +4,7 @@ from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Typ
 from types import MappingProxyType
 import os
 from pathlib import Path
-from copy import deepcopy
+from copy import copy, deepcopy
 
 import torch
 from torch._dynamo.utils import is_namedtuple_cls, namedtuple_fields
@@ -22,9 +22,11 @@ if TYPE_CHECKING:
     # requirement of `import interpretune.config`, which reaches this module. Same pattern
     # protocol.py already uses for exactly this name.
     from sae_lens.config import HfDataset
+
+    from interpretune.hub.subject import StoreSubject
 else:
     HfDataset = None
-from datasets import Dataset, Features, Array2D, Value, Array3D, load_dataset, Column
+from datasets import Dataset, Features, Array2D, Value, Array3D, IterableDataset, load_dataset, Column
 from datasets import Sequence as DatasetsSequence
 
 from interpretune.protocol import (
@@ -35,9 +37,11 @@ from interpretune.protocol import (
     LatentModelFqn,
     AnalysisCfgProtocol,
     StrOrPath,
+    batch_protocol_fields,
 )
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
+from interpretune.analysis.store_dtypes import latent_model_column_dtype, validate_declared_dtype
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
 
@@ -164,7 +168,7 @@ class LatentAnalysisDict(dict):
         return result
 
 
-def get_module_dims(module) -> tuple[int, int, int, int, int]:
+def get_module_dims(module) -> tuple[int, int | None, int | None, int, int]:
     """Extract key dimensions from module state.
 
     Args:
@@ -173,17 +177,20 @@ def get_module_dims(module) -> tuple[int, int, int, int, int]:
     Returns:
         Tuple containing:
             batch_size: Current batch size
-            max_answer_tokens: Maximum number of answer tokens
-            num_classes: Number of output classes
+            max_answer_tokens: Maximum number of answer tokens, or ``None`` for a module with no generation step
+            num_classes: Number of output classes, or ``None`` for a module with no labels
             vocab_size: Size of the vocabulary
             max_seq_len: Maximum sequence length
     """
     # TODO: in the future, this will depend on our configured dataloader (e.g. for train modes etc.)
     batch_size = module.datamodule.itdm_cfg.eval_batch_size
-    # TODO: currently only support a single new token, but this will be configurable
-    max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
-    # TODO: abstract this so it's not tied to entailment use case but num_classes
-    num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
+    # A task-neutral module (free-form prompts, no generation step and no labels) has neither an answer-token count nor
+    # a class count. Both are then None, which a schema reads as a variable-length dimension, exactly as it reads a
+    # dimension name it does not know: the stored shape comes from the data rather than from a task setting.
+    generation = getattr(getattr(module.it_cfg, "generative_step_cfg", None), "lm_generation_cfg", None)
+    max_answer_tokens = getattr(generation, "max_new_tokens", None)
+    mapping = getattr(module.it_cfg, "entailment_mapping", None)
+    num_classes = getattr(module.it_cfg, "num_labels", None) or (len(mapping) if mapping else None)
     # Bundled adapters' wrappers carry the tokenizer on `module.model`, and that stays the first choice. A raw
     # HF model (a core-only composition, or a hub adapter whose wrapper cannot take the `module.model` slot)
     # does not carry one, so fall back to resolving it wherever the composition keeps it (the datamodule always
@@ -322,7 +329,7 @@ def schema_to_features(
         if col_cfg.intermediate_only:
             continue
 
-        dtype = col_cfg.array_dtype or col_cfg.datasets_dtype
+        dtype = validate_declared_dtype(col_name, col_cfg.array_dtype or col_cfg.datasets_dtype)
 
         # Handle per-latent-model hook fields first
         if col_cfg.per_latent_model_hook:
@@ -338,7 +345,8 @@ def schema_to_features(
                         sae_features[hook_key] = DatasetsSequence(Value(dtype=dtype))
                     else:
                         sae_features[hook_key] = Array2D(
-                            shape=(None, handle.cfg.d_sae), dtype=handle.cfg.dtype or default_dtype
+                            shape=(None, handle.cfg.d_sae),
+                            dtype=latent_model_column_dtype(handle.cfg.dtype, default=default_dtype),
                         )
             features_dict[col_name] = sae_features
             continue
@@ -455,7 +463,11 @@ def analysis_store_from_batches(
         from interpretune.analysis.backends import resolve_analysis_backend
 
         analysis_backend = resolve_analysis_backend(analysis_backend)
-    it_format_kwargs = {"analysis_backend": analysis_backend} if analysis_backend is not None else None
+    # The column configs travel with the store, as on the runner's path: without them a reader cannot undo a
+    # dynamic-dimension swap or rebuild a per-latent mapping, and a pushed envelope records no col_cfg to re-attach.
+    it_format_kwargs: dict[str, Any] = {"col_cfg": {name: cfg.to_dict() for name, cfg in output_schema.items()}}
+    if analysis_backend is not None:
+        it_format_kwargs["analysis_backend"] = analysis_backend
     return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
 
 
@@ -470,16 +482,24 @@ class AnalysisStore:
     Args:
         dataset: an existing dataset or a path to one; None to build a store incrementally.
         op_output_dataset_path: where op outputs are written when the store is being produced.
-        streaming: iterate the dataset lazily instead of materializing it.
+        streaming: iterate the dataset lazily instead of materializing it. A streamed store (also one built from an
+            ``IterableDataset``) holds it as ``stream``, with ``dataset`` left None: it can be iterated and read by
+            column, and positional access is refused, since a stream has no positions to index.
         stack_batches: stack per-batch tensors into a single tensor on access rather than returning
             them per batch -- convenient for analysis, wrong when batches have ragged shapes.
-        protocol_cls: the batch protocol describing the columns, which fixes how rows decode.
+        protocol_cls: the batch protocol naming the columns that get attribute access (``store.<name>``), its bases'
+            fields included; a declared column the store does not hold reads as None. Rows decode through the op
+            schema (``it_format_kwargs['col_cfg']``), not the protocol.
     """
 
     # The loaded single-split dataset, or None while the store is built incrementally. A path or a
     # broader HfDataset may be handed to the constructor, but what the store holds and every method
     # below reads (column access, set_format, select_columns) is one split's Dataset.
     dataset: Dataset | None
+    # A streamed store's rows, kept apart from `dataset` because a stream has no length, no positions and cannot be
+    # pushed: every method that needs those reads `dataset`, and a streamed store says so by name rather than
+    # failing partway through one.
+    stream: IterableDataset | None
 
     def __init__(
         self,
@@ -500,10 +520,17 @@ class AnalysisStore:
         self.split = split
         self.it_format_kwargs = it_format_kwargs
         self._protocol_cls = protocol_cls
+        self.stream = None
+        self.dataset = None
         # What produced this store's columns, stamped at WRITE time by `AnalysisCfg.apply`. Empty when there
         # is nothing to record (a store loaded from disk, or assembled outside the op path) -- deliberately
         # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted.
         self.op_provenance: tuple = ()
+        # What the columns were computed on (an `interpretune.hub.subject.StoreSubject`), stamped at the same
+        # moment and for the same reason; None when the store did not come from a module.
+        self.subject: StoreSubject | None = None
+        # What `resolve_on` read this view against; `subject` stays what the columns were computed on.
+        self.resolved_on: StoreSubject | None = None
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 
@@ -513,13 +540,54 @@ class AnalysisStore:
                 # Only consider conflict if raw paths match
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
+            self._attach(load_dataset(path=dataset_path, **load_dataset_kwargs))  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
         else:
-            # A loaded dataset the caller hands over is one split's Dataset, per the field declaration.
-            self.dataset = cast("Dataset | None", dataset)
+            self._attach(dataset)
 
+    def _attach(self, dataset: Any) -> None:
+        """Hold ``dataset`` as this store's rows: a stream as ``stream``, one split's Dataset as ``dataset``."""
+        if isinstance(dataset, IterableDataset):
+            self._attach_stream(dataset)
+            return
+        # A loaded dataset the caller hands over is one split's Dataset, per the field declaration.
+        self.stream = None
+        self.dataset = cast("Dataset | None", dataset)
         if self.dataset is not None:
             self._apply_interpretune_format()
+
+    def _attach_stream(self, stream: IterableDataset) -> None:
+        """Hold a stream, decoding its rows with the same formatter a Dataset's rows get.
+
+        ``IterableDataset.with_format`` takes a format name and no formatter arguments, so the interpretune formatter
+        cannot reach a stream through it with its ``col_cfg`` and analysis backend. The stream is read as Arrow instead
+        and each row goes through ``ITAnalysisFormatter.format_row``, which is what decodes a Dataset's row.
+        """
+        from interpretune.analysis.formatters import ITAnalysisFormatter
+
+        if stream.features is None:
+            raise ValueError(
+                "A streamed AnalysisStore needs the stream's features to decode its columns, and this stream declares"
+                " none. A Parquet stream carries them in its schema; otherwise pass `features=` when loading it."
+            )
+        self.streaming = True
+        self.dataset = None
+        self.stream = stream.with_format("arrow")
+        self._stream_formatter = ITAnalysisFormatter(features=stream.features, **dict(self.it_format_kwargs or {}))
+
+    def _stream_rows(self, columns: list[str] | None = None):
+        """Decoded rows of the stream, read for ``columns`` only when they are named."""
+        assert self.stream is not None, "only a streamed store has a stream to read"
+        stream = self.stream if columns is None else self.stream.select_columns(columns)
+        for table in stream:
+            yield self._stream_formatter.format_row(table)
+
+    def __iter__(self):
+        """Iterate decoded rows, from the stream when the store is streamed."""
+        if self.stream is not None:
+            yield from self._stream_rows()
+            return
+        assert self.dataset is not None, "Dataset should be loaded before iterating rows"
+        yield from self.dataset
 
     def _apply_interpretune_format(self, columns: list[str] | None = None) -> None:
         """Apply the interpretune formatter while preserving custom formatter kwargs."""
@@ -588,13 +656,9 @@ class AnalysisStore:
                 # Compare raw paths to detect overlap
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
+            self._attach(load_dataset(path=dataset_path, **load_dataset_kwargs))  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
         else:
-            self.dataset = cast("Dataset | None", dataset)
-
-        # Set default tensor format
-        if self.dataset is not None:
-            self._apply_interpretune_format()
+            self._attach(dataset)
 
     def reset_dataset(self) -> None:
         """Reset the dataset."""
@@ -633,17 +697,30 @@ class AnalysisStore:
         An `all()` predicate would be stricter than its own consumers, which is a different inconsistency
         rather than a fix.
 
-        Scope of the change, stated precisely because it is narrower than it looks: both call sites pass
-        `self.dataset[...]`, which is always a `Column`, so the `list` arm is not reachable from
-        production today and datasets' typed schema makes a heterogeneous column impossible anyway. This
-        is therefore a latent-symmetry fix rather than a live bug fix -- it matters when something else
-        starts calling this, which is exactly what deferring materialization would do.
+        The `list` arm is the one a streamed store reaches: its column values are read from decoded rows
+        into a list, where a Dataset's arrive as a `Column`.
         """
         if isinstance(data, torch.Tensor):
             return True
         if isinstance(data, (Column, list)):
             return isinstance(self._first_element(data), torch.Tensor)
         return False
+
+    def _present_column(self, data):
+        """A column's values as the store hands them out: tensors stacked, kept per batch, or split to scalars."""
+        # now that Datasets >= 4.0 has introduced the Column class, we need to refactor AnalysisStore
+        # methods accordingly (since we are pre-MVP, we can start with the Datasets 4.0 API w/o bc concerns)
+        # TODO: For the time-being, we will return the underlying tensor data for columns directly, but
+        # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
+        if not self._is_tensor_seq(data):
+            return data
+        if self.stack_batches:
+            return torch.stack([t for t in data])
+        first = self._first_element(data)
+        if first is not None and getattr(first, "dim", lambda: 0)() > 1:
+            return [t for t in data]
+        # Split 1D tensors into scalar tensors
+        return [torch.tensor(x) for x in data]
 
     def __getitem__(self, key: str | list[str] | int | slice) -> List | Dict:
         """Enable direct column/row access similar to HF Dataset.
@@ -655,47 +732,32 @@ class AnalysisStore:
             Selected columns or rows. For tensor data:
             - If stack_batches=False (default): Returns list of individual tensors
             - If stack_batches=True: Returns stacked tensor
+
+        A streamed store reads a named column by streaming only that column, once per access, and refuses row
+        indices: a stream has no positions.
         """
         if isinstance(key, str):
-            # Single column access
-            assert self.dataset is not None, "Dataset should be loaded before accessing columns"
-            data = self.dataset[key]
+            return self._present_column(self._column_values(key))  # pyright: ignore[reportReturnType]  # a stacked tensor is a valid column return
+        if isinstance(key, list) and all(isinstance(k, str) for k in key):
+            if self.stream is not None:
+                rows = list(self._stream_rows(key))
+                return {col: self._present_column([row[col] for row in rows]) for col in key}
+            return {col: self._present_column(self._column_values(col)) for col in key}
+        if self.stream is not None:
+            raise TypeError(
+                f"A streamed AnalysisStore has no positional access, so it cannot be indexed by {key!r}. Iterate it"
+                " (`for row in store`), read a column by name, or pull it without `streaming=True` for indexing."
+            )
+        # Row access delegates to dataset
+        assert self.dataset is not None, "Dataset should be loaded before accessing rows"
+        return self.dataset[key]  # pyright: ignore[reportArgumentType, reportCallIssue]  # datasets support various indexing types
 
-            # now that Datasets >= 4.0 has introduced the Column class, we need to refactor AnalysisStore
-            # methods accordingly (since we are pre-MVP, we can start with the Datasets 4.0 API w/o bc concerns)
-            # TODO: For the time-being, we will return the underlying tensor data for columns directly, but
-            # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
-            if self._is_tensor_seq(data):
-                if self.stack_batches:
-                    return torch.stack([t for t in data])  # pyright: ignore[reportReturnType]  # stacked tensor is valid return for tensor sequences
-                first = self._first_element(data)
-                if first is not None and getattr(first, "dim", lambda: 0)() > 1:
-                    return [t for t in data]  # list of tensors is valid return
-                # Split 1D tensors into scalar tensors
-                return [torch.tensor(x) for x in data]  # list of tensors is valid return
-            return data
-        elif isinstance(key, list) and all(isinstance(k, str) for k in key):
-            # Multiple column access
-            result = {}
-            for col in key:
-                assert self.dataset is not None, "Dataset should be loaded before accessing columns"
-                data = self.dataset[col]
-                # If tensor data, optionally stack individual tensors
-                if self._is_tensor_seq(data):
-                    if self.stack_batches:
-                        result[col] = torch.stack([t for t in data])
-                    elif (first := self._first_element(data)) is not None and getattr(first, "dim", lambda: 0)() > 1:
-                        result[col] = [t for t in data]
-                    else:
-                        # Split 1D tensors into scalar tensors
-                        result[col] = [torch.tensor(x) for x in data]
-                else:
-                    result[col] = data
-            return result
-        else:
-            # Row access delegates to dataset
-            assert self.dataset is not None, "Dataset should be loaded before accessing rows"
-            return self.dataset[key]  # pyright: ignore[reportArgumentType, reportCallIssue]  # datasets support various indexing types
+    def _column_values(self, key: str):
+        """One column's decoded values: the Dataset's ``Column``, or the stream's values read for that column."""
+        if self.stream is not None:
+            return [row[key] for row in self._stream_rows([key])]
+        assert self.dataset is not None, "Dataset should be loaded before accessing columns"
+        return self.dataset[key]
 
     def select_columns(self, column_names: list[str]) -> "AnalysisStore":
         """Select a subset of columns.
@@ -706,9 +768,59 @@ class AnalysisStore:
         Returns:
             New AnalysisStore with only selected columns
         """
+        if self.stream is not None:
+            self.stream = self.stream.select_columns(column_names)
+            return self
         assert self.dataset is not None, "Dataset should be loaded before selecting columns"
         self.dataset = self.dataset.select_columns(column_names)
         return self
+
+    def resolve_on(self, target: Any) -> "AnalysisStore":
+        """A view of this store read against another model, refusing columns that do not carry over.
+
+        Each column's declared site bindings (``ColCfg.site``) are checked against ``target`` before any row is read:
+        layer indices carry over only at the source's depth, hook-name keys only where both component maps resolve
+        them, token ids and positions only under the same tokenizer, latent features only with the same dictionaries,
+        and values in the model's activation space only for the same model at the same revision. The view holds this
+        store's rows unchanged (its ``subject`` stays the model they were computed on) and records ``target`` as
+        ``resolved_on``.
+
+        Args:
+            target: A module, or the :class:`~interpretune.hub.subject.StoreSubject` to read this store against.
+
+        Raises:
+            StoreResolutionError: The store states no subject, its columns declare no site bindings, or a binding does
+                not carry over (each column named with the reason).
+            StoreSubjectError: ``target`` is a module that states no model id.
+        """
+        from interpretune.analysis.site_bindings import StoreResolutionError, check_bindings, declares_bindings
+        from interpretune.hub.subject import StoreSubject, subject_from_module
+
+        target = target if isinstance(target, StoreSubject) else subject_from_module(target)
+        if self.subject is None:
+            raise StoreResolutionError(
+                "This store states no subject (the model its columns were computed on), so nothing can be shown to"
+                " carry over. Set `store.subject`, or re-push it with a current interpretune."
+            )
+        col_cfg = (self.it_format_kwargs or {}).get("col_cfg")
+        if not declares_bindings(col_cfg):
+            raise StoreResolutionError(
+                "This store declares no site bindings: it was written before op schemas declared what their columns"
+                " name. Re-push it with a current interpretune (bindings are never inferred from column names)."
+            )
+        assert col_cfg is not None
+        features = self._column_features()
+        keys = {name: tuple(f) for name, f in features.items() if isinstance(f, dict)}
+        check_bindings(col_cfg, features, keys, self.subject, target)
+        view = copy(self)
+        view.resolved_on = target
+        return view
+
+    def _column_features(self) -> dict[str, Any]:
+        """Each held column's feature, read from the schema (a stream's schema needs no rows)."""
+        source = self.stream if self.stream is not None else self.dataset
+        assert source is not None, "Dataset should be loaded before reading its features"
+        return dict(source.features or {})
 
     def __getattr__(self, name: str) -> Any:
         """Allow accessing dataset columns and attributes.
@@ -723,21 +835,21 @@ class AnalysisStore:
         Raises:
             AttributeError: If name doesn't exist in protocol annotations or dataset attributes
         """
-        # First check if it's a protocol-defined column
-        if name in self._protocol_cls.__annotations__:
+        # attributes read before __init__ assigns them (copy, pickle) must not recurse into this lookup
+        if name in ("dataset", "stream", "_protocol_cls"):
+            raise AttributeError(name)
+        source = self.stream if self.stream is not None else self.dataset
+        # First check if it's a protocol-defined column (inherited fields included)
+        if name in batch_protocol_fields(self._protocol_cls):
             # Check if the column actually exists in the dataset
-            if (
-                self.dataset is not None
-                and hasattr(self.dataset, "column_names")
-                and name in getattr(self.dataset, "column_names", [])
-            ):  # datasets have column_names
+            if source is not None and name in (getattr(source, "column_names", None) or []):
                 return self[name]
             # Return None if column isn't available yet
             return None
 
         # If not, try to get attribute from dataset
-        if hasattr(self.dataset, name):
-            attr = getattr(self.dataset, name)
+        if hasattr(source, name):
+            attr = getattr(source, name)
             # Handle callable attributes (e.g. dataset methods)
             if callable(attr):
 

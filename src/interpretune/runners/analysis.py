@@ -52,7 +52,7 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "as_generator": True}
-    with profiling(module) as prof:
+    with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
             for batch_idx, batch in tqdm(enumerate(dataloader)):
@@ -146,6 +146,7 @@ def generate_analysis_dataset(
     split="validation",
     dataset_fingerprint: str | None = None,
     generator_cache_dir: str | Path | None = None,
+    writer_batch_size: int | None = None,
     **kwargs,
 ) -> Dataset:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
@@ -164,6 +165,9 @@ def generate_analysis_dataset(
         generator_cache_dir: Where datasets writes generator cache files. None (default) keeps
             `output_store.cache_dir`. A persistent directory requires `dataset_fingerprint`: with random
             fingerprints it would only accumulate files no run can reuse, so that combination is refused.
+        writer_batch_size: How many records the writer buffers before each flush to the cache file. Peak host
+            memory during generation follows this times the record size, not the number of records. None (default)
+            keeps the `datasets` default.
         **kwargs: Additional arguments for error context
 
     Returns:
@@ -180,6 +184,8 @@ def generate_analysis_dataset(
             "generate_analysis_dataset takes its cache key as `dataset_fingerprint` (the AnalysisRunnerCfg field); "
             "`fingerprint` would be absorbed as error context and silently ignored"
         )
+    if writer_batch_size is not None and writer_batch_size < 1:
+        raise ValueError(f"writer_batch_size must be a positive number of records or None, got {writer_batch_size}")
     if generator_cache_dir is not None and dataset_fingerprint is None:
         raise ValueError(
             f"generator_cache_dir={generator_cache_dir!s} was given without a dataset_fingerprint: every generation "
@@ -209,6 +215,8 @@ def generate_analysis_dataset(
             }
         )
         resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
+    # None passes nothing, so the datasets default stays in place
+    writer_kwargs: dict[str, Any] = {} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}
     try:
         dataset = Dataset.from_generator(
             analysis_store_generator,
@@ -221,6 +229,7 @@ def generate_analysis_dataset(
             gen_kwargs=gen_kwargs,
             split=split,  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
+            **writer_kwargs,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # datasets compatibility
     except Exception as e:
@@ -233,6 +242,68 @@ def generate_analysis_dataset(
         )
         handle_exception_with_debug_dump(e, context_data, "dataset_generation")
         raise  # Re-raise after logging to ensure proper error handling
+
+
+class AnalysisRowWriter:
+    """Write analysis rows to an Arrow cache file as they arrive, for a loop that cannot be a generator.
+
+    ``generate_analysis_dataset`` pulls rows from a generator it drives. A loop driven elsewhere (a Lightning
+    ``Trainer``) pushes them instead: each row is encoded with the run's features and buffered up to
+    ``writer_batch_size`` rows before it is flushed, as ``Dataset.from_generator`` does, so host memory does not follow
+    the number of rows. :meth:`finalize` returns the dataset; :meth:`abort` removes the file of a run that failed.
+
+    Args:
+        features: The dataset features, from :func:`dataset_features_and_format`.
+        cache_dir: Where the Arrow file is written; the returned dataset reads it from there.
+        it_format_kwargs: Kwargs for the ``interpretune`` format.
+        writer_batch_size: Rows buffered before each flush. ``None`` keeps the ``datasets`` default.
+    """
+
+    def __init__(
+        self,
+        features: Any,
+        cache_dir: str | Path,
+        it_format_kwargs: dict[str, Any],
+        writer_batch_size: int | None = None,
+    ) -> None:
+        from datasets import Features
+        from datasets.arrow_writer import ArrowWriter
+
+        self.features = Features(features) if features else None
+        self.it_format_kwargs = it_format_kwargs
+        fingerprint = generate_random_fingerprint()
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        self.path = Path(cache_dir) / f"analysis-rows-{fingerprint}.arrow"
+        self._writer = ArrowWriter(
+            features=self.features,
+            path=str(self.path),
+            fingerprint=fingerprint,
+            writer_batch_size=writer_batch_size,
+        )
+
+    def __len__(self) -> int:
+        """The number of rows written so far, buffered rows included."""
+        return len(self._writer)
+
+    def write(self, row: Any) -> None:
+        """Encode and write one row."""
+        encoded: Any = self.features.encode_example(row) if self.features is not None else row
+        self._writer.write(encoded)
+
+    def finalize(self) -> Dataset:
+        """Flush and close the file, and return its rows as a dataset in the ``interpretune`` format."""
+        from datasets import DatasetInfo, NamedSplit
+
+        self._writer.finalize()
+        dataset = Dataset.from_file(
+            str(self.path), info=DatasetInfo(features=self.features), split=NamedSplit("validation")
+        )
+        return dataset.with_format("interpretune", **self.it_format_kwargs)
+
+    def abort(self) -> None:
+        """Close the file and remove it."""
+        self._writer.close()
+        self.path.unlink(missing_ok=True)
 
 
 def _fingerprintable(value: Any, *, path: str = "root") -> Any:
@@ -323,6 +394,7 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
                     "per_latent_preds": value.per_latent_preds,
                     "required_tensor_ops": sorted(value.required_tensor_ops),
                     "required_position_scopes": sorted(str(s) for s in value.required_position_scopes),
+                    "required_techniques": sorted(value.required_techniques),
                 },
                 path=f"{path}<op:{value.name}>",
             ),

@@ -139,9 +139,9 @@ class TestCLI:
         from interpretune.base.components.cli import ITSessionMixin
 
         first, second, plain = (tmp_path / f"{n}.yaml" for n in ("first", "second", "plain"))
-        first.write_text(yaml.safe_dump({"hub_adapters": ["org/a@abc1234"]}))
-        second.write_text(yaml.safe_dump({"hub_adapters": ["org/b@abc1234"], "seed_everything": 1}))
-        plain.write_text(yaml.safe_dump({"seed_everything": 1}))
+        first.write_text(yaml.safe_dump({"hub_adapters": ["org/a@abc1234"]}), encoding="utf-8")
+        second.write_text(yaml.safe_dump({"hub_adapters": ["org/b@abc1234"], "seed_everything": 1}), encoding="utf-8")
+        plain.write_text(yaml.safe_dump({"seed_everything": 1}), encoding="utf-8")
         load = ITSessionMixin._load_hub_adapters_from_args
         # a later file replaces an earlier one's list, one without the key leaves it alone
         assert load(["--config", str(first), f"--config={second}", "-c", str(plain)]) == ["org/b@abc1234"]
@@ -160,6 +160,6 @@ class TestCLI:
         parser.add_argument("-c", "--config", action="config")
         ITSessionMixin().add_arguments_to_parser(parser)
         config = tmp_path / "run.yaml"
-        config.write_text(yaml.safe_dump({"hub_adapters": ["org/a@abc1234"]}))
+        config.write_text(yaml.safe_dump({"hub_adapters": ["org/a@abc1234"]}), encoding="utf-8")
         assert parser.parse_args(["--config", str(config)]).hub_adapters == ["org/a@abc1234"]
         assert parser.parse_args([]).hub_adapters == []

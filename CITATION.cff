@@ -8,7 +8,7 @@ authors:
     given-names: "Dan"
     email: "danny.dale@gmail.com"
 # doi: ""
-url: "https://github.com/speediedan/interpretune"
+url: "https://github.com/interpretune/interpretune"
 license: "Apache-2.0"
 abstract: |
   Interpretune accelerates collaborative interpretability research and world-model tuning

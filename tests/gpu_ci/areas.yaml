@@ -106,6 +106,10 @@ ignore:
   - "**/*.pyi"
   - src/interpretune/hub/publish.py
   - src/interpretune/hub/cards.py
+  # store discovery reads Hub listings and envelopes only; nothing it does reaches a device
+  - src/interpretune/hub/discovery.py
+  # imports the Python files a component declares, on an explicit `load_helpers` call that no GPU test makes
+  - src/interpretune/hub/helpers.py
   - src/interpretune/utils/neuronpedia_*
   - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
   - src/interpretune/utils/notebook_config.py
@@ -123,6 +127,10 @@ ignore:
   - src/it_examples/notebooks/publish/interp_engine_example/**
   # the runner-flexibility demo is a CPU notebook, tested on the hosted matrix
   - src/it_examples/notebooks/publish/runners/**
+  # so is the role-kinds tuning notebook
+  - src/it_examples/notebooks/publish/tuning/**
+  # so is the gradient-readouts notebook
+  - src/it_examples/notebooks/publish/gradient_readouts/**
   # benchmarks run in no pipeline phase; the warm manifest is read only by the hosted matrix
   - tests/benchmarks/**
   - tests/hf_warm_manifest.yaml
@@ -209,10 +217,12 @@ areas:
       - src/interpretune/analysis/ops/bundled/*.py
       - src/interpretune/analysis/ops/bundled/*.yaml
       - src/interpretune/analysis/ops/bundled/core/**
+      - src/interpretune/analysis/ops/bundled/latent/**
       - src/interpretune/config/analysis.py
       - src/interpretune/runners/analysis.py
       - src/interpretune/hub/opcollections.py
       - src/interpretune/hub/artifacts.py
+      - src/interpretune/hub/subject.py
       - src/interpretune/hub/hookmaps.py
     tests:
       - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
@@ -258,6 +268,12 @@ areas:
     tests:
       - tests/core/test_jlens_
       - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
+  latent_dynamics_notebook:
+    # runs the concept-direction component's latent-dynamics analysis, fetched from the Hub at a pinned revision
+    paths:
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/concept_direction_latent_dynamics.ipynb
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
   ct_notebooks:
     # Example notebooks on real models (9.1 of a full run's 22 GPU minutes, builds 2065 and 2087). This area is what
     # every one of them loads: the harness package's import chain (`interpretune.harness` loads bootstrap, config and
@@ -283,6 +299,7 @@ areas:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
       - src/it_examples/tests/test_notebooks.py::test_ct_
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
   ct_notebooks_new:
     # anything else under the notebook sources and helpers (a new notebook or helper): every notebook test, as before
     # the split. Only for a path none of the areas above or below names.
@@ -347,6 +364,38 @@ areas:
       - src/it_examples/notebooks/publish/neuronpedia_example/**
     tests:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  nb_neuron_communities:
+    # the Llama-3.1-8B replication; its test is optional-tier (a gated 8B model and network prompt sources), so a
+    # pull-request gate selects it without running it and the optional tier runs it
+    paths:
+      - src/it_examples/notebooks/publish/neuron_communities/**
+      - src/it_examples/utils/neuron_communities_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_neuron_communities_notebook
+  nb_bsf_blocks:
+    # the block-sparse featurizer blocks example on gemma-3-1b-it (#866): decision blocks ranked, edited natively at the
+    # featurizer's latent sub-hook against random blocks, and tuned through feature adapters by role
+    paths:
+      - src/it_examples/notebooks/publish/bsf_blocks/**
+      - src/it_examples/utils/bsf_featurizers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_bsf_blocks_notebook
+  nb_neuron_finder:
+    # the neuron-finder example on Qwen3-0.6B (#869): screens, a dose sweep through address books on nnsight, the same
+    # book on TransformerLens, and unit-adapter tuning by role
+    paths:
+      - src/it_examples/notebooks/publish/neuron_finder/**
+      - src/it_examples/utils/neuron_finder.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_neuron_finder_notebook
+  nb_sasa_blocks:
+    # the SASA blocks example on Mistral-7B; its test is optional-tier (a 7B model and network prompt sources), so a
+    # pull-request gate selects it without running it and the optional tier runs it
+    paths:
+      - src/it_examples/notebooks/publish/sasa_blocks/**
+      - src/it_examples/utils/sasa_blocks_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_sasa_blocks_notebook
   sae_lens_notebooks:
     paths:
       - src/it_examples/notebooks/publish/saelens_adapter_example/**

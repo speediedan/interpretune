@@ -14,6 +14,7 @@ as venngram orders them. The stage's token scope is the spec's ``position_scope`
 
 - ``add``: the op's values per unit scattered into a dense vector at the site's width, applied as ``add``;
 - ``scale``: the same table as a multiplier, ones where no unit is named, applied as ``scale``.
+- ``replace``: the values at the named units only, preserving the unselected coordinates.
 
 The values are a ``dose``, a ``doses`` table, or a column of evidence the caller supplies through a transform pipeline
 (:mod:`~interpretune.analysis.venngram.values`).
@@ -25,7 +26,7 @@ latent's, keyed ``<site>.hook_sae_acts_post`` because the site's own width diffe
 native mode here, since a spec replaces the whole tensor; circuit-tracer's feature tuples express it.
 
 **Whole-activation ops** (no ``target``) name no layer of their own, so their stage names a layered site,
-``blocks.<layer>.<site>``. A layer-free one is refused by name rather than applied at a guessed layer or at every
+``blocks.<layer>.<site>``. A layer-free one is refused rather than applied at a guessed layer or at every
 layer. The operand (a vector, a pair, or a subspace stacked on its leading axis) is read from the recipe inline or
 from its sidecar, relative to the recipe's own directory:
 
@@ -34,7 +35,7 @@ from its sidecar, relative to the recipe's own directory:
   ``dose`` itself, broadcast over the activation;
 - ``scale``: the ``dose``, as a scalar multiplier;
 - ``project``: onto a vector operand, keeping all of it (``fraction`` 1). A subspace operand, or a fraction below
-  1 (which keeps the span and only part of its complement), has no native translation yet and is refused by name;
+  1 (which keeps the span and only part of its complement), has no native translation yet and is refused;
 - ``reject``: the operand's span, removing ``fraction`` of it (``scale_factor`` is the native removal fraction);
 - ``patch``: the operand pair, exchanging its two coordinates;
 - ``clamp``: the operand's pseudoinverse coordinates bounded into ``[min, max]``.
@@ -49,6 +50,37 @@ explicit positions becomes circuit-tracer's ``(layer, position, feature_idx, val
 ``add`` and ``scale`` are computed from the feature's clean activation, which the backend captures first
 (``capture_feature_activations``, declared by ``captures_clean_activations``). The values are computed here and passed
 as constants, so a backend must honour the ``constant`` value source.
+
+**Graph-targeted ops** (``target: {graph: <name>}``, :mod:`venngram.graphs`) apply a graph subset distilled from one
+prompt in another, on the same analysis-backend path. Each feature node at the stage's site is placed by its anchor in
+the destination prompt (``token_ids``), and becomes a tuple at that layer, position and feature: ``replace`` sets the
+node's value (its column, or its delta from a baseline column), and ``add`` sets the feature's clean activation plus
+it. Only transcoder and CLT nodes (one feature index, a scalar value) are placed. A restriction (``outside``), which
+ablates every member of a universe the graph does not place, is refused here: as tuples it would enumerate each one,
+at every position. :func:`graph_subset_overlap` places a subset the same way in the prompt of another attribution
+graph and reports which of its nodes that graph selects and what share of the graph's influence they carry, a measure
+of how much of the reasoning the subset describes transferred.
+
+The same graph-targeted ops apply on the **model-backend surface** where the subset's space is the latent model
+attached at the stage's site: :func:`recipe_interventions` (given ``token_ids``) places each node by its anchor and
+writes it at the latent sub-hook, ``blocks.<layer>.<site>.hook_sae_acts_post``, as one spec per layer and position
+acting on that position's features alone (``unit_indices``). ``replace`` sets them to the node's value, and ``add``
+adds it to the activation the sub-hook sees, which needs no clean capture (and, where the recipe also intervenes at an
+earlier layer, is relative to what that intervention propagates to). A node whose value is a vector (``value_shape:
+[d]``) is a block: its index $b$ names the $d$ contiguous columns from $b d$, the layout a block-sparse featurizer's
+latent model has (:func:`~interpretune.analysis.venngram.latent_edits.block_edit_spec`). One latent model is attached
+at a hook, so a stage's nodes must share one space, and a cross-layer transcoder's nodes (one feature writing at
+several layers) are not placed. Which latent model is attached is the caller's to match to the space the graph names,
+as for any feature target.
+
+A **restriction** (``target: {graph: <name>, outside: {set: <universe>, tokens: prompt}}``) is the graph's complement
+in a finite feature set of the book: a ``replace`` with a ``dose`` (0 ablates) of every member of the universe at every
+prompt position, except the coordinates the graph places, which keep the activation the sub-hook sees. On the model
+backend it is written the same way, one spec per layer and position on that position's complement
+(venngram's ``GraphSubset.restriction``). The universe names the graph's space at the stage's site, with explicit
+layers, and lists its features in ``units`` or ``features``, or names the whole space, whose width is the latent
+model's. As circuit-tracer's feature tuples it would enumerate each member at every position, so the analysis backend
+refuses it.
 
 **Gradient-targeted ops** are unit- or feature-targeted ops whose target set addresses ``of: grad``: the gradient with
 respect to those units of the activation at the site. ``recipe_interventions(..., flow="grad")`` translates them into
@@ -65,22 +97,37 @@ skipped the check still cannot get a silently narrowed treatment.
 
 from __future__ import annotations
 
+import importlib
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 
 from interpretune.analysis.backends.capabilities import FLOWS, FeatureTargetSupport, PositionScope
-from interpretune.analysis.backends.interventions import InterventionSpec
-from interpretune.analysis.venngram.values import Statistic, member_refusal, member_values, target_kind
+from interpretune.analysis.backends.interventions import LATENT_SUBHOOK, InterventionSpec
+from interpretune.analysis.venngram.values import (
+    _FEATURE_IDS,
+    Statistic,
+    _explicit,
+    _explicit_layers,
+    member_refusal,
+    member_values,
+    target_kind,
+)
 from interpretune.utils import MisconfigurationException
 
 #: Recipe token scopes by their interpretune position-scope names.
-_POSITION_SCOPES = {"all": PositionScope.ALL_POSITIONS, "last": PositionScope.LAST_TOKEN}
+_POSITION_SCOPES = {
+    "all": PositionScope.ALL_POSITIONS,
+    "last": PositionScope.LAST_TOKEN,
+    "positions": PositionScope.POSITIONS,
+}
 
-#: The unit-targeted ops, each with the value the units no dose names keep (the op's identity).
-_UNIT_OPS = {"add": 0.0, "scale": 1.0}
+#: The dense unit ops' identity values; replacement instead preserves its complement through a selected spec.
+_DENSE_UNIT_OPS = {"add": 0.0, "scale": 1.0}
+_UNIT_OPS = frozenset(_DENSE_UNIT_OPS) | {"replace"}
 
 #: The whole-activation ops this path translates; each applies as the interpretune op of the same name.
 _ACTIVATION_OPS = frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
@@ -93,10 +140,22 @@ APPLIED_OPS = frozenset(_UNIT_OPS) | _ACTIVATION_OPS
 _RELATIVE_FEATURE_OPS = {"add": lambda a, d: a + d, "scale": lambda a, d: a * d}
 FEATURE_TUPLE_OPS = frozenset({"replace"}) | frozenset(_RELATIVE_FEATURE_OPS)
 
-_LAYERED_SITE = re.compile(r"^blocks\.(\d+)\.(.+)$")
+#: The graph-target ops the feature tuples apply: ``replace`` sets a node's value; ``add`` sets the feature's clean
+#: activation plus it.
+GRAPH_TUPLE_OPS = frozenset({"replace", "add"})
 
-#: The sub-hook a latent model's feature activations are written at.
-_LATENT_SUBHOOK = "hook_sae_acts_post"
+#: The featurizer kinds whose graph nodes are circuit-tracer features: one feature index and a scalar value.
+GRAPH_TUPLE_FEATURIZERS = frozenset({"transcoder", "clt"})
+
+#: The featurizer kinds whose graph nodes the model-backend surface places at an attached latent model's sub-hook. One
+#: latent model is attached per hook, so a cross-layer transcoder's nodes are not among them.
+GRAPH_LATENT_FEATURIZERS = frozenset({"sae", "transcoder", "block_sparse"})
+
+#: The transforms applied to a graph value, each acting on one value alone.
+_GRAPH_TRANSFORMS = {"scale": lambda v, params: v * params["factor"], "abs": lambda v, _: abs(v)}
+GRAPH_TUPLE_TRANSFORMS = frozenset(_GRAPH_TRANSFORMS)
+
+_LAYERED_SITE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 
 
 def split_site(site: str) -> tuple[int | None, str]:
@@ -116,19 +175,19 @@ def _value_refusal(op: Any) -> str | None:
 def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     """Why a unit or feature target cannot take the unit path, or ``None`` when it can."""
     layer, site = split_site(stage.site)
+    if kind == "features" and op.op == "replace":
+        return (
+            "a feature-targeted `replace` has no native translation at a sub-hook: a spec replaces the whole tensor"
+            " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
+        )
     if op.op not in _UNIT_OPS:
-        if kind == "features" and op.op == "replace":
-            return (
-                "a feature-targeted `replace` has no native translation at a sub-hook: a spec replaces the whole tensor"
-                " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
-            )
         return f"a {kind[:-1]}-targeted `{op.op}` has no native translation (supported: {sorted(_UNIT_OPS)})"
     if op.operand is not None:
         return f"a {kind[:-1]}-targeted op takes a dose, not an operand"
     if layer is not None:
         return f"a {kind[:-1]} set names its own layers, so its stage names the layer-free site, not `{stage.site}`"
-    if kind == "features" and site.endswith(_LATENT_SUBHOOK):
-        return f"a feature target's stage names the hooked site; `{_LATENT_SUBHOOK}` is implied, not `{site}`"
+    if kind == "features" and site.endswith(LATENT_SUBHOOK):
+        return f"a feature target's stage names the hooked site; `{LATENT_SUBHOOK}` is implied, not `{site}`"
     return member_refusal(recipe, op)
 
 
@@ -157,6 +216,8 @@ def op_refusal(recipe: Any, stage: Any, op: Any, flow: str = "value") -> str | N
     ``fwd_w_intervention``, ``grad`` for ``bwd_w_intervention``), or ``None`` when it can."""
     if (refusal := _flow_refusal(recipe, op, flow)) is not None:
         return refusal
+    if getattr(op, "graph", None) is not None:
+        return _graph_latent_refusal(recipe, stage, op) or graph_layout_refusal(recipe, stage, op, flow)
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
     if kind in ("units", "features"):
@@ -178,6 +239,359 @@ def op_refusal(recipe: Any, stage: Any, op: Any, flow: str = "value") -> str | N
     return None
 
 
+def _graph_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
+    """Why a graph-targeted op cannot become circuit-tracer feature tuples, or ``None`` when it can."""
+    if op.outside is not None:
+        return (
+            "a restriction (`outside`) ablates every member of its universe the graph does not place, at every"
+            " position; as feature tuples it would enumerate each one, so it is not applied here"
+        )
+    if op.op not in GRAPH_TUPLE_OPS:
+        return f"circuit-tracer's feature tuples apply {sorted(GRAPH_TUPLE_OPS)} to a graph target, not `{op.op}`"
+    for name, space in sorted(_graph_spaces(recipe, stage, op).items()):
+        if space.kind not in GRAPH_TUPLE_FEATURIZERS:
+            return (
+                f"space `{name}` is a `{space.kind}` featurizer, which graph targets do not yet support:"
+                f" circuit-tracer's feature tuples place {sorted(GRAPH_TUPLE_FEATURIZERS)} features"
+            )
+        if space.value_shape or len(space.index) != 1:
+            return f"space `{name}`'s nodes are not one feature with a scalar value, as a feature tuple sets"
+    if unapplied := sorted({t.name for t in op.value.transform} - GRAPH_TUPLE_TRANSFORMS):
+        return f"{unapplied} are not applied to a graph value (applied: {sorted(GRAPH_TUPLE_TRANSFORMS)})"
+    return None
+
+
+def _graph_spaces(recipe: Any, stage: Any, op: Any) -> dict[str, Any]:
+    """The spaces of a graph's feature nodes at the stage's site, by name."""
+    graph = recipe.book.graphs[op.graph]
+    return {
+        str(n.space): graph.spaces[str(n.space)] for n in graph.nodes if n.kind == "feature" and n.site == stage.site
+    }
+
+
+def _graph_latent_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
+    """Why a graph-targeted op is not one the model-backend surface declares
+    (:func:`~interpretune.analysis.venngram.
+
+    support.venngram_subsets`), or ``None``.
+    """
+    if op.outside is not None:
+        if op.op != "replace" or op.value.source != "dose":
+            return "a restriction writes its universe's complement with a `replace` and a `dose` (0 ablates)"
+    elif op.op not in GRAPH_TUPLE_OPS:
+        return f"a graph target at a latent sub-hook applies {sorted(GRAPH_TUPLE_OPS)}, not `{op.op}`"
+    for name, space in sorted(_graph_spaces(recipe, stage, op).items()):
+        if space.kind not in GRAPH_LATENT_FEATURIZERS:
+            return (
+                f"space `{name}` is a `{space.kind}` featurizer, which a latent sub-hook does not place: one latent"
+                f" model is attached per hook (placed: {sorted(GRAPH_LATENT_FEATURIZERS)})"
+            )
+    if unapplied := sorted({t.name for t in op.value.transform} - GRAPH_TUPLE_TRANSFORMS):
+        return f"{unapplied} are not applied to a graph value (applied: {sorted(GRAPH_TUPLE_TRANSFORMS)})"
+    return None
+
+
+def graph_layout_refusal(recipe: Any, stage: Any, op: Any, flow: str = "value") -> str | None:
+    """Why a graph-targeted op cannot be written on one attached latent model's columns for the ``flow`` surface,
+    or ``None``: the refusals of the model-backend surface that its subset declaration cannot express."""
+    if (refusal := _flow_refusal(recipe, op, flow)) is not None:
+        return refusal
+    layer, site = split_site(stage.site)
+    if layer is not None:
+        return (
+            f"a graph subset's nodes carry their own layers, so its stage names the layer-free site, not `{stage.site}`"
+        )
+    if site.endswith(LATENT_SUBHOOK):
+        return f"a graph target's stage names the hooked site; `{LATENT_SUBHOOK}` is implied, not `{site}`"
+    spaces = _graph_spaces(recipe, stage, op)
+    if len(spaces) > 1:
+        return (
+            f"nodes of spaces {sorted(spaces)} lie at `{site}`, but one latent model is attached at a hook, so its"
+            " sub-hook carries one space's features"
+        )
+    for name, space in spaces.items():
+        if len(space.index) != 1:
+            return (
+                f"space `{name}` indexes its nodes by {list(space.index)}; a latent sub-hook places one index axis (a"
+                " feature, or a block whose value is its coordinates)"
+            )
+    if op.outside is not None and len(spaces) == 1:
+        try:
+            _restriction_universe(recipe, stage, op, None)
+        except MisconfigurationException as err:
+            return str(err)
+    return None
+
+
+def _restriction_universe(recipe: Any, stage: Any, op: Any, width: int | None) -> dict[int, tuple[int, ...] | None]:
+    """``layer -> member indices`` of the finite feature set a restriction acts within (block indices for a space
+    of vector values).
+
+    A set naming the whole space lists ``range`` of the latent width, or ``None`` without a width.
+    """
+    from venngram.address import Term
+
+    name = op.outside
+    term = recipe.book.sets()[name]
+    if not isinstance(term, Term) or term.features is None:
+        raise MisconfigurationException(
+            f"a restriction's universe `{name}` is one feature set of the book (naming `features`), not a composition"
+            " or a unit set"
+        )
+    ((space_name, space),) = _graph_spaces(recipe, stage, op).items()
+    named = None if _FEATURE_IDS.match(term.features) else term.features
+    if named is not None and named != space_name:
+        raise MisconfigurationException(
+            f"a restriction's universe `{name}` is space `{named}`, but the graph's nodes at `{stage.site}` are space"
+            f" `{space_name}`"
+        )
+    layers = _explicit_layers(term, name)
+    if term.units is None:
+        if named is None:
+            return dict.fromkeys(layers, tuple(int(f) for f in term.features.split(",")))
+        whole = None if width is None else tuple(range(width // max(space.numel, 1)))
+        return dict.fromkeys(layers, whole)
+    if term.units.per_layer is not None:
+        return {layer: _explicit(units, name, "units") for layer, units in term.units.per_layer}
+    return dict.fromkeys(layers, _explicit(term.units.flat, name, "units"))
+
+
+def _restriction_specs(
+    recipe: Any,
+    stage: Any,
+    op: Any,
+    width: int,
+    token_ids: Sequence[int] | None,
+    tokenizer: Mapping[str, str] | None,
+    where: str,
+) -> list[tuple[int, InterventionSpec]]:
+    """``(layer, spec)`` writing a restriction's dose on the complement of the graph's placed nodes in its universe,
+    at every prompt position: one spec per layer and position."""
+    if token_ids is None:
+        raise MisconfigurationException(
+            f"{where}: a restriction acts at every prompt position, around nodes placed by their anchors: pass"
+            " `token_ids`, the prompt's unpadded input ids"
+        )
+    from venngram.errors import AddressError
+
+    graph = recipe.book.graphs[op.graph]
+    ((space_name, space),) = _graph_spaces(recipe, stage, op).items()
+    universe = _restriction_universe(recipe, stage, op, width)
+    dose = float(op.value.dose)
+    for transform in op.value.transform:
+        dose = _GRAPH_TRANSFORMS[transform.name](dose, transform.params)
+    try:
+        plan = graph.plan(list(token_ids), column=graph.columns[0], sites=[stage.site], tokenizer=tokenizer)
+        complement = graph.restriction(
+            plan,
+            {(stage.site, space_name, layer): [(i,) for i in members or ()] for layer, members in universe.items()},
+            len(token_ids),
+        )
+    except AddressError as err:
+        raise MisconfigurationException(f"{where}: {err}") from err
+    size = space.numel if space.value_shape else 1
+    by_coordinate: dict[tuple[int, int], list[int]] = {}
+    for _, _, layer, position, (index,) in complement:
+        by_coordinate.setdefault((layer, position), []).extend(range(index * size, (index + 1) * size))
+    specs = []
+    for (layer, position), units in sorted(by_coordinate.items()):
+        _unit_bounds(dict.fromkeys(units, dose), width, where, layer)
+        specs.append(
+            (
+                layer,
+                InterventionSpec(
+                    intervention_tensor=torch.full((1, len(units)), dose),
+                    op="replace",
+                    position_scope=PositionScope.POSITIONS,
+                    positions=(position,),
+                    unit_indices=tuple(units),
+                ),
+            )
+        )
+    return specs
+
+
+def _graph_placements(
+    recipe: Any, stage: Any, op: Any, token_ids: Sequence[int] | None, tokenizer: Mapping[str, str] | None, where: str
+) -> list[tuple[int, int, int, tuple[float, ...]]]:
+    """``(layer, position, index, values)`` for each of a graph's feature nodes at the stage's site, placed by its
+    anchor in the destination prompt, with its value flattened and transformed."""
+    if token_ids is None:
+        raise MisconfigurationException(
+            f"{where}: a graph target places its nodes by their anchors in the prompt: pass `token_ids`, the prompt's"
+            " unpadded input ids"
+        )
+    from venngram.errors import AddressError
+
+    value = op.value
+    from_graph = value.source == "graph"
+    graph = recipe.book.graphs[op.graph]
+    try:
+        plan = graph.plan(
+            list(token_ids),
+            column=value.column if from_graph else graph.columns[0],
+            baseline=value.baseline if from_graph else None,
+            sites=[stage.site],
+            tokenizer=tokenizer,
+        )
+    except AddressError as err:
+        raise MisconfigurationException(f"{where}: {err}") from err
+    placements = []
+    for placement in plan:
+        values = []
+        for v in placement.value if from_graph else (value.dose,) * len(placement.value):
+            v = float(v)
+            for transform in value.transform:
+                v = _GRAPH_TRANSFORMS[transform.name](v, transform.params)
+            values.append(v)
+        placements.append((placement.layer, placement.position, placement.index[0], tuple(values)))
+    return placements
+
+
+def _graph_latent_specs(
+    recipe: Any,
+    stage: Any,
+    op: Any,
+    width: int,
+    token_ids: Sequence[int] | None,
+    tokenizer: Mapping[str, str] | None,
+    where: str,
+) -> list[tuple[int, InterventionSpec]]:
+    """``(layer, spec)`` writing a graph's placed nodes at the latent sub-hook: one spec per layer and position,
+    acting on that position's features alone.
+
+    A vector value of $d$ coordinates is the block of columns from ``index * d``.
+    """
+    (space,) = _graph_spaces(recipe, stage, op).values()  # graph_layout_refusal admits one space per site
+    by_coordinate: dict[tuple[int, int], dict[int, float]] = {}
+    for layer, position, index, values in _graph_placements(recipe, stage, op, token_ids, tokenizer, where):
+        first = index * space.numel if space.value_shape else index
+        by_coordinate.setdefault((layer, position), {}).update(zip(range(first, first + len(values)), values))
+    specs = []
+    for (layer, position), units in sorted(by_coordinate.items()):
+        _unit_bounds(units, width, where, layer)
+        indices = tuple(sorted(units))
+        specs.append(
+            (
+                layer,
+                InterventionSpec(
+                    intervention_tensor=torch.tensor([[units[u] for u in indices]]),
+                    op=op.op,
+                    position_scope=PositionScope.POSITIONS,
+                    positions=(position,),
+                    unit_indices=indices,
+                ),
+            )
+        )
+    return specs
+
+
+def _graph_targets(
+    recipe: Any, stage: Any, op: Any, token_ids: Sequence[int] | None, tokenizer: Mapping[str, str] | None, where: str
+) -> list[tuple[int, int, int, float]]:
+    """``(layer, position, feature, value)`` for each of a graph's feature nodes at the stage's site, placed by its
+    anchor in the destination prompt, before any clean activation is added."""
+    return [
+        (layer, position, feature, values[0])
+        for layer, position, feature, values in _graph_placements(recipe, stage, op, token_ids, tokenizer, where)
+    ]
+
+
+@dataclass(frozen=True)
+class GraphSubsetOverlap:
+    """How much of a graph subset an attribution graph of another prompt contains
+    (:func:`graph_subset_overlap`)."""
+
+    placed: tuple[tuple[str, int, int, int], ...]
+    """``(node, layer, position, feature)`` for each placement of the subset's feature nodes in the graph's
+    prompt."""
+    matched: Mapping[tuple[str, int, int, int], float]
+    """Each placement that is a selected feature of the graph, with its activation there."""
+    node_overlap: float
+    """The fraction of placements the graph selects."""
+    recovered_influence: float | None
+    """The matched features' share of the graph's total feature influence, when the influence is given."""
+
+
+def graph_subset_overlap(
+    subset: Any,
+    graph: Any,
+    *,
+    token_ids: Sequence[int] | None = None,
+    tokenizer: Mapping[str, str] | None = None,
+    influence: Any | None = None,
+    sites: Sequence[str] | None = None,
+) -> GraphSubsetOverlap:
+    """Compare a graph subset with an attribution graph of another prompt: which of its feature nodes, placed by their
+    anchors in that prompt, the graph selects, and how much of the graph's influence they carry.
+
+    After a subset is applied in a new prompt, attributing that prompt and comparing its graph with the subset measures
+    how much of the reasoning the subset describes the new prompt's graph contains. A placement matches when the graph
+    selects a feature at its layer, position and feature index.
+
+    Args:
+        subset: A venngram ``GraphSubset`` (:func:`~interpretune.analysis.venngram.graphs.export_graph_subset`
+            returns one), or a ``graph_subset`` document.
+        graph: The circuit-tracer ``Graph`` of the destination prompt.
+        token_ids: The destination prompt's unpadded input ids the anchors resolve in; the graph's ``input_tokens``
+            when not given.
+        tokenizer: ``{id, revision}`` of the destination tokenizer, which a ``token_match`` anchor needs to be the one
+            the subset's source pins.
+        influence: One influence score per selected feature of ``graph``, in its order (the analysis backend's
+            ``compute_node_influence_scores``), for ``recovered_influence``.
+        sites: Only the subset's nodes at these sites (all of them when ``None``).
+
+    Returns:
+        A :class:`GraphSubsetOverlap`.
+
+    Raises:
+        MisconfigurationException: If the subset is malformed or a node does not resolve in the prompt (the whole
+            comparison is refused, as a graph target's placement is), a node lies in a space whose units are not one
+            feature with a scalar value, or ``influence`` is not one score per selected feature.
+    """
+    from venngram.errors import AddressError
+
+    graphs_mod = importlib.import_module("venngram.graphs")
+    try:
+        if isinstance(subset, Mapping):
+            subset = graphs_mod.GraphSubset.from_mapping(subset, source="the compared graph subset")
+        unsupported = sorted(
+            name for name, space in subset.spaces.items() if len(space.index) != 1 or space.value_shape
+        )
+        if unsupported:
+            raise MisconfigurationException(
+                f"spaces {unsupported} address a unit by more than one index or carry a vector value, which a"
+                " circuit-tracer graph's features do not"
+            )
+        prompt = graph.input_tokens.detach().cpu().flatten().tolist() if token_ids is None else token_ids
+        plan = subset.plan([int(t) for t in prompt], sites=sites, tokenizer=tokenizer)
+    except AddressError as err:
+        raise MisconfigurationException(str(err)) from err
+    selected = graph.selected_features.detach().cpu()
+    rows = {
+        tuple(coordinate): i
+        for i, coordinate in enumerate(graph.active_features.detach().cpu().index_select(0, selected).tolist())
+    }
+    activations = graph.activation_values.detach().cpu().float().tolist()
+    placed = tuple((p.node, p.layer, p.position, p.index[0]) for p in plan)
+    hits = {key: rows[key[1:]] for key in placed if key[1:] in rows}
+    recovered = None
+    if influence is not None:
+        scores = torch.as_tensor(influence).detach().cpu().float().flatten()
+        if scores.numel() != len(rows):
+            raise MisconfigurationException(
+                f"`influence` has {scores.numel()} scores; it needs one per selected feature of the graph ({len(rows)})"
+            )
+        total = float(scores.sum())
+        recovered = float(scores[sorted(set(hits.values()))].sum()) / total if total else 0.0
+    return GraphSubsetOverlap(
+        placed=placed,
+        matched={key: activations[row] for key, row in hits.items()},
+        node_overlap=len(hits) / len(placed),
+        recovered_influence=recovered,
+    )
+
+
 def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` cannot become circuit-tracer feature tuples, or ``None`` when it can.
 
@@ -185,6 +599,8 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     backend's declaration, not the recipe's, so :func:`recipe_feature_interventions` and the derived support record
     decide it.
     """
+    if getattr(op, "graph", None) is not None:
+        return _graph_op_refusal(recipe, stage, op)
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
     if (refusal := _flow_refusal(recipe, op, "value")) is not None:
@@ -198,13 +614,104 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     return member_refusal(recipe, op)
 
 
-def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
-    tensor = torch.full((width,), fill)
-    for unit, dose in doses.items():
+def _unit_bounds(doses: Mapping[int, float], width: int, where: str, layer: int) -> None:
+    for unit in doses:
         if not 0 <= unit < width:
             raise MisconfigurationException(f"{where}: unit {unit} at layer {layer} is outside the site width {width}")
+
+
+def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
+    _unit_bounds(doses, width, where, layer)
+    tensor = torch.full((width,), fill)
+    for unit, dose in doses.items():
         tensor[unit] = dose
     return tensor
+
+
+def _unit_clamp_args(value: Any, lower: float | None, upper: float | None) -> None:
+    if lower is None and upper is None:
+        raise MisconfigurationException("a unit clamp needs clamp_min or clamp_max")
+    if value is not None:
+        raise MisconfigurationException("a unit clamp takes coordinate bounds, not a value")
+    if lower is not None and upper is not None and lower > upper:
+        raise MisconfigurationException(f"unit clamp bounds {lower} and {upper} are reversed")
+
+
+def _unit_mode_args(op: str, value: Any, lower: float | None, upper: float | None) -> None:
+    if op == "clamp":
+        _unit_clamp_args(value, lower, upper)
+        return
+    if op not in {"add", "scale", "replace"}:
+        raise MisconfigurationException(f"unit interventions apply add, scale, replace or clamp, not {op!r}")
+    if lower is not None or upper is not None:
+        raise MisconfigurationException(f"unit op {op!r} takes a value, not clamp bounds")
+    if value is None:
+        raise MisconfigurationException(f"unit op {op!r} needs an explicit value")
+
+
+def _unit_value(value: Any, layer: int, count: int, hook: str) -> torch.Tensor:
+    if isinstance(value, Mapping):
+        if layer not in value:
+            raise MisconfigurationException(f"no unit intervention value was supplied for layer {layer}")
+        value = value[layer]
+    tensor = torch.as_tensor(value)
+    if tensor.shape not in (torch.Size(), torch.Size([count])):
+        raise MisconfigurationException(
+            f"{hook}: value shape {tuple(tensor.shape)} needs a scalar or {count} unit values"
+        )
+    return tensor
+
+
+def unit_interventions(
+    address: Any,
+    *,
+    n_layers: int,
+    site_widths: Mapping[str, int],
+    op: str = "add",
+    value: Any = None,
+    position_scope: PositionScope | str = PositionScope.LAST_TOKEN,
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+    sets: Mapping[str, Any] | None = None,
+    flow: str = "value",
+) -> dict[str, InterventionSpec]:
+    """Build a direct backend payload editing only the units a venngram address selects.
+
+    ``add``, ``scale`` and ``replace`` take a scalar or a vector in ascending selected-unit order, or a mapping
+    from layer index to either. ``clamp`` bounds those coordinates in the model's unit basis; it takes bounds and
+    no dose. This direct payload does not change venngram's recipe registry, whose clamp target is a whole
+    activation with a basis operand. A gradient address requires ``flow="grad"`` and the backward surface.
+
+    Args:
+        address: A unit-site address or book reference, including per-layer unit sets.
+        n_layers: The block count.
+        site_widths: Model last-axis widths by layer-free point spelling.
+        op: One of ``add``, ``scale``, ``replace`` and ``clamp``.
+        value: The dose or replacement values (unused by ``clamp``).
+        position_scope: The token scope, independent of which units the address selects.
+        clamp_min: Optional lower coordinate bound.
+        clamp_max: Optional upper coordinate bound.
+        sets: Address-book sets for references.
+        flow: The surface the caller will apply: ``value`` or ``grad``.
+
+    Raises:
+        MisconfigurationException: The op, address, layer dose, value shape or clamp bounds are unsupported.
+    """
+    from interpretune.analysis.venngram.sites import resolve_unit_sites
+
+    _unit_mode_args(op, value, clamp_min, clamp_max)
+    selection = resolve_unit_sites(address, n_layers=n_layers, site_widths=site_widths, sets=sets)
+    if flow not in FLOWS or selection.flow != flow:
+        raise MisconfigurationException(f"unit address acts on {selection.flow!r}, but the requested flow is {flow!r}")
+    payload = {}
+    for hook, indices in selection.units.items():
+        layer, _ = split_site(hook)
+        assert layer is not None
+        tensor = torch.eye(len(indices)) if op == "clamp" else _unit_value(value, layer, len(indices), hook)
+        payload[hook] = InterventionSpec(
+            tensor, op=op, unit_indices=indices, position_scope=position_scope, clamp_min=clamp_min, clamp_max=clamp_max
+        )
+    return payload
 
 
 def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Tensor:
@@ -220,10 +727,22 @@ def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Ten
 def _member_specs(
     op: Any, values: Mapping[tuple[int, int], float], width: int, scope: PositionScope, where: str
 ) -> dict[int, InterventionSpec]:
-    fill = _UNIT_OPS[op.op]
     by_layer: dict[int, dict[int, float]] = {}
     for (layer, unit), value in values.items():
         by_layer.setdefault(layer, {})[unit] = value
+    if op.op == "replace":
+        specs = {}
+        for layer, doses in sorted(by_layer.items()):
+            _unit_bounds(doses, width, where, layer)
+            units = tuple(sorted(doses))
+            specs[layer] = InterventionSpec(
+                intervention_tensor=torch.tensor([doses[unit] for unit in units]),
+                op=op.op,
+                position_scope=scope,
+                unit_indices=units,
+            )
+        return specs
+    fill = _DENSE_UNIT_OPS[op.op]
     return {
         layer: InterventionSpec(
             intervention_tensor=_scatter(by_layer[layer], width, fill, where, layer), op=op.op, position_scope=scope
@@ -263,6 +782,8 @@ def recipe_interventions(
     statistics: Mapping[str, Statistic] | None = None,
     weights_applied: bool = False,
     flow: str = "value",
+    token_ids: Sequence[int] | None = None,
+    tokenizer: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
@@ -270,17 +791,25 @@ def recipe_interventions(
     addresses ``of: grad`` acts on the gradient at its site, through the same specs a value op becomes. A recipe's ops
     are translated for one flow at a time, and an op on the other flow is refused (see :func:`op_refusal`).
 
+    A graph-targeted op places the graph's feature nodes at the stage's site by their anchors in ``token_ids`` and
+    writes them at that site's latent sub-hook, one spec per layer and position (see the module docstring).
+
     Args:
         recipe: The recipe to translate.
         site_widths: The width of every unit-targeted site the recipe names, keyed by the recipe's own layer-free
-            site spelling, and of every feature-targeted one, keyed ``<site>.hook_sae_acts_post``. A width given for a
-            whole-activation op's site also checks its operand's width.
+            site spelling, and of every feature- or graph-targeted one, keyed ``<site>.hook_sae_acts_post``. A width
+            given for a whole-activation op's site also checks its operand's width.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
         weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
             stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
             is refused until it has, since its stages alone are a different treatment.
         flow: ``value`` (the default) for ``fwd_w_intervention``, or ``grad`` for ``bwd_w_intervention``.
+        token_ids: The prompt's input token ids, which a graph target's anchors resolve in, and whose positions its
+            specs name. A spec's positions index the padded sequence the backend runs, so pass one unpadded prompt (or
+            a row whose padding lies after it). Needed only for graph targets.
+        tokenizer: ``{id, revision}`` of the prompt's tokenizer, which a ``token_match`` anchor needs to be the one the
+            graph's source pins.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
@@ -289,8 +818,9 @@ def recipe_interventions(
     Raises:
         MisconfigurationException: For a recipe whose weights were not applied, anything this module cannot translate
             (see :func:`op_refusal`), an unmapped token scope, a unit- or feature-targeted site whose width was not
-            supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, or a
-            value the supplied evidence cannot give, naming the stage and op. Run
+            supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, a
+            value the supplied evidence cannot give, or a graph target without ``token_ids`` or with a node its anchor
+            does not place, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
     if flow not in FLOWS:
@@ -314,17 +844,32 @@ def recipe_interventions(
             where = f"stage {i} ({stage.site}) op {j} (`{op.op}`)"
             if (refusal := op_refusal(recipe, stage, op, flow)) is not None:
                 raise MisconfigurationException(f"{where}: {refusal}")
+            if getattr(op, "graph", None) is not None:
+                hooked = f"{site}.{LATENT_SUBHOOK}"
+                width = _require_width(site_widths, hooked, i, stage)
+                write = _restriction_specs if op.outside is not None else _graph_latent_specs
+                for spec_layer, spec in write(recipe, stage, op, width, token_ids, tokenizer, where):
+                    payload.setdefault(f"blocks.{spec_layer}.{hooked}", []).append(spec)
+                continue
             kind = target_kind(recipe, op)
             if kind == "activation":
                 assert layer is not None  # op_refusal refuses a layer-free whole-activation op
                 specs = {layer: _activation_spec(recipe, op, site_widths.get(site), scope, where)}
                 hooked = site
             else:
-                hooked = f"{site}.{_LATENT_SUBHOOK}" if kind == "features" else site
+                hooked = f"{site}.{LATENT_SUBHOOK}" if kind == "features" else site
                 width = _require_width(site_widths, hooked, i, stage)
                 values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
                 specs = _member_specs(op, values, width, scope, where)
             for spec_layer, spec in specs.items():
+                if scope == PositionScope.POSITIONS:
+                    # A recipe's operand is shared over its token set. Raw hook payloads instead carry one operand
+                    # row per position; stacking explicitly preserves the recipe's broadcast semantics.
+                    positions = tuple(stage.tokens.positions)
+                    spec = spec._replace(
+                        positions=positions,
+                        intervention_tensor=torch.stack([spec.intervention_tensor] * len(positions)),
+                    )
                 payload.setdefault(f"blocks.{spec_layer}.{hooked}", []).append(spec)
     return {pattern: tuple(specs) for pattern, specs in payload.items()}
 
@@ -363,15 +908,21 @@ def recipe_feature_interventions(
     clean_activations: Any | None = None,
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
+    token_ids: Sequence[int] | None = None,
+    tokenizer: Mapping[str, str] | None = None,
 ) -> list[tuple[int, int, int, float]]:
-    """Translate a recipe's feature ``replace``, ``add`` and ``scale`` ops into circuit-tracer's feature
-    intervention tuples.
+    """Translate a recipe's feature ``replace``, ``add`` and ``scale`` ops, and its graph-targeted ``replace`` and
+    ``add`` ops, into circuit-tracer's feature intervention tuples.
 
     A tuple sets a feature's value. ``replace`` sets the op's value $d$; ``add`` and ``scale`` set $a + d$ and
     $a \\cdot d$, where $a$ is the feature's clean activation at that layer and position, read from
     ``clean_activations``. The clean activation is the one the unintervened prompt produces, so where a recipe also
     intervenes at an earlier layer, an ``add`` is relative to the clean value rather than to the value the earlier
     intervention propagates to (the model-backend surface's ``add`` at the latent sub-hook is relative to the latter).
+
+    A graph-targeted op places each of the graph's feature nodes at the stage's site by its anchor in the prompt
+    (venngram's ``GraphSubset.plan``, which refuses the whole plan if any node does not resolve, or two land on one
+    coordinate), and its value $d$ is the node's column, less its baseline column when the op names one.
 
     Args:
         recipe: The recipe to translate; every op must be one :func:`feature_op_refusal` admits.
@@ -383,6 +934,10 @@ def recipe_feature_interventions(
             ``apply_activation_function`` as the intervention call. Needed only for ``add`` and ``scale``.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
+        token_ids: The prompt's unpadded input token ids, which a graph target's anchors resolve in. Needed only for
+            graph targets.
+        tokenizer: ``{id, revision}`` of the prompt's tokenizer, which a ``token_match`` anchor needs to be the one the
+            graph's source pins.
 
     Returns:
         ``(layer, position, feature_idx, value)`` tuples, in recipe order, for
@@ -391,7 +946,8 @@ def recipe_feature_interventions(
     Raises:
         MisconfigurationException: For any op :func:`feature_op_refusal` refuses, a backend not honouring ``constant``,
             an ``add`` or ``scale`` without a clean capture (undeclared, or not passed), a member or position the
-            capture has no activation for, or a value the supplied evidence cannot give, naming the stage and op.
+            capture has no activation for, a value the supplied evidence cannot give, or a graph target without
+            ``token_ids`` or with a node its anchor does not place, naming the stage and op.
     """
     if (why := support.refusal({"value_source": "constant", "value": 0.0})) is not None:
         raise MisconfigurationException(f"this backend cannot take a recipe's computed values: {why}")
@@ -402,8 +958,16 @@ def recipe_feature_interventions(
             refusal = feature_op_refusal(recipe, stage, op) or _relative_op_refusal(op, support, clean_activations)
             if refusal is not None:
                 raise MisconfigurationException(f"{where}: {refusal}")
-            values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
-            positions = (op.tokens or stage.tokens).positions
+            if getattr(op, "graph", None) is not None:
+                targets = _graph_targets(recipe, stage, op, token_ids, tokenizer, where)
+            else:
+                values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
+                positions = (op.tokens or stage.tokens).positions
+                targets = [
+                    (layer, position, feature, value)
+                    for (layer, feature), value in values.items()
+                    for position in positions
+                ]
             relative = _RELATIVE_FEATURE_OPS.get(op.op)
             interventions += [
                 (
@@ -414,7 +978,6 @@ def recipe_feature_interventions(
                     if relative is None
                     else relative(_clean_activation(clean_activations, layer, position, feature, where), value),
                 )
-                for (layer, feature), value in values.items()
-                for position in positions
+                for layer, position, feature, value in targets
             ]
     return interventions

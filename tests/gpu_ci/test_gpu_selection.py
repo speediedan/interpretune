@@ -152,7 +152,7 @@ def test_the_selection_file_narrows_a_gpu_phase(tmp_path, spec):
     prefixes = selected_prefixes(sel, spec)
     assert all(any(n.startswith(p) for p in prefixes) for n in narrowed)
     full_file = tmp_path / "full.txt"
-    full_file.write_text("full\n")
+    full_file.write_text("full\n", encoding="utf-8")
     assert collected(full_file) == full
     # a deferred `full_run_only` case leaves the phase it would otherwise be selected into, and only it
     ct = select(["src/interpretune/adapters/circuit_tracer/adapter.py"], spec, ROOT)

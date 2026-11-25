@@ -55,7 +55,12 @@ from interpretune.utils.logging import (
 from interpretune.utils.schema_validation import RemoveAdditionalPropertiesValidator
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS, sanitize_input_name
 from interpretune.utils.warnings import unexpected_state_msg_suffix, tl_invalid_dmap, dummy_method_warn_fingerprint
-from interpretune.utils.data_movement import to_device, move_data_to_device
+from interpretune.utils.data_movement import (
+    to_device,
+    move_data_to_device,
+    check_gpu_device_request,
+    check_gpu_device_map,
+)
 from interpretune.utils.import_utils import (
     _import_class,
     instantiate_class,
@@ -185,6 +190,8 @@ __all__ = [
     # data_movement
     "to_device",
     "move_data_to_device",
+    "check_gpu_device_request",
+    "check_gpu_device_map",
     # schema_validation
     "RemoveAdditionalPropertiesValidator",
     # neuronpedia_explanations

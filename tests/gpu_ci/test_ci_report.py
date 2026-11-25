@@ -37,7 +37,7 @@ def _task(name, start, end, result="succeeded"):
 def _evidence_dir(root: Path, selected, failed=(), scope="selected") -> Path:
     """A build's ``it-phases`` directory as a build that predates the telemetry record published it."""
     manifest = {
-        "repository": "speediedan/interpretune",
+        "repository": "interpretune/interpretune",
         "revision": REV,
         "phase": "cuda",
         "scope": scope,
@@ -55,7 +55,7 @@ def _evidence_dir(root: Path, selected, failed=(), scope="selected") -> Path:
     )
     for sub, doc in (("manifests", manifest), ("reports", report)):
         (root / sub).mkdir(parents=True, exist_ok=True)
-        (root / sub / "cuda.json").write_text(json.dumps(doc))
+        (root / sub / "cuda.json").write_text(json.dumps(doc), encoding="utf-8")
     return root
 
 
@@ -119,9 +119,9 @@ def test_read_evidence_assembles_a_build_that_predates_the_record(tmp_path):
     assert any("no plan record" in u for u in ev.telemetry["unknowns"])
 
     # a report that does not describe its manifest is refused, never counted
-    report = json.loads((d / "reports" / "cuda.json").read_text())
+    report = json.loads((d / "reports" / "cuda.json").read_text(encoding="utf-8"))
     report["manifest_sha256"] = "0" * 64
-    (d / "reports" / "cuda.json").write_text(json.dumps(report))
+    (d / "reports" / "cuda.json").write_text(json.dumps(report), encoding="utf-8")
     ev = read_evidence(Build(1, "pullRequest", "failed", "", REV, None, evidence=d))
     assert ev.telemetry is None and not ev.readable and ev.unknown.startswith("evidence refused")
 

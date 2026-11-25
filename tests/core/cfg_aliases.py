@@ -238,7 +238,6 @@ class LightningTLBridgeLlama3(BaseCfg):
     tl_cfg: ITLensBridgeConfig = field(
         default_factory=lambda: ITLensBridgeConfig(
             model_name="meta-llama/Llama-3.2-3B-Instruct",
-            default_padding_side="left",
         )
     )
     # The registry's llama3 entry loads nf4 4-bit weights with LoRA. TransformerLens 4.0 refuses to read TL-layout
@@ -270,7 +269,6 @@ class LightningTLBridgeGemma2(BaseCfg):
     tl_cfg: ITLensBridgeConfig = field(
         default_factory=lambda: ITLensBridgeConfig(
             model_name="google/gemma-2-2b",
-            default_padding_side="left",
         )
     )
     datamodule_cls: str | None = "tests.modules.FingerprintTestITDataModule"
@@ -292,7 +290,6 @@ class LightningTLBridgeGPT2(BaseCfg):
     tl_cfg: ITLensBridgeConfig = field(
         default_factory=lambda: ITLensBridgeConfig(
             model_name="gpt2-small",
-            default_padding_side="left",
         )
     )
 
@@ -310,7 +307,6 @@ class LightningTLBridgeGPT2Processed(BaseCfg):
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensBridgeConfig(
             model_name="gpt2-small",
-            default_padding_side="left",
             enable_compatibility_mode=True,
         )
     )
@@ -401,9 +397,7 @@ class CircuitTracerTLGemma2(BaseCfg):
     # Use transformer_lens adapter for TL backend
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left"
-        )
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(model_name="gemma-2-2b")
     )
     generative_step_cfg: GenerativeClassificationConfig | None = field(
         default_factory=lambda: GenerativeClassificationConfig(
@@ -436,9 +430,7 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
     model_cfg_key: str = "rte_base_test"  # Required to lookup registry entry
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left"
-        )
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(model_name="gemma-2-2b")
     )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
@@ -666,9 +658,7 @@ class CoreSLBridgeGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    tl_cfg: ITLensBridgeConfig = field(
-        default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
-    )
+    tl_cfg: ITLensBridgeConfig = field(default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small"))
     hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
         default_factory=lambda: HFFromPretrainedConfig(
             pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
@@ -727,7 +717,7 @@ class CoreSLNNsightGPT2Analysis(AnalysisBaseCfg):
             # all-ones mask (sequences are already pre-padded to max_length),
             # so GPT-2 via NNsight never masks the left-padding tokens.
             # TL computes its own correct left-padding mask internally
-            # (default_padding_side="left"), so both backends agree when
+            # (the tokenizer pads left), so both backends agree when
             # NNsight receives the original tokenization mask.
             "signature_columns": ["input_ids", "attention_mask", "labels"],
         }
@@ -802,9 +792,7 @@ class CoreSLBridgeGPT2Analysis(AnalysisBaseCfg):
             pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         )
     )
-    tl_cfg: ITLensBridgeConfig = field(
-        default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
-    )
+    tl_cfg: ITLensBridgeConfig = field(default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small"))
     sae_cfgs: list = field(default_factory=lambda: [])
     auto_comp_cfg: AutoCompConfig = field(
         default_factory=lambda: AutoCompConfig(
@@ -888,9 +876,7 @@ class LightningSLBridgeGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
-        )
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small")
     )
 
 

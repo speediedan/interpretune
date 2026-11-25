@@ -26,6 +26,7 @@ from interpretune.utils import (
     rank_zero_info,
     rank_zero_debug,
     _resolve_env_auth_token,
+    check_gpu_device_request,
 )
 from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
 _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = False
 _LORA_PARAM = re.compile(r"\.lora_(?:A|B|embedding_A|embedding_B|magnitude_vector)\.([^.]+)(?:\.|$)")
+# the tensors of one adapter, as a venngram `name:` address (a regex matched in full over the module's names)
+_LORA_ADDRESS = r".*\.lora_(?:A|B|embedding_A|embedding_B|magnitude_vector)\.{}(?:\..*)?"
 
 
 def _ensure_bridge_processed_weight_device_patch() -> None:
@@ -83,6 +86,7 @@ def _place_hf_model_before_wrap(hf_model: torch.nn.Module, pruned_cfg: dict) -> 
     ``boot_transformers`` loads onto the target device for the same reason.
     """
     if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
+        check_gpu_device_request(pruned_cfg["device"], field="tl_cfg.device")
         hf_model.to(pruned_cfg["device"])
 
 
@@ -178,20 +182,44 @@ class BaseITLensModule(BaseITModule):
         model's head-splitting plan does not apply, and placement 'tp' needs an explicit ``tp_plan``."""
         return None
 
+    def refresh_tensor_references(self) -> None:
+        """Point the bridge's bias aliases (``b_in``, ``b_out``, ``b_Q``, ...) at the tensors placement registered.
+
+        A bridge component resolves each of its property aliases once, at setup, and keeps the tensor it found as a
+        plain attribute, so after a placement replaces that tensor the alias still names the old one. Its weight
+        properties (``W_in``, ``W_Q``, ...) are read anew each time and need nothing.
+        """
+        super().refresh_tensor_references()
+        for component in self.model.modules() if isinstance(self.model, torch.nn.Module) else ():
+            for alias, path in getattr(component, "_property_alias_registry", {}).items():
+                if alias not in component.__dict__:  # a property of the component's class, read anew each time
+                    continue
+                try:
+                    target = reduce(getattr, path.split("."), component)
+                except AttributeError:
+                    continue
+                object.__setattr__(component, alias, target)
+
     def build_tunable_view(self) -> Any | None:
-        """The TransformerLens-names view over this module's bridge (#758)."""
+        """The TransformerLens-names view over this module's bridge (#758), with the modules spliced in beside it
+        placed at their sites (#875)."""
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
 
-        return TransformerBridgeView(self, roles=self.tunable_roles())
+        return TransformerBridgeView(self, roles=self.tunable_roles(), attached=self.tunable_placements())
 
     def tunable_roles(self) -> dict[str, str]:
         """The LoRA tensors ``lora_cfg`` added take the ``adapter:<name>`` role, so a schedule selects them with
-        ``role:adapter``: no TransformerLens name reaches them."""
-        roles = super().tunable_roles()  # cooperative, provided by BaseITModule
-        for name, _ in self.named_parameters():  # the module's own names, which the view validates roles against
-            if (match := _LORA_PARAM.search(name)) is not None:
-                roles[name] = f"adapter:{match.group(1)}"
-        return roles
+        ``role:adapter``: no TransformerLens name reaches them.
+
+        Each adapter's role is declared by address, a name pattern over the module's own names (#875).
+        """
+        from interpretune.tuning.views import merge_roles
+
+        adapters = {m.group(1) for name, _ in self.named_parameters() if (m := _LORA_PARAM.search(name)) is not None}
+        return merge_roles(
+            super().tunable_roles(),  # cooperative, provided by BaseITModule
+            {f"adapter:{a}": f'name:"{_LORA_ADDRESS.format(re.escape(a))}"' for a in sorted(adapters)},
+        )
 
     def model_sig_keys(self, target_method: str) -> list:
         """The bridge method's parameter names, without ``labels``.
@@ -294,7 +322,8 @@ class BaseITLensModule(BaseITModule):
         # to eliminate need for two copies in memory)
         # TODO: add warning that TransformerLens only specifying a single device via device is supported
         #       (though the model will automatically be moved to multiple devices if n_devices > 1)
-        cust_config.num_labels = self.it_cfg.num_labels
+        if (num_labels := getattr(self.it_cfg, "num_labels", None)) is not None:  # a task-neutral config declares none
+            cust_config.num_labels = num_labels
         assert self.it_cfg.hf_from_pretrained_cfg is not None, (
             "cannot init hf_configured_model if hf_from_pretrained_cfg is None"
         )
@@ -375,6 +404,8 @@ class BaseITLensModule(BaseITModule):
         tl_cfg = self.it_cfg.tl_cfg
         cfg = tl_cfg.cfg
         self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
+        if getattr(tl_cfg, "move_to_device", True):
+            check_gpu_device_request(getattr(cfg, "device", None), field="tl_cfg.cfg.device")
         # TransformerLens 4.0 attaches `boot_native` when `transformer_lens` imports its native source module, so it
         # exists at runtime but not on the class pyright reads.
         bridge = TransformerBridge.boot_native(  # pyright: ignore[reportAttributeAccessIssue]  # attached at runtime by the native source module

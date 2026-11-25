@@ -120,6 +120,11 @@ scale behavior). Hub-layout variance (filenames that do not track the model
 id, sparse checkpoints) is covered by construction through the shared
 resolution seam plus a sparse-checkpoint unit test, not by network fixtures.
 
+Pointed at a collection's directory, `IT_ANALYSIS_OP_PATHS` loads exactly the op
+files its `it_component.yaml` declares in `ops.files`, as a hub pull does, so a
+new op file must be declared before a local load sees it and the collection's
+other YAML is never read as ops. Name a YAML file directly to load it regardless.
+
 ## Publishing
 
 Publish with the op-collection preset, which excludes bytecode and tool

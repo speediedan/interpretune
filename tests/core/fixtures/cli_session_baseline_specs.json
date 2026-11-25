@@ -50,7 +50,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -140,10 +141,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -308,7 +309,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -398,10 +400,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -428,7 +430,7 @@
             "freq_penalty": 0.0,
             "max_new_tokens": 5,
             "output_logits": true,
-            "padding_side": "left",
+            "padding_side": null,
             "prepend_bos": null,
             "return_dict_in_generate": null,
             "return_type": "input",
@@ -451,7 +453,7 @@
           "freq_penalty": 0.0,
           "use_past_kv_cache": false,
           "prepend_bos": null,
-          "padding_side": "left",
+          "padding_side": null,
           "return_type": "input",
           "verbose": true
         },
@@ -514,7 +516,6 @@
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensBridgeConfig",
         "move_to_device": true,
-        "default_padding_side": "left",
         "model_name": "gemma-2-2b-it",
         "transformer_bridge_config_overrides": null,
         "enable_compatibility_mode": true,
@@ -601,7 +602,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -691,10 +693,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -721,7 +723,7 @@
             "freq_penalty": 0.0,
             "max_new_tokens": 5,
             "output_logits": true,
-            "padding_side": "left",
+            "padding_side": null,
             "prepend_bos": null,
             "return_dict_in_generate": null,
             "return_type": "input",
@@ -744,7 +746,7 @@
           "freq_penalty": 0.0,
           "use_past_kv_cache": false,
           "prepend_bos": null,
-          "padding_side": "left",
+          "padding_side": null,
           "return_type": "input",
           "verbose": true
         },
@@ -807,7 +809,6 @@
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
         "move_to_device": true,
-        "default_padding_side": "left",
         "model_name": "gemma-2-2b-it",
         "fold_ln": false,
         "center_writing_weights": false,
@@ -899,7 +900,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -989,10 +991,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1019,7 +1021,7 @@
             "freq_penalty": 0.0,
             "max_new_tokens": 5,
             "output_logits": true,
-            "padding_side": "left",
+            "padding_side": null,
             "prepend_bos": null,
             "return_dict_in_generate": null,
             "return_type": "input",
@@ -1042,7 +1044,7 @@
           "freq_penalty": 0.0,
           "use_past_kv_cache": false,
           "prepend_bos": null,
-          "padding_side": "left",
+          "padding_side": null,
           "return_type": "input",
           "verbose": true
         },
@@ -1105,7 +1107,6 @@
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
         "move_to_device": true,
-        "default_padding_side": "left",
         "model_name": "gemma-2-2b-it",
         "fold_ln": false,
         "center_writing_weights": false,
@@ -1194,7 +1195,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -1284,10 +1286,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1444,7 +1446,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -1534,10 +1537,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1818,10 +1821,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -1991,7 +1994,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2081,10 +2085,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2261,7 +2265,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2351,10 +2356,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2530,7 +2535,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2620,10 +2626,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2698,6 +2704,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"
@@ -2771,7 +2778,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -2861,10 +2869,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -2939,6 +2947,7 @@
         "device_map": "auto",
         "torch_dtype": "bfloat16",
         "dispatch": true,
+        "task": "text-generation",
         "tokenizer_kwargs": {
           "add_bos_token": true,
           "padding_side": "left"
@@ -3013,7 +3022,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -3103,10 +3113,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3298,7 +3308,8 @@
         "cust_task_prompt": {},
         "ctx_question_join": "Does the previous passage imply that ",
         "question_suffix": "? Answer with only one word, either Yes or No.",
-        "add_generation_prompt": true
+        "add_generation_prompt": true,
+        "chat_template_kwargs": {}
       }
     },
     "module_cfg": {
@@ -3388,10 +3399,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3673,10 +3684,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }
@@ -3786,7 +3797,6 @@
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig",
         "move_to_device": true,
-        "default_padding_side": "right",
         "model_name": "gpt2-small",
         "fold_ln": true,
         "center_writing_weights": true,
@@ -3966,10 +3976,10 @@
         "default_metadata": {
           "info": {
             "creator_name": "interpretune-user",
-            "creator_url": "https://github.com/speediedan/interpretune",
+            "creator_url": "https://github.com/interpretune/interpretune",
             "generator": {
               "name": "Interpretune Circuit Tracer",
-              "url": "https://github.com/speediedan/interpretune",
+              "url": "https://github.com/interpretune/interpretune",
               "version": "latest"
             }
           }

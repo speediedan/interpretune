@@ -22,7 +22,9 @@ from tests.core.loader_equivalence import (
 )
 
 CONFIGS = cli_experiment_configs()
-BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text())
+BASELINE_SPECS = json.loads(
+    (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text(encoding="utf-8")
+)
 
 
 def _baseline_for(config_path):
@@ -44,7 +46,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 13, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 24, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -206,6 +208,12 @@ def test_materialized_defaults_present_and_declarative():
     for config_path in EXAMPLE_CONFIGS:
         key, body = load_config_file(config_path)
         loaded = load_session_cfg(body, expected_key=key)
+        if key.startswith(("prompt_analysis.", "capital_states.")):
+            # analysis only: the prompts carry no labels and the datamodule refuses to train, so no optimizer or
+            # schedule is declared, and the prompts are tokenized without a dataset map
+            assert not loaded.module_cfg.optimizer_init and not loaded.module_cfg.lr_scheduler_init, key
+            assert not loaded.datamodule_cfg.prepare_data_map_cfg, key
+            continue
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
         if key.startswith(("rte_ft.", "rte_sparse.")):
@@ -273,7 +281,7 @@ class TestFixtureNormalizationRules:
     def test_urls_and_plain_strings_pass_through(self):
         from tests.core.loader_equivalence import _normalize_env_paths
 
-        for value in ("https://github.com/speediedan/interpretune", "gpt2", "a\\literal\\backslash"):
+        for value in ("https://github.com/interpretune/interpretune", "gpt2", "a\\literal\\backslash"):
             assert _normalize_env_paths(value) == value
 
     def test_fixture_key_derives_posix_from_windows_shaped_path(self):
@@ -296,6 +304,6 @@ class TestFixtureNormalizationRules:
         """No absolute filesystem path may survive into the committed fixture."""
         import re
 
-        raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text()
+        raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text(encoding="utf-8")
         offenders = re.findall(r'"(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:(?:\\\\|/))[^"]*"', raw)
         assert not offenders, offenders[:5]

@@ -134,7 +134,7 @@ class BaseNNsightModule(BaseITModule):
         from interpretune.tuning.views import RefusingView, default_view
 
         if "hf_model" in self._modules:
-            return default_view(self, roles=self.tunable_roles())
+            return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:
@@ -142,7 +142,11 @@ class BaseNNsightModule(BaseITModule):
         if cfg is None:
             return "the model was not built through nnsight (the composition has no `nnsight_cfg`)."
         if cfg.remote:
-            return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
+            return (
+                "nnsight compositions executing remotely (NDIF) have no local weights to tune; train adapter or "
+                "intervention tensors created inside a bounded remote session instead "
+                "(interpretune.tuning.remote.run_remote_chunk)."
+            )
         model = getattr(self, "model", None)
         if model is not None and not getattr(model, "dispatched", True):
             return (
@@ -257,14 +261,15 @@ class BaseNNsightModule(BaseITModule):
                     "Set NDIF_API_KEY environment variable or provide api_key in nnsight_cfg."
                 )
 
-        # Initialize the NNsight model. TransformersModel with the text-generation task
-        # is what the deprecated LanguageModel name pinned; it also constructs
-        # multimodal-registered repos (e.g. gemma-3-4b-it) that LanguageModel refused,
-        # so no vision fallback remains. tokenizer_kwargs are settings on the loaded
-        # tokenizer (padding_side being the usual one), applied after construction.
+        # Initialize the NNsight model. TransformersModel with the text-generation task (the
+        # default `nnsight_cfg.task`) is what the deprecated LanguageModel name pinned; it also
+        # constructs multimodal repos whose configuration is registered for causal LM (e.g.
+        # gemma-3-4b-it). One registered only under a multimodal task names it in the config.
+        # tokenizer_kwargs are settings on the loaded tokenizer (padding_side being the usual
+        # one), applied after construction.
         rank_zero_debug(f"NNsight kwargs: {nnsight_kwargs}")
         tokenizer_kwargs = nnsight_kwargs.pop("tokenizer_kwargs", None)
-        self.model = TransformersModel(model_name, task="text-generation", **nnsight_kwargs)
+        self.model = TransformersModel(model_name, task=nnsight_cfg.task, **nnsight_kwargs)
         for key, value in (tokenizer_kwargs or {}).items():
             setattr(self.model.tokenizer, key, value)
 
@@ -276,6 +281,18 @@ class BaseNNsightModule(BaseITModule):
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
+
+        # A plain (core, nnsight) composition is its own model backend, so the analysis ops that run the model
+        # (`model_fwd_intervention`, `fwd_w_cache`, ...) need no latent adapter composed to reach it. An architecture
+        # the hook mapping does not cover still loads, without a backend, as it did before.
+        if self.__dict__.get("_model_backend") is None:
+            from interpretune.adapters.nnsight.backends import NNsightModelBackend
+
+            backend = NNsightModelBackend.for_model(self.model, strict=False)
+            if backend is None:
+                rank_zero_debug("No NNsight model backend: the hook mapping does not cover this model's architecture")
+            else:
+                self._model_backend = backend
 
         rank_zero_info("NNsight TransformersModel initialized successfully")
 

@@ -41,6 +41,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+import torch
+
 from interpretune.utils import MisconfigurationException
 
 #: The transforms :func:`member_values` evaluates without a statistic from the caller.
@@ -59,12 +61,66 @@ Member = tuple[int, int]
 Statistic = float | Mapping[int, float] | Mapping[Member, float]
 
 
+def normalized_unit_doses(
+    dose: float | torch.Tensor,
+    *,
+    units: tuple[int, ...],
+    down_projection: torch.Tensor,
+    unit_dim: int,
+    median_residual_norm: float,
+) -> torch.Tensor:
+    r"""Convert normalized doses to activation units: $d_u m / \lVert W_u \rVert_2$.
+
+    Args:
+        dose: A scalar, or one normalized dose per selected unit in ``units`` order.
+        units: The selected unit indices.
+        down_projection: The down-projection weight matrix in its stored layout.
+        unit_dim: Its unit axis, 1 for an ``nn.Linear`` down projection and 0 for a GPT-2 ``Conv1D`` one.
+            Read it from the measured component-map layout; shape alone cannot identify it.
+        median_residual_norm: The measured median residual norm $m$, from the caller's reference data.
+
+    Raises:
+        MisconfigurationException: A unit is out of bounds, an axis or shape is unsupported, a selected weight has
+            zero norm, or a dose, norm or weight is nonfinite.
+    """
+    from interpretune.analysis.backends.interventions import _validate_unit_indices
+
+    if down_projection.ndim != 2 or unit_dim not in (0, 1):
+        raise MisconfigurationException("normalized unit doses need a matrix and unit_dim 0 or 1")
+    _validate_unit_indices(units, down_projection.shape[unit_dim])
+    weights = (
+        down_projection.detach()
+        .float()
+        .index_select(unit_dim, torch.tensor(units, dtype=torch.long, device=down_projection.device))
+    )
+    norms = torch.linalg.vector_norm(weights, dim=1 - unit_dim)
+    values = torch.as_tensor(dose, device=norms.device, dtype=norms.dtype)
+    if values.shape not in (torch.Size(), torch.Size([len(units)])):
+        raise MisconfigurationException(f"dose shape {tuple(values.shape)} needs a scalar or {len(units)} values")
+    median = torch.as_tensor(median_residual_norm, device=norms.device)
+    if (
+        median.ndim != 0
+        or not bool(torch.isfinite(median))
+        or bool(median < 0)
+        or not bool(torch.isfinite(values).all())
+        or not bool(torch.isfinite(norms).all())
+        or bool((norms == 0).any())
+    ):
+        raise MisconfigurationException(
+            "normalized unit doses need finite doses, a nonnegative median and nonzero finite column norms"
+        )
+    return values * median / norms
+
+
 def target_kind(recipe: Any, op: Any) -> str:
     """``activation``, ``units`` or ``features``, the last for any set naming ``features``.
 
     Venngram's ``Op.target_kind`` reads a set with both ``features`` and ``units`` as units. Here it is a feature
-    target whose ``units`` list the features, so its members are never scattered into the site's own activation.
+    target whose ``units`` list the features, so its members are never scattered into the site's own activation. An op
+    on a graph subset keeps venngram's kind (``graph_nodes``, or ``graph_complement`` for a restriction).
     """
+    if getattr(op, "graph", None) is not None:
+        return op.target_kind(recipe.book)
     if op.target is None:
         return "activation"
     from venngram.address import Term
@@ -95,8 +151,8 @@ def target_members(recipe: Any, op: Any) -> list[Member]:
     unit target (``@a & @b``) lists the members venngram resolves for it (see :func:`_composed_members`).
 
     Raises:
-        MisconfigurationException: If the set does not name explicit layers and members, or a composed target's value
-            is neither a ``dose`` nor a ``doses`` table.
+        MisconfigurationException: If the set does not name explicit layers and members, or venngram cannot resolve a
+            composed target's members.
     """
     from venngram.address import Term
 
@@ -122,19 +178,14 @@ def target_members(recipe: Any, op: Any) -> list[Member]:
 def _composed_members(recipe: Any, op: Any) -> list[Member]:
     """A composed unit target's members (``@a & @b``, ``@a - @control``), as venngram resolves the composition.
 
-    Venngram lists a composition's ``(layer, unit)`` pairs through an op's doses (``Op.unit_doses``), so a composed
-    target takes a ``dose`` or ``doses`` value; with ``doses``, its members are the ones the table doses.
+    Venngram lists them in order of first appearance whatever the op's value is (``Op.unit_members``), as a single
+    set's members are listed here: a ``doses`` table then doses only the members it lists, and an evidence-sourced
+    value reads its column for every member.
     """
     from venngram.errors import AddressError
 
-    value = op.value
-    if value is None or value.source not in ("dose", "doses"):
-        raise MisconfigurationException(
-            f"set `{op.target}` composes unit sets, whose members are listed through the op's doses: give it a"
-            " `dose` or `doses` value (an evidence-sourced value on a composed target is not applied yet)"
-        )
     try:
-        return list(op.unit_doses(recipe.book))
+        return list(op.unit_members(recipe.book))
     except AddressError as err:
         raise MisconfigurationException(str(err)) from err
 

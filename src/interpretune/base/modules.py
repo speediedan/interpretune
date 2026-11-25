@@ -4,10 +4,14 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
-from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
-from interpretune.tuning.latents import latent_model_roles
+from interpretune.tuning.interventions import (
+    attach_configured_interventions,
+    intervention_placements,
+    intervention_role_addresses,
+)
+from interpretune.tuning.latents import latent_model_placements, latent_model_role_addresses
 from interpretune.tuning.weights import weight_edit_roles
-from interpretune.tuning.views import attach_tunable_view
+from interpretune.tuning.views import attach_tunable_view, merge_roles
 from interpretune.utils import MisconfigurationException
 
 
@@ -108,6 +112,31 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         return [(type(self).__name__, self, ("it_generate",))] if hasattr(self, "it_generate") else []
 
+    def refresh_tensor_references(self) -> None:
+        """Refresh any reference this composition's model holds to its own parameters or buffers outside the module
+        tree, once a placement has replaced them.
+
+        Every placement registers new tensors in place of the module's own (``fully_shard`` and
+        ``parallelize_module`` register ``DTensor`` parameters, and a meta-built module is materialized), so a reference
+        taken before it still names the old tensor, which is no longer trained or read. Called by
+        :func:`~interpretune.runners.distributed.place_module` once the module is placed. Cooperative: an adapter
+        extends ``super()``'s.
+        """
+
+    def activation_splices(self) -> dict[str, tuple[torch.nn.Module, int | None]]:
+        """Modules a backend splices into the model's forward pass in place of one activation, each as ``site:
+        (module, width)``.
+
+        Each module is called with the activation at ``site`` and returns what replaces it (an SAE spliced by SAE Lens
+        reads and rewrites a whole activation). ``width`` is the size of the activation's last dimension the module
+        reads, or ``None`` when that is not known. Placement 'tp' gathers an activation that arrives split across ranks
+        (a ``DTensor``) whole for each module and lays its output out as the activation it replaces, as it does for a
+        latent model spliced with ``tuning.latents``, and refuses one narrower than ``width``: a split layer's local
+        shard. Interpretune's own latent models and interventions are not listed here. Cooperative: an adapter extends
+        ``super()``'s mapping.
+        """
+        return {}
+
     def default_tp_plan(self, world_size: int) -> dict[str, dict[str, Any]] | None:
         """The ``tp_plan`` placement 'tp' uses when none is given: the plan transformers declares for the Hugging
         Face model this composition runs (:meth:`meta_load_target`), keyed under its path here, or ``None`` when
@@ -126,7 +155,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return hf_tp_plan(target, prefix, world_size) or None
 
     def meta_load_target(self) -> torch.nn.Module:
-        """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
+        """The torch module a placement loads a meta-built model's weights into: ``self.model`` here.
 
         An adapter whose model wraps a torch module rather than being one (nnsight) returns the module it wraps.
         """
@@ -154,18 +183,36 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         from interpretune.tuning.views import default_view
 
-        return default_view(self, roles=self.tunable_roles())
+        return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
+
+    def tunable_placements(self) -> dict[str, str]:
+        """Where this module's view places the modules spliced in beside the model, by the module each rewrites.
+
+        Latent models and interventions are registered beside the model (``latent_models.<name>``,
+        ``interventions.<name>``) and spliced in with hooks, so they nest under none of its modules; venngram's view
+        takes this mapping (its ``attached``) to give their tensors the layer and component of their site, so
+        ``role:latent & layers:12:`` selects the latent models spliced at layers 12 and above. Cooperative, like
+        :meth:`tunable_roles`: an adapter registering another spliced module adds its placement to ``super()``'s.
+        """
+        return {**latent_model_placements(self), **intervention_placements(self)}
 
     def tunable_roles(self) -> dict[str, str]:
-        """Roles for this module's parameters and buffers, by name.
+        """Roles for this module's parameters and buffers, as venngram views take them (``roles=``): roles mapped
+        to addresses (``{"latent:sae": "module:latent_models.sae"}``), resolved against the view's own names and
+        structure when it is built, or tensor names mapped to roles (speediedan/venngram#109).
 
-        Cooperative: mixins add theirs to ``super()``'s. This base declares the roles of the latent models and
-        interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact``
-        for a frozen one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the
+        Cooperative: mixins add theirs to ``super()``'s with :func:`~interpretune.tuning.views.merge_roles`, which
+        joins two addresses given for one role. This base declares the roles of the latent models and interventions
+        attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact`` for a frozen one:
+        :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), each by address, and of the
         operands of the weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
-        :mod:`interpretune.tuning.weights`).
+        :mod:`interpretune.tuning.weights`) by name. An edit's operand may sit under an attached latent model or
+        intervention, whose address covers it, and a name entry wins over an address, so the edit's role holds
+        there (#1098).
         """
-        return {**latent_model_roles(self), **intervention_roles(self), **weight_edit_roles(self)}
+        return merge_roles(
+            latent_model_role_addresses(self), intervention_role_addresses(self), weight_edit_roles(self)
+        )
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""

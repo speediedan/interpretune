@@ -73,7 +73,7 @@ duration of that package's install. Three keywords matter in practice:
   stop a from-source package from downgrading shared pins. Two maintained files:
   - `requirements/ci/torch-override.txt`: auto-generated, pins only torch. Use for simple cases.
   - `requirements/ci/overrides.txt`: manually maintained; pins torch **and** triton/torchvision plus the
-    `transformer-lens==4.0.0`/`nnsight==0.8.2` release pins and several ecosystem floors. Use for packages
+    `transformer-lens==4.0.0`/`nnsight==0.8.3` release pins and several ecosystem floors. Use for packages
     with aggressive constraints (nnsight, SAEDashboard's `<2.8` torch pin, etc.). If the override file
     mentions the package currently being installed, the builder automatically filters that line out so the
     editable install still wins.
@@ -135,7 +135,7 @@ environment with portable defaults:
 | `IT_BENCH_PYTHON` | the invoking interpreter | Interpreter used by the benchmark/profiling harnesses (point it at your built venv's `python`). |
 | `IT_BENCH_PY_SPY` | `py-spy` on `PATH` (or next to `IT_BENCH_PYTHON`) | py-spy binary used for profiling waves. |
 | `SAEDASHBOARD_REPO_ROOT` | `~/repos/SAEDashboard` | Local SAEDashboard checkout used by pipeline tooling. |
-| `SAELENS_REPO_ROOT` | `~/repos/SAELens` | Local SAELens checkout used by pipeline tooling. |
+| `SAELENS_REPO_ROOT` | `~/repos/SAELens` | Local SAELens checkout the benchmark tooling records lineage from and branches preserved-baseline worktrees off. The dashboard pipeline imports the installed sae-lens release and never puts this checkout on its `PYTHONPATH`. |
 | `NEURONPEDIA_UTILS_ROOT` | `~/repos/neuronpedia/utils/neuronpedia-utils` | neuronpedia-utils checkout (columnar import tooling). |
 | `IT_ENV_FILE` | repo-local `.env` when present | Overrides the Neuronpedia env-file path used to resolve the local DB URL for imports. |
 

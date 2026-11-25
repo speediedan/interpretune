@@ -360,7 +360,8 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
     if spec.generation_config is not None:
         model.generation_config = spec.generation_config
     if spec.activation_checkpointing:
-        model.gradient_checkpointing_enable()
+        # transformers 5.24 renamed `gradient_checkpointing_enable` and deprecated the old name
+        (getattr(model, "activation_checkpointing_enable", None) or model.gradient_checkpointing_enable)()
     if spec.enable_input_require_grads:
         model.enable_input_require_grads()
     return model.to(dev)
@@ -899,12 +900,19 @@ COMPOSITIONS["nnsight_train"] = Composition(
 
 
 def _sae_cfg_extras() -> dict[str, Any]:
-    """One gpt2-small-res-jb SAE spliced in at init, as the sae_lens pairs measure (interpretune#825)."""
+    """One gpt2 residual SAE spliced in at init, as the sae_lens pairs measure.
+
+    The SAE is one that declares no weight processing (OpenAI's v5 SAEs, trained on GPT-2's raw weights), so it attaches
+    to the unprocessed bridge both arms build; the sae_lens adapter refuses an SAE whose declared processing the model
+    lacks, such as gpt2-small-res-jb's ``center_writing_weights``.
+    """
     from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig
 
     return {
         "add_saes_on_init": True,
-        "sae_cfgs": [SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
+        "sae_cfgs": [
+            SAELensFromPretrainedConfig(release="gpt2-small-resid-post-v5-32k", sae_id="blocks.0.hook_resid_post")
+        ],
     }
 
 

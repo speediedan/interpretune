@@ -86,7 +86,7 @@ runs:
         GITHUB_WORKFLOW: ${{ github.workflow }}
         GITHUB_RUN_NUMBER: ${{ github.run_number }}
         GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-        REPO: speediedan/interpretune
+        REPO: interpretune/interpretune
 
     - name: Check disk space before tests
       shell: bash

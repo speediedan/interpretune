@@ -18,7 +18,11 @@ from pathlib import Path
 import yaml
 from huggingface_hub import hf_hub_download
 
-from interpretune.hub.cache import IT_COMPONENTS_HUB_CACHE
+from interpretune.hub.cache import (
+    IT_COMPONENTS_HUB_CACHE,
+    IT_COMPONENTS_HUB_CACHE_SETTING,
+    ensure_writable_cache_root,
+)
 from interpretune.hub.manifest import (
     IT_COMPONENT_MANIFEST,
     ComponentManifestError,
@@ -42,6 +46,13 @@ from interpretune.utils.requirements import (
 
 # version telemetry for hf_hub_download (design §8); interpretune may be running from a raw checkout
 _TELEMETRY = {"library_name": "interpretune", "library_version": _installed_version("interpretune")}
+
+
+def _download_root(cache_dir: Path | str | None) -> str:
+    """The components cache a download writes into: a caller's ``cache_dir`` as given, the default proven writable."""
+    if cache_dir:
+        return str(cache_dir)
+    return str(ensure_writable_cache_root(IT_COMPONENTS_HUB_CACHE, IT_COMPONENTS_HUB_CACHE_SETTING))
 
 
 class ComponentRequirementError(ImportError):
@@ -125,7 +136,7 @@ def pull_component_manifest(
             repo_id,
             IT_COMPONENT_MANIFEST,
             revision=revision,
-            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            cache_dir=_download_root(cache_dir),
             token=token,
             **_TELEMETRY,
         )
@@ -171,7 +182,7 @@ def pull_component_config(
             repo_id,
             configs[key],
             revision=commit,  # pinned: partial materialization stays single-revision coherent
-            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            cache_dir=_download_root(cache_dir),
             token=token,
             **_TELEMETRY,
         )
@@ -208,7 +219,7 @@ def pull_experiment_config(
             repo_id,
             entries[key]["config"],
             revision=commit,  # pinned: partial materialization stays single-revision coherent
-            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            cache_dir=_download_root(cache_dir),
             token=token,
             **_TELEMETRY,
         )
@@ -224,9 +235,9 @@ def declared_component_payloads(manifest: dict) -> list[str]:
     verb, so those are not listed. What IS listed is every payload a cache-only loader reads whole: the
     adapters entrypoint (``load_hub_adapter``), the promptconfigs entrypoint (``import_cached_entrypoint``),
     the module and datamodule entrypoints (snapshot class resolution), the datamodule standalone configs
-    (``resolve_datamodule_config``), and the hookmaps documents (``load_hub_hookmaps``). A manifest-only pull
-    of such a component used to leave a snapshot those loaders could not complete, with an error blaming a
-    partial download.
+    (``resolve_datamodule_config``), the hookmaps documents (``load_hub_hookmaps``) and the helper modules
+    (``load_helpers``). A manifest-only pull of such a component used to leave a snapshot those loaders could
+    not complete, with an error blaming a partial download.
     """
     rels: list[str] = []
     for section in ("adapters", "promptconfigs"):
@@ -246,6 +257,9 @@ def declared_component_payloads(manifest: dict) -> list[str]:
     for rel in (manifest.get("hookmaps") or {}).get("files") or []:
         if rel not in rels:
             rels.append(rel)
+    for rel in ((manifest.get("helpers") or {}).get("modules") or {}).values():
+        if rel not in rels:
+            rels.append(rel)
     return rels
 
 
@@ -261,7 +275,7 @@ def pull_component_payloads(
                     repo_id,
                     rel,
                     revision=commit,  # pinned: the snapshot stays single-revision coherent
-                    cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+                    cache_dir=_download_root(cache_dir),
                     token=token,
                     **_TELEMETRY,
                 )
@@ -289,7 +303,7 @@ def pull_component_extra_files(
             repo_id,
             revision=commit,  # pinned: the snapshot stays single-revision coherent
             allow_patterns=[p for rel in rels for p in (rel, f"{rel}/**")],
-            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            cache_dir=_download_root(cache_dir),
             token=token,
             **_TELEMETRY,
         )
@@ -355,7 +369,7 @@ def pull_experiment_payloads(
                 repo_id,
                 rel,
                 revision=commit,  # pinned: partial materialization stays single-revision coherent
-                cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+                cache_dir=_download_root(cache_dir),
                 token=token,
                 **_TELEMETRY,
             )

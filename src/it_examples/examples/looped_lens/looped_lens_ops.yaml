@@ -1,0 +1,79 @@
+---
+# Collection identity: versions the op contract set (names, schemas), not a package. No `requires:` window: a
+# `>=0.1`-style floor does not match a `0.1.0.devN+g<sha>` source install, so a naive one would skip the collection
+# in any checkout. Optional dependencies (venngram to resolve a book, the nnsight client for NDIF) are imported only
+# on the paths that need them.
+collection:
+  name: looped_lens
+  version: 0.1.0
+
+looped_lens_read:
+  description: Read a looped lens (N sites x K tokens, labelled by visit) from Inkling 2 Mini, one read position per prompt
+  implementation: looped_lens_ops.looped_lens_read_impl
+  aliases: [looped_lens]
+  input_schema:
+    looped_lens_table:
+      # A resolved site table (.json) or a lens book (.yaml, resolved with venngram against `looped_lens_map`).
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    looped_lens_map:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    looped_lens_positions:
+      # Read position per prompt, negative from the last real token; unset reads the last token.
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    looped_lens_remote:
+      datasets_dtype: bool
+      required: false
+      non_tensor: true
+      sequence_type: false
+    looped_lens_head:
+      # The checkpoint's final norm and unembedding (safetensors) for decoding NDIF states locally.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    looped_lens_translators:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+  output_schema:
+    looped_lens_labels:
+      # One label per read site, in site order.
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: true
+    looped_lens_tokens:
+      # Per prompt, per site, the kept token texts: prompts x sites x up to K strings (ragged). A nested string schema
+      # rather than `object`: a stored `object` column holds a list's repr, not the list.
+      datasets_dtype: string
+      non_tensor: true
+      array_shape: [null, null, null]
+      sequence_type: false
+    looped_lens_top_ids:
+      datasets_dtype: int64
+      array_shape: [null, null, null]
+      sequence_type: false
+    looped_lens_positions:
+      # The read position per prompt, the one a site with no placement of its own is read at.
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    looped_lens_site_positions:
+      # Where each site was read (prompts x sites): a book may place a site at its question's end, so a prompt's sites
+      # can be read at different tokens.
+      datasets_dtype: int64
+      array_shape: [null, null]
+      sequence_type: false
+    looped_lens_book:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false

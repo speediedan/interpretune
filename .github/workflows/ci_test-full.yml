@@ -32,7 +32,7 @@ on:
         default: '0'
         type: string
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -53,7 +53,8 @@ on:
       - "!**/LICENSE*"
   pull_request:
     branches: [main, "release/*", "bugfix/*", "feature/*"]
-    types: [opened, reopened, ready_for_review, synchronize]
+    # `labeled`: adding the `ci:macos` label runs the macOS leg on a PR (see `os_legs`); any other label does nothing
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -73,15 +74,19 @@ on:
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  # a label event gets a group of its own, so the labeler's labels on a new PR never cancel that PR's test run
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}${{ github.event.action == 'labeled' && format('-{0}', github.event.label.name) || '' }}
   cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 jobs:
   # this job allows us to set CI test filters, log level, resource monitor and os tracing, test with precedence:
   # workflow_dispatch inputs -> manual workflow overrides -> repository variable defaults -> fallback defaults
   log-dispatch-inputs:
+    # a label other than `ci:macos` starts nothing
+    if: "github.event.action != 'labeled' || github.event.label.name == 'ci:macos'"
     runs-on: ubuntu-latest
     outputs:
+      os_legs: ${{ steps.os_legs.outputs.os }}
       log_level: ${{ steps.resolve_dispatch_vars.outputs.log_level }}
       run_resource_monitor: ${{ steps.resolve_dispatch_vars.outputs.run_resource_monitor }}
       enable_os_trace: ${{ steps.resolve_dispatch_vars.outputs.enable_os_trace }}
@@ -108,6 +113,26 @@ jobs:
           echo "ENABLE_OS_TRACE=${{ env.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
           echo "PYTEST_FILTER_PATTERN=${{ env.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
           echo "RUN_W_GRAFANA=${{ env.RUN_W_GRAFANA || '0' }}" >> $GITHUB_OUTPUT
+      - name: Choose the OS legs
+        id: os_legs
+        # Hosted macOS runners are few (five at once) and the macOS leg is the slowest: on 2026-11-18 macOS jobs queued
+        # a median 21 min (p90 140) and this leg ran a median 100 min, against 72 (Linux) and 69 (Windows). So a PR runs
+        # Linux and Windows, and macOS when it carries the `ci:macos` label (adding the label runs that leg alone, the
+        # other two already ran); a push (main, release/*) and a manual dispatch run all three.
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          MACOS: "${{ contains(github.event.pull_request.labels.*.name, 'ci:macos') }}"
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo 'os=["ubuntu-22.04","windows-2022","macos-15"]' >> "$GITHUB_OUTPUT"
+          elif [ "$ACTION" = "labeled" ]; then
+            echo 'os=["macos-15"]' >> "$GITHUB_OUTPUT"
+          elif [ "$MACOS" = "true" ]; then
+            echo 'os=["ubuntu-22.04","windows-2022","macos-15"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-22.04","windows-2022"]' >> "$GITHUB_OUTPUT"
+          fi
       - name: Resolve workflow dispatch inputs
         id: resolve_dispatch_vars
         run: |
@@ -122,11 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [
-          ubuntu-22.04,
-          windows-2022,
-          macos-15
-          ]
+        os: ${{ fromJSON(needs.log-dispatch-inputs.outputs.os_legs) }}
         python-version: ["3.13"]
     timeout-minutes: 120
     env:
@@ -140,8 +161,8 @@ jobs:
       # when a token is present). Both lines revert together at the #261 flip.
       HF_TOKEN: ${{ secrets.HF_MCP_TOKEN_RW }}
       HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY: ${{ secrets.HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY }}
-      # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
-      # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
+      # sysmon coverage core (coverage>=7.4, py>=3.12): code that replaces the thread's trace function cannot wipe it
+      # (see [tool.gpu-epsilon.phases] in pyproject.toml)
       COVERAGE_CORE: sysmon
       # Windows console streams default to cp1252, so any non-latin-1 char in a log message (e.g.
       # the '→' in the TL param-mapping summary) raises UnicodeEncodeError inside logging.emit —
@@ -198,6 +219,30 @@ jobs:
             ~/.cache/huggingface
             ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
+
+      # Some GitHub-hosted Windows hosts (seen on the Intel Xeon Platinum 8573C) advertise AMX inconsistently, so oneDNN
+      # selects its AMX kernels and the process dies on their first tile instruction (exit code 132). Capping oneDNN one
+      # level below AMX is the highest cap that does not crash there; torch's own kernels are unaffected. Remove this
+      # step when https://github.com/actions/runner-images/issues/14483 is fixed on the Windows images.
+      - name: Keep oneDNN off AMX (Windows only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "ONEDNN_MAX_CPU_ISA=AVX512_CORE_FP16" >> "$GITHUB_ENV"
+
+      # Hosted runners come from more than one CPU generation, and kernels selected for one can fail on another. Logging
+      # the CPU model, the capability torch's dispatcher selected and any oneDNN cap lets a crashed leg be matched to its
+      # CPU and shows whether the cap reached the job.
+      - name: Report the runner's CPU
+        continue-on-error: true
+        shell: bash
+        run: |
+          case "${RUNNER_OS}" in
+            Windows) powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" ;;
+            Linux) grep -m1 'model name' /proc/cpuinfo ;;
+            macOS) sysctl -n machdep.cpu.brand_string ;;
+          esac
+          python -c "import platform, torch; print('processor:', platform.processor()); print('torch CPU capability:', torch.backends.cpu.get_cpu_capability())"
+          echo "ONEDNN_MAX_CPU_ISA: ${ONEDNN_MAX_CPU_ISA:-unset}"
 
       - name: Run pytest coverage w/ configured instrumentation
         id: run-pytest-coverage

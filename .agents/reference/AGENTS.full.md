@@ -130,7 +130,7 @@ thing it asserted is not true, and the weakened form carries a false premise for
 | **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
 
 **`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
-like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.8.2` pins live in
+like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.8.3` pins live in
 `[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
 TransformerLens 4.0 over sae-dashboard's `^2.2.0` cap, so pip happily resolves a TL 2.x release
 (**2.16.1** when this was measured), and every
@@ -233,15 +233,14 @@ pins provide. Reconcile this list against `pyproject.toml`'s `git-deps` block be
 | --- | --- | --- |
 | `sae-dashboard` | git-deps pin (SD#74 still open) | yes, while the fork surface is required |
 | `circuit-tracer` | git-deps pin | yes, no release carries the attribution-target surface |
-| `sae-lens` | **temporary git-deps pin: the head of decoderesearch/SAELens#739** | only for SAELens upstream work |
+| `sae-lens` | released floor in the `examples` extra (`>=6.55.0,<7`) | only for SAELens upstream work |
 | `transformer-lens`, `nnsight` | release pins in `[tool.uv] override-dependencies` | only for upstream work |
 
-**sae-lens is git-pinned again, temporarily, and only to decoderesearch/SAELens#739.** No sae-lens
-release imports under transformer-lens 4.0, so the pin carries that PR's head until a release does; the
-retirement condition lives beside the pin in `pyproject.toml`. While it stands, a registry entry recording
-the #739 fork and sha for sae_lens is CORRECT. **The old fork pin (`speediedan/SAELens@86f90b3d`) must never
-come back**: it carries 20 duplicate YAML keys in `pretrained_saes.yaml` from a bad rebase, silently
-binding 10 `-pt-` transcoder entries to the WRONG weights.
+**sae-lens installs from its released floor.** 6.55.0 is the first release that imports under
+transformer-lens 4.0, so the temporary git pin to decoderesearch/SAELens#739's head is retired, and a registry
+entry recording a git fork and sha for sae_lens now means the env is ahead of the pins. **The old fork pin
+(`speediedan/SAELens@86f90b3d`) must never come back**: it carries 20 duplicate YAML keys in
+`pretrained_saes.yaml` from a bad rebase, silently binding 10 `-pt-` transcoder entries to the WRONG weights.
 
 Canonical rebuild for someone developing SAEDashboard and circuit-tracer alongside interpretune:
 
@@ -276,12 +275,12 @@ When a from-source package brings in git-pinned dependencies, UV caches those re
 
 Where pins live and how to refresh them:
 
-- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.8.2`
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.8.3`
   release pins (plus `jaxtyping>=0.3`, which TL 4.0 needs over sae-dashboard's `^0.2.28`), which force
   TransformerLens 4.0 over downstream v2 caps; keep them in sync with
   `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from
   re-resolving TL during `--from-source` installs).
-- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer, sae-lens,
+- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer,
   sae-dashboard, finetuning-scheduler). These are excluded from the universal lock, so every bump needs
   hand validation (dashboard parity gates + core suite in a scratch env) before folding it into `it_latest`.
 - `requirements/ci/requirements.txt` — the CI lock; regenerate with `./requirements/utils/lock_ci_requirements.sh`.
@@ -724,7 +723,7 @@ Serialization details matter here:
 
 ## CI/CD
 
-- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout
+- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout. A PR runs Linux and Windows; macOS runs on pushes (main, release/*), a manual dispatch, and a PR labelled `ci:macos` (adding the label runs the macOS leg alone): hosted macOS runners are few and the leg is the slowest
 - **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template shared with finetuning-scheduler (gpu-epsilon's `templates/gpu-job.yml`, pinned to a tag in each GPU pipeline's `resources`, with interpretune's settings in `.azure-pipelines/templates/it-gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`python -m gpu_epsilon.phase_evidence`, shared with finetuning-scheduler and configured by `[tool.gpu-epsilon.phase-evidence]` in `pyproject.toml`): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then the release eligibility checker shared with finetuning-scheduler (`gpu_epsilon.release_eligibility`, configured by `tests/gpu_ci/release.json`, pinned in `requirements/ci/gpu_epsilon.txt`) over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
 - **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
   Check the build's approval state before touching runner configuration: an ungranted gate looks
@@ -942,7 +941,7 @@ instructions file rather than in this published one.
 
 ## Important Caveats
 
-- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
+- **Git dependencies** (circuit_tracer, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
 - **Type checking:** Enabled for every module under `src/`, the relocated research and notebook trees included; there is no exclusion list, so a module that cannot be typed is fixed or removed rather than exempted. All `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports

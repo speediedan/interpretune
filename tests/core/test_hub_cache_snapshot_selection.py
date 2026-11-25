@@ -49,16 +49,16 @@ def poisoned_hub_cache(tmp_path):
     partial.mkdir(parents=True)
     complete.mkdir(parents=True)
     (partial / "fake_defs.py").write_text(
-        "def fake_impl(module, analysis_batch, batch, batch_idx, **kw):\n    return analysis_batch\n"
+        "def fake_impl(module, analysis_batch, batch, batch_idx, **kw):\n    return analysis_batch\n", encoding="utf-8"
     )
-    (complete / "it_component.yaml").write_text(MANIFEST)
-    (complete / "fake_ops.yaml").write_text(OPS_YAML)
+    (complete / "it_component.yaml").write_text(MANIFEST, encoding="utf-8")
+    (complete / "fake_ops.yaml").write_text(OPS_YAML, encoding="utf-8")
     (complete / "fake_defs.py").write_text(
-        "def fake_impl(module, analysis_batch, batch, batch_idx, **kw):\n    return analysis_batch\n"
+        "def fake_impl(module, analysis_batch, batch, batch_idx, **kw):\n    return analysis_batch\n", encoding="utf-8"
     )
     refs = repo / "refs"
     refs.mkdir()
-    (refs / "main").write_text(PARTIAL_SHA)
+    (refs / "main").write_text(PARTIAL_SHA, encoding="utf-8")
     return tmp_path
 
 
@@ -85,8 +85,8 @@ def test_refs_main_still_wins_when_it_is_complete(poisoned_hub_cache, tmp_path, 
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
     # promote the partial snapshot to complete: main now legitimately wins
     partial = poisoned_hub_cache / "models--fakeuser--fake_partial_repo" / "snapshots" / PARTIAL_SHA
-    (partial / "it_component.yaml").write_text(MANIFEST)
-    (partial / "fake_ops.yaml").write_text(OPS_YAML)
+    (partial / "it_component.yaml").write_text(MANIFEST, encoding="utf-8")
+    (partial / "fake_ops.yaml").write_text(OPS_YAML, encoding="utf-8")
     import interpretune.analysis as ia
 
     monkeypatch.setattr(ia, "IT_ANALYSIS_HUB_CACHE", str(poisoned_hub_cache))

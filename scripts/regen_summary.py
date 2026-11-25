@@ -41,13 +41,13 @@ def main(argv):
     patch = Path(argv[1])
     out = Path(argv[2])
     if not patch.exists() or patch.stat().st_size == 0:
-        out.write_text("")
+        out.write_text("", encoding="utf-8")
         print("No patch to summarize")
         return 0
 
     added = {}
     removed = {}
-    for ln in patch.read_text().splitlines():
+    for ln in patch.read_text(encoding="utf-8").splitlines():
         if not ln:
             continue
         if ln.startswith(("+++", "---", "diff ", "index ", "@@")):
@@ -74,13 +74,14 @@ def main(argv):
     if changes:
         keep = changes[:5]
         content = "Top changes:\n" + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(keep))
-        out.write_text(content)
+        out.write_text(content, encoding="utf-8")
         print(content)
     else:
         out.write_text(
-            "No package-like changes found in the req diff patch This is usually an artifact of "
-            "pip-compile logging changes and can be ignored but you may inspect the req diff patch in the "
-            "`regen-ci-req-report` workflow logs manually if desired."
+            "No package-like changes found in the req diff patch. This is usually an artifact of "
+            "pip-compile logging changes and can be ignored, but you may inspect the patch in the "
+            "`regen-pins-diff` artifact of the `regen-ci-req-report` run if desired.",
+            encoding="utf-8",
         )
         print("No package-like changes found in patch")
     return 0

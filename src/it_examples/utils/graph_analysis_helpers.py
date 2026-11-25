@@ -228,7 +228,8 @@ def plot_ridgeline_convergence(
         ),
         showlegend=True,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
-        width=1200,
+        # sized by its container rather than a fixed width, so the figure fits a docs page as well as a notebook
+        autosize=True,
         height=800,
         plot_bgcolor="white",
     )
@@ -296,7 +297,7 @@ def unpack_objs_from_pt_dict(tensor_dict):
 
 
 def load_graph_json(json_path):
-    with open(json_path, "r") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 

@@ -53,7 +53,7 @@ def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = N
     lines.append(summary or f"An interpretune {kind} artifact ({title}).")
     lines.append("")
     lines.append(
-        f"An [interpretune](https://github.com/speediedan/interpretune) artifact repo "
+        f"An [interpretune](https://github.com/interpretune/interpretune) artifact repo "
         f"(kind: {kind}; envelope schema v{envelope['schema']})."
     )
     lines += ["", "## Artifact", ""]
@@ -196,16 +196,14 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
             )
             for point, why in sorted(gaps.items()):
                 lines.append(f"  - cannot capture `{point}`: {why}")
-        ag = decl.get("attribution_graph")
-        if ag:
-            lines.append(
-                "- attribution graphs: "
-                + (
-                    "require the modeling module's own eager attention"
-                    if ag.get("requires_own_eager_attention")
+        for technique, by_slot in sorted((decl.get("techniques") or {}).items()):
+            for slot, record in sorted(by_slot.items()):
+                need = (
+                    "requires the modeling module's own eager attention"
+                    if record.get("requires_own_eager_attention")
                     else "no model requirement"
                 )
-            )
+                lines.append(f"- technique `{technique}` ({slot}): {need}")
     lines += [
         "",
         f"Cases: {len(report.get('ran') or [])} ran, {len(report.get('skipped_undeclared') or [])} skipped because the "
@@ -342,7 +340,7 @@ def generate_component_card(
     lines.append(summary or task.get("description") or f"An interpretune component collection ({title}).")
     lines.append("")
     lines.append(
-        f"An [interpretune](https://github.com/speediedan/interpretune) component repo (kinds: "
+        f"An [interpretune](https://github.com/interpretune/interpretune) component repo (kinds: "
         f"{', '.join(manifest['kinds'])}; manifest schema v{manifest['it_schema_version']})."
     )
     configs = (manifest.get("module") or {}).get("configs") or {}
@@ -382,6 +380,16 @@ def generate_component_card(
             'DATA (no code executes): fetch and register with `interpretune.hub.pull_hookmaps("<org>/<repo>")`, or',
             "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture venngram's registry already",
             "serves must agree with the served one, or be loaded with `replace=True` deliberately.",
+        ]
+    helper_modules = (manifest.get("helpers") or {}).get("modules") or {}
+    if helper_modules:
+        lines += ["", "## Helper modules", ""]
+        lines += [f"- `{name}`: `{rel}`" for name, rel in sorted(helper_modules.items())]
+        lines += [
+            "",
+            'Fetch with `interpretune.hub.pull("<org>/<repo>")`, then import one with',
+            '`interpretune.hub.load_helpers("<org>/<repo>", "<name>")`. Loading runs this repo\'s code, so it needs',
+            "the `IT_TRUST_REMOTE_CODE` opt-in.",
         ]
     definitions = (manifest.get("promptconfigs") or {}).get("definitions") or {}
     if definitions:

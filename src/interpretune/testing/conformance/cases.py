@@ -20,9 +20,8 @@ from interpretune.analysis.backends import (
     get_analysis_backend,
     get_model_backend,
     PositionScope,
-    SupportsAttributionGraph,
     SupportsFeatureInterventions,
-    SupportsHeadAttribution,
+    TechniqueSupport,
     SupportsGradientIntervention,
     SupportsGradients,
     SupportsIntervention,
@@ -44,7 +43,7 @@ from .oracles import (
     expected_positions,
     steering_vector,
 )
-from .ops import captured_points, stored_gradients
+from .ops import captured_points, stored_activations, stored_gradients
 from .reference import HFReference
 from .session import build_conformance_session, tokenized_prompts
 
@@ -87,8 +86,6 @@ _PROTOCOLS_FOR: dict[Capability, tuple[type, ...]] = {
     Capability.LATENT_MODELS: (SupportsLatentModels,),
     Capability.GRADIENTS: (SupportsGradients,),
     Capability.INTERVENTION: (SupportsIntervention, SupportsFeatureInterventions),
-    Capability.ATTRIBUTION_GRAPH: (SupportsAttributionGraph,),
-    Capability.HEAD_ATTRIBUTION: (SupportsHeadAttribution,),
 }
 
 
@@ -366,9 +363,16 @@ class ModelBackendConformance:
                 assert any(need in other.capabilities for o, other in components.items() if o != name), (
                     f"the {name} requires {need.name} and no other component provides it"
                 )
+            # a technique's record is typed, and the component satisfies the protocol the record names
+            for technique, record in (getattr(component, "technique_support", None) or {}).items():
+                assert isinstance(record, TechniqueSupport), f"the {name} declares {technique!r} with {record!r}"
+                protocol = record.provider_protocol()
+                assert protocol is None or isinstance(component, protocol), (
+                    f"the {name} declares technique {technique!r} and is not a {protocol.__name__}"
+                )
+                assert suite.capabilities.techniques[technique][name] == record
         declared = suite.capabilities.declared
         assert (suite.capabilities.latent_models is not None) == (Capability.LATENT_MODELS in declared)
-        assert (suite.capabilities.attribution_graph is not None) == (Capability.ATTRIBUTION_GRAPH in declared)
 
     @conformance_case()
     def test_supplied_settings_survive_composition(self, suite):
@@ -585,6 +589,9 @@ class ModelBackendConformance:
 
         if vector is None:
             vector = self._vector(suite)
+        if scope == "positions" and not (extra and "positions" in extra):
+            vector = vector.unsqueeze(0)
+            extra = {**(extra or {}), "positions": (0,)}
         payload = {
             suite.inputs.intervention_point: {
                 "intervention_tensor": vector,
@@ -647,6 +654,39 @@ class ModelBackendConformance:
             expected = {int(p) for p in torch.nonzero(real.any(dim=0)).flatten().tolist()}
             assert got == expected, f"batch {i}: changed {sorted(got)} but the real positions are {sorted(expected)}"
 
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.POSITIONS, op="add", family="hf_native")
+    def test_position_set_operands_match_independent_hf_edits(self, suite, hf):
+        """Different operand rows edit exactly the listed padded-tensor positions, in the listed order."""
+        point = suite.inputs.intervention_point
+        ids, mask = suite.batch_inputs(0)
+        positions = (ids.shape[-1] - 1, ids.shape[-1] - 3)
+        assert positions[1] >= 0, "the position-set case needs at least three token columns"
+        if mask is not None:
+            assert bool(mask[:, list(positions)].all()), "the selected columns must be real tokens in every row"
+        vector = self._vector(suite)
+        operands = torch.stack([vector, -2 * vector]) * STEER_SCALE
+        payload = {
+            point: {"op": "add", "position_scope": "positions", "positions": positions, "intervention_tensor": operands}
+        }
+        batch = self._hook_batch(suite, 0)
+        with torch.no_grad():
+            _pre, post = suite.backend.fwd_w_intervention(suite.module.model, batch, payload)
+        expected = hf.steered(ids, point, lambda x: x + operands.to(x), scope=positions, attention_mask=mask)
+        actual = torch.as_tensor(post).float().cpu()
+        reference = expected["logits"].float().cpu()
+        base = hf.logits(ids, attention_mask=mask).float().cpu()
+        if mask is not None:
+            real = mask.bool().cpu()
+            actual, reference, base = actual[real], reference[real], base[real]
+        _assert_close_padded(actual, reference, what="position-specific operand rows")
+        assert not torch.allclose(actual, base), "the position-specific edits must move real-token logits"
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.POSITIONS, negative=True)
+    def test_undeclared_positions_is_refused(self, suite):
+        """An explicit position set cannot be substituted with another scope."""
+        with expect_refusal(NotImplementedError, match="position_scope='positions'"):
+            self._intervene(suite, scope="positions")
+
     @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
     def test_undeclared_all_positions_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never narrowed."""
@@ -666,7 +706,7 @@ class ModelBackendConformance:
         declared = suite.capabilities.intervention_for("activation").declared_ops
         undeclared = sorted(registered_ops() - set(declared))
         # Every op declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         for op in undeclared:
             with expect_refusal(NotImplementedError, match=f"op='{op}'"):
                 self._intervene(suite, scope=scope, op=op)
@@ -674,7 +714,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="add")
     def test_zero_intervention_is_identity(self, suite):
         """A zero-scale intervention leaves the logits unchanged."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         store = self._intervene(suite, scope=scope, scale=0.0)
         for pre, post in zip(store["pre_intervention_logits"], store["post_intervention_logits"]):
             torch.testing.assert_close(
@@ -719,7 +759,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="replace")
     def test_replace_ignores_the_scale_factor(self, suite):
         """`replace` installs the tensor as-is: the result is independent of `scale_factor`, and it moves."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         vector = self._vector(suite)
         unit = self._intervene(suite, scope=scope, op="replace", scale=1.0, vector=vector)
         scaled = self._intervene(suite, scope=scope, op="replace", scale=STEER_SCALE * 3, vector=vector)
@@ -729,7 +769,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="patch")
     def test_patch_of_a_pair_with_itself_is_identity(self, suite):
         """Swapping a concept's coordinates with its own leaves the activation, and the logits, unchanged."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         vector = self._vector(suite)
         # scale_factor=1.0 is the pure exchange; the paper's alpha scales the swapped coordinates, so any other
         # value is a deliberate over- or under-steer and not an identity
@@ -750,7 +790,7 @@ class ModelBackendConformance:
         Both orders exchange the same two coordinates, so the pair is unordered; a backend that treated index 0
         as "from" and index 1 as "to" in some other sense would break this without breaking the identity case.
         """
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         source = self._vector(suite)
         target = self._second_vector(source)
         forward = self._intervene(suite, scope=scope, op="patch", scale=1.0, vector=torch.stack([source, target]))
@@ -761,7 +801,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="scale")
     def test_scale_by_ones_is_identity(self, suite):
         """Multiplying the activation by ones leaves the logits unchanged, and a non-unit multiplier moves them."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         ones = torch.ones_like(self._vector(suite))
         store = self._intervene(suite, scope=scope, op="scale", scale=1.0, vector=ones)
         for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
@@ -778,7 +818,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="project")
     def test_project_depends_only_on_the_basis_span(self, suite):
         """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         vector = self._vector(suite)
         onto_v = self._intervene(suite, scope=scope, op="project", scale=1.0, vector=vector)
         onto_span = self._intervene(suite, scope=scope, op="project", scale=1.0, vector=vector * -2.0)
@@ -795,7 +835,7 @@ class ModelBackendConformance:
         the ops it has a payload for: ``replace_with_error`` keeps the activation's value by construction (only its
         gradient differs), and an op a user or a collection registers has no payload this case can choose.
         """
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         vector = self._vector(suite)
         payloads: dict[str, tuple[torch.Tensor, float]] = {
             "add": (vector, STEER_SCALE),
@@ -839,7 +879,7 @@ class ModelBackendConformance:
     @conformance_case(capability=Capability.INTERVENTION, op="add", family="hf_native")
     def test_baseline_is_an_unsteered_forward(self, suite, hf):
         """The pre-intervention half equals the plain forward."""
-        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
+        scope = min(suite.capabilities.intervention_for("activation").position_scopes, key=lambda s: s.value).value
         store = self._intervene(suite, scope=scope)
         for i, pre in enumerate(store["pre_intervention_logits"]):
             ids, mask = suite.batch_inputs(i)
@@ -871,6 +911,251 @@ class ModelBackendConformance:
                 ref["logits"][0, -1, :],
                 what=f"batch {i}: steered last-token logits against the HF reference edit",
             )
+
+    # -- INTERVENTION: weight-space equivalence ----------------------------------------------------------
+
+    #: The per-neuron recipe's unit doses at ``mlp.out``'s input: an ablation, a tripling, and two shifts, one on a
+    #: scaled unit (so the composition order is exercised: the scale comes first and does not scale the later add).
+    WEIGHT_FORM_SCALES: ClassVar[dict[int, float]] = {3: 0.0, 17: 3.0, 101: 0.0}
+    WEIGHT_FORM_SHIFTS: ClassVar[dict[int, float]] = {17: 4.0, 640: -4.0}
+
+    def _weight_form_document(self, suite, *, shift_factor: float = 1.0) -> dict[str, Any]:
+        """The per-neuron recipe at the capture layer, token scope ``all``, as a document: a unit ``scale`` then a
+        unit ``add``, with the shifts multiplied by ``shift_factor``."""
+        layer = suite.inputs.capture_layer
+        units = sorted(set(self.WEIGHT_FORM_SCALES) | set(self.WEIGHT_FORM_SHIFTS))
+        model = {"id": suite.inputs.model_id, "revision": "conformance"}
+        scales = dict(self.WEIGHT_FORM_SCALES)
+        shifts = {u: d * shift_factor for u, d in self.WEIGHT_FORM_SHIFTS.items()}
+        return {
+            "schema_version": 2,
+            "kind": "recipe",
+            "name": "conformance-weight-form",
+            "model": model,
+            "book": {
+                "schema_version": 1,
+                "name": "conformance-units",
+                "portability": "checkpoint",
+                "applies_to": {"models": [model]},
+                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [layer], "units": {layer: units}}},
+            },
+            "stages": [
+                {
+                    "site": "mlp.out.hook_in",
+                    "tokens": "all",
+                    "ops": [
+                        {"op": "scale", "target": {"set": "units"}, "value": {"doses": {layer: scales}}},
+                        {"op": "add", "target": {"set": "units"}, "value": {"doses": {layer: shifts}}},
+                    ],
+                }
+            ],
+        }
+
+    def _weight_form_recipe(self, suite, *, shift_factor: float = 1.0) -> Any:
+        """:meth:`_weight_form_document`, loaded."""
+        from interpretune.analysis.venngram import load_recipe
+
+        return load_recipe(self._weight_form_document(suite, shift_factor=shift_factor)).recipe
+
+    def _require_unit_layout(self, suite, recipe: Any) -> dict[str, int]:
+        """The recipe's site widths, read through the module's view.
+
+        A view that places no unit axis for ``mlp.out``'s weight (its component map records no ``layout``, or no
+        published map describes the module's names) skips the case naming why: the weight form cannot be built without
+        one.
+        """
+        from interpretune.tuning.weights import weight_form_site_widths
+
+        try:
+            return weight_form_site_widths(suite.module, recipe)
+        except ValueError as err:
+            pytest.skip(f"the module's view places no unit axis for `mlp.out` (no component map `layout`): {err}")
+
+    def _equivalence_forms(self, suite, payload: Any) -> tuple[Any, Any]:
+        """The two sides :func:`~interpretune.tuning.weights.check_weight_equivalence` compares on one batch the runner
+        fed: ``forward()`` (the backend's plain forward, or its intervention path while the activation form is applied)
+        returning the logits at real positions, and ``activation_form()``, which applies ``payload`` until its handle is
+        removed."""
+        backend, model, batch = suite.backend, suite.module.model, self._hook_batch(suite, 0)
+        _ids, mask = suite.batch_inputs(0)
+        real = None if mask is None else mask.bool()
+        applied: dict[str, Any] = {}
+
+        def forward() -> torch.Tensor:
+            with torch.no_grad():
+                if "payload" in applied:
+                    logits = backend.fwd_w_intervention(model=model, batch=batch, interventions=applied["payload"])[1]
+                else:
+                    logits = backend.fwd(model, batch)
+            logits = torch.as_tensor(getattr(logits, "logits", logits)).detach().float().cpu()
+            # pad positions are undefined in either form and never compared
+            return logits if real is None else logits[real.to(logits.device)]
+
+        class _ActivationForm:
+            def remove(self) -> None:
+                applied.pop("payload", None)
+
+        def activation_form() -> _ActivationForm:
+            applied["payload"] = payload
+            return _ActivationForm()
+
+        return forward, activation_form
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
+    def test_a_per_neuron_recipe_weight_form_equals_its_activation_form(self, suite):
+        """A per-neuron recipe (unit ``scale`` and ``add`` at ``mlp.out``'s input, token scope ``all``) gives the
+        same logits applied as the weight edits it equals (``weight_form``, through the module's view of the real
+        component map) as through the backend's intervention path; taking the weight form back restores the base
+        logits exactly, and a weight form with other doses is told apart.
+
+        Reaches the backend directly, on one batch the runner fed: the weight form edits the module's parameters between
+        forwards, which no single op invocation can interleave with a second recipe. The activation form is first shown
+        to move the logits beyond the tolerance, so the equivalence cannot hold because neither form did anything.
+        """
+        from interpretune.analysis.venngram import recipe_interventions
+        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
+
+        recipe = self._weight_form_recipe(suite)
+        payload = recipe_interventions(recipe, site_widths=self._require_unit_layout(suite, recipe))
+        forward, activation_form = self._equivalence_forms(suite, payload)
+        base = forward()
+        unmoved = check_weight_equivalence(forward, lambda: [], activation_form)
+        assert not unmoved.equivalent, (
+            f"the activation form left the logits within the equivalence tolerance of the base ({unmoved}), so the "
+            "comparison below would hold vacuously"
+        )
+        result = check_weight_equivalence(forward, lambda: weight_form(suite.module, recipe), activation_form)
+        assert result.equivalent, f"the weight form and the activation form differ on {suite.backend_name}: {result}"
+        restored = forward()
+        assert torch.equal(restored, base), (
+            f"taking the weight form back left the logits off the base by {(restored - base).abs().max().item():.3e}"
+        )
+        assert not any(isinstance(m, WeightEdit) for m in suite.module.modules()), "a weight edit is still applied"
+        wrong = self._weight_form_recipe(suite, shift_factor=2.0)
+        mismatched = check_weight_equivalence(forward, lambda: weight_form(suite.module, wrong), activation_form)
+        assert not mismatched.equivalent, f"a weight form with doubled shifts matched the activation form: {mismatched}"
+        assert torch.equal(forward(), base), "taking the mismatched weight form back did not restore the base logits"
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
+    def test_the_weight_equivalence_op_reports_the_forms_equal(self, suite):
+        """``weight_equivalence_check`` through the runner, given the recipe as a document: every batch reports the
+        two forms equivalent, on logits of non-zero magnitude."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        self._require_unit_layout(suite, self._weight_form_recipe(suite))
+        run_inputs = {"recipe": self._weight_form_document(suite)}
+        store = suite.run(AnalysisCfg(target_op=it.weight_equivalence_check, run_inputs=run_inputs))
+        rows = list(zip(store["we_equivalent"], store["we_max_abs_diff"], store["we_max_abs"]))
+        assert rows, "the op wrote no rows"
+        for i, (equivalent, diff, magnitude) in enumerate(rows):
+            assert bool(equivalent), (
+                f"batch {i}: the forms differ by {float(diff):.3e} on logits of magnitude {float(magnitude):.3e}"
+            )
+            assert float(magnitude) > 0.0, f"batch {i}: the op reported no logit magnitude"
+
+    #: The output rejection's removal fraction, and the fraction its mismatched weight form takes.
+    OUTPUT_REJECTION_FRACTION: ClassVar[float] = 1.0
+    OUTPUT_REJECTION_MISMATCH: ClassVar[float] = 0.5
+
+    def _output_rejection_basis(self, suite) -> torch.Tensor:
+        """A two-vector span of the residual width: the model's own steering direction (so the rejection has a real
+        effect) and a seeded random direction (so the span is not one vector)."""
+        vector = self._vector(suite).detach().float().cpu()
+        other = torch.randn(vector.shape[-1], generator=torch.Generator().manual_seed(961))
+        return torch.stack([vector, other / other.norm()])
+
+    def _output_rejection_document(self, suite, basis: torch.Tensor, *, fraction: float) -> dict[str, Any]:
+        """An output rejection at the capture layer, token scope ``all``, as a document: a whole-activation
+        ``reject`` of ``basis``'s span from ``mlp.out``'s output, removing ``fraction`` of it."""
+        layer = suite.inputs.capture_layer
+        model = {"id": suite.inputs.model_id, "revision": "conformance"}
+        return {
+            "schema_version": 2,
+            "kind": "recipe",
+            "name": "conformance-output-rejection",
+            "model": model,
+            "book": {
+                "schema_version": 1,
+                "name": "conformance-sites",
+                "portability": "checkpoint",
+                "applies_to": {"models": [model]},
+                "sets": {"site": {"point": "mlp.out.hook_out", "layers": [layer]}},
+            },
+            "operands": {"span": {"values": basis.flatten().tolist(), "shape": list(basis.shape), "basis": "unfolded"}},
+            "stages": [
+                {
+                    "site": f"blocks.{layer}.mlp.out.hook_out",
+                    "tokens": "all",
+                    "ops": [{"op": "reject", "operand": "span", "params": {"fraction": fraction}}],
+                }
+            ],
+        }
+
+    def _require_output_side(self, suite, recipe: Any) -> dict[str, int]:
+        """The output rejection's site width, read through the module's view; a view that cannot resolve
+        ``mlp.out`` (no published map describes the module's names) skips the case naming why."""
+        from interpretune.tuning.weights import weight_form_site_widths
+
+        try:
+            return weight_form_site_widths(suite.module, recipe)
+        except ValueError as err:
+            pytest.skip(f"the module's view does not resolve `mlp.out`'s weight: {err}")
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("reject",))
+    def test_an_output_rejection_weight_form_equals_its_activation_form(self, suite):
+        """A whole-activation ``reject`` of a span from ``mlp.out``'s output, token scope ``all``, gives the same
+        logits applied as the edit of the output side of ``mlp.out``'s weight and bias it equals (``weight_form``)
+        as through the backend's intervention path; taking the weight form back restores the base logits exactly,
+        and a weight form removing another fraction is told apart.
+
+        The activation form is first shown to move the logits beyond the tolerance.
+        """
+        from interpretune.analysis.venngram import load_recipe, recipe_interventions
+        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
+
+        basis = self._output_rejection_basis(suite)
+        document = self._output_rejection_document(suite, basis, fraction=self.OUTPUT_REJECTION_FRACTION)
+        recipe = load_recipe(document).recipe
+        payload = recipe_interventions(recipe, site_widths=self._require_output_side(suite, recipe))
+        forward, activation_form = self._equivalence_forms(suite, payload)
+        base = forward()
+        unmoved = check_weight_equivalence(forward, lambda: [], activation_form)
+        assert not unmoved.equivalent, (
+            f"the output rejection left the logits within the equivalence tolerance of the base ({unmoved}), so the "
+            "comparison below would hold vacuously"
+        )
+        result = check_weight_equivalence(forward, lambda: weight_form(suite.module, recipe), activation_form)
+        assert result.equivalent, f"the weight form and the activation form differ on {suite.backend_name}: {result}"
+        assert torch.equal(forward(), base), "taking the output rejection's weight form back did not restore the base"
+        assert not any(isinstance(m, WeightEdit) for m in suite.module.modules()), "a weight edit is still applied"
+        other = load_recipe(
+            self._output_rejection_document(suite, basis, fraction=self.OUTPUT_REJECTION_MISMATCH)
+        ).recipe
+        mismatched = check_weight_equivalence(forward, lambda: weight_form(suite.module, other), activation_form)
+        assert not mismatched.equivalent, f"a weight form removing half the span matched a full rejection: {mismatched}"
+        assert torch.equal(forward(), base), "taking the mismatched weight form back did not restore the base logits"
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("reject",))
+    def test_the_weight_equivalence_op_reports_an_output_rejection_equal(self, suite):
+        """``weight_equivalence_check`` through the runner, given the output rejection as a document: every batch
+        reports the two forms equivalent, on logits of non-zero magnitude."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.venngram import load_recipe
+
+        document = self._output_rejection_document(
+            suite, self._output_rejection_basis(suite), fraction=self.OUTPUT_REJECTION_FRACTION
+        )
+        self._require_output_side(suite, load_recipe(document).recipe)
+        store = suite.run(AnalysisCfg(target_op=it.weight_equivalence_check, run_inputs={"recipe": document}))
+        rows = list(zip(store["we_equivalent"], store["we_max_abs_diff"], store["we_max_abs"]))
+        assert rows, "the op wrote no rows"
+        for i, (equivalent, diff, magnitude) in enumerate(rows):
+            assert bool(equivalent), (
+                f"batch {i}: the forms differ by {float(diff):.3e} on logits of magnitude {float(magnitude):.3e}"
+            )
+            assert float(magnitude) > 0.0, f"batch {i}: the op reported no logit magnitude"
 
     # -- INTERVENTION: mixed scopes -------------------------------------------------------------------
 
@@ -1323,9 +1608,11 @@ class ModelBackendConformance:
     #: The logit the gradient cases differentiate, fixed so the reference and the op take one metric.
     GRADIENT_TARGET_ID: ClassVar[int] = 1000
 
-    def _gradient_store(self, suite, upstream: str, *, scope: str, vector: torch.Tensor):
+    def _gradient_store(
+        self, suite, upstream: str, *, scope: str, vector: torch.Tensor, capture_activations: bool = False
+    ):
         """``model_bwd_intervention`` adding ``vector`` to the gradient at the intervention point, capturing it
-        there and at ``upstream``."""
+        there and at ``upstream`` (and, with ``capture_activations``, the activations there too)."""
         import interpretune as it
         from interpretune import AnalysisCfg
 
@@ -1335,6 +1622,7 @@ class ModelBackendConformance:
             "interventions": payload,
             "grad_capture": [point, upstream],
             "logit_target_ids": [self.GRADIENT_TARGET_ID],
+            "capture_activations": capture_activations,
         }
         return suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
 
@@ -1384,6 +1672,44 @@ class ModelBackendConformance:
                 _assert_close_padded(post[name], edited[name], what=f"batch {i}: the edited gradient at {name}")
 
     @conformance_case(
+        capability=Capability.GRADIENTS,
+        flow="grad",
+        scope=PositionScope.LAST_TOKEN,
+        op="add",
+        family="hf_native",
+    )
+    def test_the_activations_beside_the_gradients_match_a_forward_capture(self, suite, hf):
+        """With ``capture_activations``, the gradient pass also stores the activation at each captured site, and it
+        is the activation an HF forward hook reads there: a gradient edit leaves the forward pass alone, so the edited
+        run's activations are the unedited ones. The baseline gradients are stored as without the flag.
+
+        Activations are compared on the real positions only: a padded position's activation depends on how a backend
+        positions padding, and no gradient or attribution reads it (its gradient is zero).
+        """
+        layer = int(suite.inputs.intervention_point.split(".")[1])
+        upstream = f"blocks.{layer - 2}.hook_out"
+        vector = self._vector(suite)
+        store = self._gradient_store(
+            suite, upstream, scope="last_token", vector=vector / vector.norm(), capture_activations=True
+        )
+        point = suite.inputs.intervention_point
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, self.GRADIENT_TARGET_ID].sum()
+
+        for i in range(len(store["grad_point_names"])):
+            ids, mask = suite.batch_inputs(i)
+            activations, pre = stored_activations(store, i), stored_gradients(store, i, "pre")
+            forward = hf.capture(ids, [point, upstream], attention_mask=mask)
+            clean = hf.gradients(ids, metric, observe=[point, upstream], attention_mask=mask)
+            real = _real_positions(mask, forward[point])
+            for name in (point, upstream):
+                _assert_close_padded(
+                    activations[name][real], forward[name][real], what=f"batch {i}: the activation at {name}"
+                )
+                _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
+
+    @conformance_case(
         capability=Capability.LATENT_MODELS,
         target="features",
         provider="model_backend",
@@ -1415,7 +1741,115 @@ class ModelBackendConformance:
             assert pre.abs().max().item() > CHANGED_ATOL, f"batch {i}: no baseline gradient reached {hook}"
             assert post.abs().max().item() == 0.0, f"batch {i}: the zeroed gradient at {hook} is not zero"
 
-    # -- analysis backend: ATTRIBUTION_GRAPH / INTERVENTION on features -------------------------------
+    @conformance_case(
+        capability=Capability.GRADIENTS,
+        flow="grad",
+        scope=PositionScope.LAST_TOKEN,
+        op="add",
+        family="hf_native",
+    )
+    def test_a_readout_of_an_activation_matches_a_manual_backward_hook(self, suite, hf):
+        """A readout of an intermediate activation, its last-token projection onto a direction, is differentiated as an
+        HF reference reading the same module tensor is: unedited, and with a vector added to the gradient at the
+        intervention point. The scalar a gradient is taken of need not be a function of the logits.
+
+        The readout reads the output of the intervention point's block, downstream of the edit, so the edited gradient
+        reaches the earlier capture through the readout alone; the case asserts the edit moved it before comparing.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.backends.readouts import Readout
+
+        point = suite.inputs.intervention_point
+        layer = int(point.split(".")[1])
+        read, upstream = f"blocks.{layer}.hook_out", f"blocks.{layer - 2}.hook_out"
+        vector = self._vector(suite)
+        vector = vector / vector.norm()
+        direction = torch.randn(vector.numel(), generator=torch.Generator().manual_seed(0))
+        direction = direction / direction.norm()
+
+        # everything the readout uses is bound as a default, so the case's inputs fingerprint by value
+        def projection(logits, activations, _read=read, _direction=direction):
+            value = activations[_read][:, -1, :]
+            return (value @ _direction.to(value.device, value.dtype)).sum()
+
+        readout = Readout(projection, sites=(read,))
+        payload = {
+            point: {"intervention_tensor": vector, "op": "add", "scale_factor": 1.0, "position_scope": "last_token"}
+        }
+        run_inputs = {"interventions": payload, "grad_capture": [point, upstream], "readout": readout}
+        store = suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+        for i in range(len(store["grad_point_names"])):
+            ids, mask = suite.batch_inputs(i)
+            pre, post = stored_gradients(store, i, "pre"), stored_gradients(store, i, "post")
+            clean = hf.gradients(ids, readout, observe=[point, upstream], attention_mask=mask)
+            edited = hf.gradients(
+                ids,
+                readout,
+                observe=[point, upstream],
+                edits=[(point, lambda g: g + vector.to(g.dtype), "last_token")],
+                attention_mask=mask,
+            )
+            moved = (edited[upstream] - clean[upstream]).abs().max().item()
+            assert moved > CHANGED_ATOL, (
+                f"batch {i}: the reference edit moved the upstream gradient by only {moved:.3e}"
+            )
+            for name in (point, upstream):
+                _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
+                _assert_close_padded(post[name], edited[name], what=f"batch {i}: the edited gradient at {name}")
+
+    @conformance_case(
+        capability=Capability.LATENT_MODELS,
+        target="features",
+        provider="model_backend",
+        flow="grad",
+        scope=PositionScope.ALL_POSITIONS,
+        op="scale",
+    )
+    def test_a_readout_of_a_latent_feature_reaches_the_latent_models_input(self, suite):
+        """A readout of an attached latent model's most active feature at the last token is differentiated through
+        the latent model.
+
+        It is linear in the feature activations, so its gradient there is, in each row, 1 at that feature and last token
+        and 0 everywhere else; it reaches the latent model's input; and zeroing the gradient at the feature activations
+        leaves none at the input, which the readout reaches only through them.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.backends.readouts import Readout
+
+        handle, hook = self._latent_hook(suite)
+        source = f"{handle.cfg.metadata.hook_name}.hook_sae_input"
+        width = int(handle.cfg.d_sae)
+
+        def most_active_feature(logits, activations, _hook=hook):
+            return activations[_hook][:, -1, :].max(dim=-1).values.sum()
+
+        payload = {hook: {"intervention_tensor": torch.zeros(width), "op": "scale", "position_scope": "all_positions"}}
+        run_inputs = {
+            "interventions": payload,
+            "use_latent_models": True,
+            "grad_capture": [hook, source],
+            "readout": Readout(most_active_feature, sites=(hook,)),
+        }
+        store = suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+        for i in range(len(store["grad_point_names"])):
+            pre, post = stored_gradients(store, i, "pre"), stored_gradients(store, i, "post")
+            features = pre[hook].to(torch.float32)
+            assert features.shape[-1] == width, f"batch {i}: the gradient at {hook} has width {features.shape[-1]}"
+            last = features[..., -1, :].reshape(-1, width)
+            assert torch.equal((last == 1).sum(dim=-1), torch.ones(last.shape[0], dtype=torch.long)), (
+                f"batch {i}: the readout's gradient at {hook} is not one feature's indicator at the last token"
+            )
+            assert last.abs().sum().item() == last.shape[0], f"batch {i}: the gradient at {hook} has stray mass"
+            assert features[..., :-1, :].abs().max().item() == 0.0, (
+                f"batch {i}: the readout reads only the last token, yet earlier positions carry a gradient at {hook}"
+            )
+            assert pre[source].abs().max().item() > CHANGED_ATOL, f"batch {i}: no baseline gradient reached {source}"
+            for name in (hook, source):
+                assert post[name].abs().max().item() == 0.0, f"batch {i}: the zeroed readout left a gradient at {name}"
+
+    # -- analysis backend: the attribution_graph technique / INTERVENTION on features -------------------------------
     #
     # The graph ops take a prompt rather than a datamodule batch, so these cases call the ops the way every caller
     # does (an analysis batch carrying the prompt, no dataloader batch), which is the ops' own entry rather than a
@@ -1447,7 +1881,7 @@ class ModelBackendConformance:
                 raise AssertionError(_attribution_failure_context(suite, exc)) from exc
         return suite.memo[key]
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_attribution_graph_round_trips_through_the_store(self, suite):
         """The graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same
         active features, and the selected features index into them."""
@@ -1466,12 +1900,12 @@ class ModelBackendConformance:
         selected = torch.as_tensor(graph.selected_features).cpu()
         assert selected.numel() > 0 and int(selected.max()) < int(active.shape[0])
 
-    @conformance_case(capability=Capability.HEAD_ATTRIBUTION)
+    @conformance_case(technique="head_attribution")
     def test_head_loadings_partition_the_edges(self, suite):
         """At a reported layer the heads' shares and the bypass share sum to 1, and a head carries something, since
         a report of zeros would also partition the edges.
 
-        A composition whose backend cannot split edges must refuse by name rather than report.
+        A composition whose backend cannot split edges must refuse the report.
         """
         import interpretune as it
         from interpretune.analysis.ops.base import AnalysisBatch
@@ -1489,8 +1923,10 @@ class ModelBackendConformance:
                 head_layers=[0],
             )
 
-        if suite.module.replacement_model.backend != "nnsight":
-            with pytest.raises(ValueError, match="nnsight backend only"):
+        from circuit_tracer.attribution.head_loadings import HEAD_LOADING_BACKENDS
+
+        if suite.module.replacement_model.backend not in HEAD_LOADING_BACKENDS:
+            with pytest.raises(ValueError, match="head loadings are implemented for .* backends only"):
                 report()
             return
         shares = report()
@@ -1498,7 +1934,7 @@ class ModelBackendConformance:
         torch.testing.assert_close(partitioned, torch.ones_like(partitioned), atol=1e-3, rtol=0.0)
         assert_non_degenerate(shares.head_loading_shares, what="head shares")
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_pruning_is_monotone(self, suite):
         """A stricter node threshold keeps a subset of what a looser one keeps, and keeps strictly fewer at some
         pair (positive control: a pruning that ignored its threshold would pass the subset claim vacuously)."""
@@ -1697,7 +2133,7 @@ class ModelBackendConformance:
                 run(intervention_freeze_norms=True)
             assert "freeze_norms" in str(refused.value), str(refused.value)
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_foreign_attention_is_refused_before_graph_construction(self, suite):
         """When the record requires the modeling module's own eager attention, a model whose attention function
         another library replaced is refused by name, naming the foreign function and the modeling module, before
@@ -1710,9 +2146,8 @@ class ModelBackendConformance:
         import interpretune as it
         from interpretune.analysis.ops.base import AnalysisBatch
 
-        record = suite.capabilities.attribution_graph
-        assert record is not None, "ATTRIBUTION_GRAPH is declared with no attribution_graph record"
-        if not record.requires_own_eager_attention:
+        _, record = suite.capabilities.technique_for("attribution_graph")
+        if not getattr(record, "requires_own_eager_attention", False):
             pytest.skip("the backend declares no requirement on the model's attention function")
         replacement = getattr(suite.module, "replacement_model", None)
         handle = suite.module.model if replacement is None else replacement

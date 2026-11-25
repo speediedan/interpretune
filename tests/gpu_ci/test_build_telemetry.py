@@ -24,7 +24,7 @@ RAW = FULL_PHASE + [f"tests/test_cpu.py::test_{i}" for i in range(90)]
 
 def _manifest(selected, scope="full", selector=SELECTOR, revision=REV, phase="cuda") -> dict:
     return {
-        "repository": "speediedan/interpretune",
+        "repository": "interpretune/interpretune",
         "revision": revision,
         "phase": phase,
         "scope": scope,
@@ -58,7 +58,7 @@ def _report(manifest: dict, **override) -> dict:
 def _plan(mode="full", revision=REV) -> dict:
     return {
         "schema": "interpretune.gpu-ci.plan/1",
-        "identity": {"repository": "speediedan/interpretune", "build_id": "7", "merge_revision": revision},
+        "identity": {"repository": "interpretune/interpretune", "build_id": "7", "merge_revision": revision},
         "mode": mode,
         "why": "test",
         "extended": False,
@@ -99,18 +99,22 @@ EVENTS = [
 def _write(tmp_path: Path, *, manifest=None, report=None, denominator=None, plan=None, events=EVENTS, raw_lines=()):
     manifest = manifest if manifest is not None else _manifest(FULL_PHASE)
     (tmp_path / "manifests").mkdir(parents=True)
-    (tmp_path / "manifests" / f"{manifest['phase']}.json").write_text(json.dumps(manifest))
+    (tmp_path / "manifests" / f"{manifest['phase']}.json").write_text(json.dumps(manifest), encoding="utf-8")
     if report is not False:
         (tmp_path / "reports").mkdir()
         rep = report if report is not None else _report(manifest)
-        (tmp_path / "reports" / f"{manifest['phase']}.json").write_text(json.dumps(rep))
+        (tmp_path / "reports" / f"{manifest['phase']}.json").write_text(json.dumps(rep), encoding="utf-8")
     if denominator is not None:
         (tmp_path / "denominator" / "manifests").mkdir(parents=True)
-        (tmp_path / "denominator" / "manifests" / f"{manifest['phase']}.json").write_text(json.dumps(denominator))
+        (tmp_path / "denominator" / "manifests" / f"{manifest['phase']}.json").write_text(
+            json.dumps(denominator), encoding="utf-8"
+        )
     (tmp_path / "telemetry").mkdir()
-    (tmp_path / "telemetry" / "plan.json").write_text(json.dumps(plan if plan is not None else _plan()))
+    (tmp_path / "telemetry" / "plan.json").write_text(
+        json.dumps(plan if plan is not None else _plan()), encoding="utf-8"
+    )
     lines = [json.dumps(e) for e in events] + list(raw_lines)
-    (tmp_path / "telemetry" / "events.jsonl").write_text("\n".join(lines) + "\n")
+    (tmp_path / "telemetry" / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return tmp_path
 
 
@@ -212,7 +216,7 @@ def test_an_unknown_plan_schema_is_refused(tmp_path):
 def test_the_cli_writes_the_record_and_exits_1_on_a_refusal(tmp_path, capsys):
     evidence = _write(tmp_path / "ok")
     assert main(["assemble", "--dir", str(evidence)]) == 0
-    assert json.loads((evidence / "telemetry" / "build_telemetry.json").read_text())["schema"] == SCHEMA
+    assert json.loads((evidence / "telemetry" / "build_telemetry.json").read_text(encoding="utf-8"))["schema"] == SCHEMA
     bad = _write(tmp_path / "bad", plan=_plan(revision="c" * 40))
     assert main(["assemble", "--dir", str(bad)]) == 1
     assert "build telemetry refused" in capsys.readouterr().out
@@ -223,7 +227,7 @@ def test_the_event_helper_writes_json_and_drops_a_value_it_cannot_quote(tmp_path
     script = f'source "{TELEMETRY_SH}"; telemetry_event kind=lease stage=small bad=\'x"y\' action=wait'
     env = {**os.environ, "IT_TELEMETRY_DIR": str(tmp_path)}
     subprocess.run(["bash", "-c", script], env=env, check=True)
-    (event,) = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    (event,) = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert {k: event[k] for k in ("kind", "stage", "action")} == {"kind": "lease", "stage": "small", "action": "wait"}
     assert "bad" not in event and isinstance(event["epoch"], int)
 

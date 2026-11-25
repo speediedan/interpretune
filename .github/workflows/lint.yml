@@ -6,7 +6,7 @@ name: Lint
 # costs ~1 minute, so there is nothing to buy by narrowing it.
 on:
   push:
-    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    branches: [main, "release/*"]
   pull_request:
     branches: [main, "release/*", "bugfix/*", "feature/*"]
     types: [opened, reopened, ready_for_review, synchronize]

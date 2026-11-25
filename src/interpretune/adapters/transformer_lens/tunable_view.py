@@ -36,7 +36,11 @@ TransformerLens tensor cannot reach the packed integers it was computed from.
 ``structure()`` places the physical tensors through the component map of the model the bridge wraps
 (``bridge.original_model``), the map the core/HF and nnsight views use: each tensor the bridge wraps is that model's
 own tensor, so it is located by identity. A venngram address (``layers:9 & component:attn.q``) therefore selects the
-same tensors on a TransformerLens composition as on the others, fused storage spans included (#1045).
+same tensors on a TransformerLens composition as on the others, fused storage spans included (#1045), and each
+tensor takes the unit axis its map row's ``layout`` gives, so unit ops and weight forms resolve too (#1055). A split
+the bridge makes of a fused tensor (GPT-2's ``q``/``k``/``v`` of ``c_attn``) is placed where the fused tensor is,
+since the forward reads the split and the fused tensor receives no gradient; ``wrapped_names()`` gives each physical
+name's wrapped-model name on the same terms, for comparing a schedule's tensors across compositions.
 """
 
 from __future__ import annotations
@@ -119,7 +123,14 @@ def _wrapped_tensor_names(bridge: nn.Module) -> dict[int, str]:
     A bridge component (a module with a ``name`` and an ``_original_component``) names the module it wraps relative to
     its parent component's, and a top-level component (an embedding, a block) names it from the wrapped model's root.
     """
+    return _wrapped_names(bridge)[0]
+
+
+def _wrapped_names(bridge: nn.Module) -> tuple[dict[int, str], dict[int, str]]:
+    """:func:`_wrapped_tensor_names`, and the original path, in the wrapped model, of each bridge component, by the
+    component's identity."""
     names: dict[int, str] = {}
+    components: dict[int, str] = {}
 
     def walk(module: nn.Module, parent: str | None) -> None:
         for child in module.children():
@@ -129,12 +140,17 @@ def _wrapped_tensor_names(bridge: nn.Module) -> dict[int, str]:
                     walk(child, parent)
                 continue
             path = rel if parent is None else f"{parent}.{rel}"
+            components.setdefault(id(child), path)
             for leaf, t in [*original.named_parameters(recurse=False), *original.named_buffers(recurse=False)]:
                 names.setdefault(id(t), f"{path}.{leaf}")
+            # a parametrized tensor (an applied weight edit) is held as `parametrizations.<leaf>.original`
+            for leaf, plist in getattr(original, "parametrizations", {}).items():
+                if isinstance(t := getattr(plist, "original", None), Tensor):
+                    names.setdefault(id(t), f"{path}.{leaf}")
             walk(child, path)
 
     walk(bridge, None)
-    return names
+    return names, components
 
 
 class _WrappedModelStructure:
@@ -142,9 +158,19 @@ class _WrappedModelStructure:
     to the wrapped model's name for the same tensor, found by identity, so the paths the wrapper reports do not
     matter."""
 
-    def __init__(self, inner: StructureProvider, tensors: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        inner: StructureProvider,
+        tensors: Mapping[str, str],
+        attached: Mapping[str, str] | None = None,
+        views: Mapping[str, str] | None = None,
+    ) -> None:
         self._inner = inner
         self._tensors = tensors
+        # a module spliced in beside the wrapped model, by the wrapped model's path of the component it is attached to
+        self._attached = dict(attached or {})
+        # tensors the bridge makes as views of a fused wrapped tensor, located where that tensor is
+        self._views = dict(views or {})
 
     @property
     def vocabulary(self) -> bool:
@@ -154,7 +180,43 @@ class _WrappedModelStructure:
         from venngram.resolve import Location
 
         wrapped = self._tensors.get(name)
-        return Location() if wrapped is None else self._inner.locate(wrapped)
+        if wrapped is None:
+            at = next((at for key, at in self._attached.items() if name.startswith(f"{key}.")), None)
+            # located as a tensor of the component it is attached to would be
+            return Location() if at is None else self._inner.locate(f"{at}.weight")
+        return self._inner.locate(wrapped)
+
+    def unit_dim(self, name: str, ndim: int) -> int | Refusal:
+        """The dimension of ``name`` along its component's units, from the wrapped model's map row for the same
+        tensor, or why it has none."""
+        from venngram.errors import Refusal
+
+        unit_dim = getattr(self._inner, "unit_dim", None)
+        if unit_dim is None:
+            return Refusal(f"the wrapped model's structure ({type(self._inner).__name__}) places no unit axes")
+        wrapped = self._tensors.get(name)
+        if wrapped is None:
+            if any(name.startswith(f"{key}.") for key in self._attached):
+                return Refusal(
+                    f"`{name}` belongs to a module attached beside the bridge: only a row's own weight and bias"
+                    " have a unit axis"
+                )
+            return Refusal(f"`{name}` is no tensor of the model the bridge wraps")
+        if name in self._views:
+            # the fused tensor's map row describes the fused tensor's axes, not a slice of them
+            return Refusal(f"`{name}` is a view the bridge makes of `{wrapped}`: unit ops address the fused tensor")
+        return unit_dim(wrapped, ndim)
+
+    def unit_block(self, name: str) -> int | None:
+        """The attention head block size the wrapped model's map row records for the same tensor, or None.
+
+        None for a view too: the row describes the fused tensor's axes, and ``unit_dim`` refuses a view.
+        """
+        if name in self._views:
+            return None
+        unit_block = getattr(self._inner, "unit_block", None)
+        wrapped = self._tensors.get(name)
+        return unit_block(wrapped) if unit_block is not None and wrapped is not None else None
 
     def depth(self, stack: str | None = None) -> int | Refusal:
         return self._inner.depth(stack)
@@ -175,8 +237,15 @@ class TransformerBridgeView:
         root: The view's root: the interpretune module, or the bridge itself.
         bridge: The bridge, when it is not ``root.model`` (or ``root``).
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
-        roles: Roles for ``root``'s parameters and buffers, by physical name (anything unlisted is ``base``), e.g.
-            ``latent:sae`` for SAEs spliced into the bridge.
+        roles: Roles for ``root``'s parameters and buffers (anything unlisted is ``base``), e.g. ``latent:sae`` for
+            SAEs spliced into the bridge: physical names mapped to roles, or roles mapped to addresses resolved
+            against the physical names and :meth:`structure` (``{"adapter:lora": "component:attn.* & leaf:lora_*"}``,
+            speediedan/venngram#109).
+        attached: Modules of ``root`` beside the bridge that a hook splices into it (latent models and interventions),
+            each with the module of ``root`` it is attached to (``{"latent_models.sae3": "model.blocks.3.hook_out"}``),
+            as venngram's ``MappedView`` takes them: their tensors take the layer and component of the bridge component
+            holding that module, so ``role:latent & layers:2:`` selects the latent models spliced at layers 2 and
+            above. One under no bridge component the map places is left unplaced, with a warning.
     """
 
     def __init__(
@@ -185,12 +254,12 @@ class TransformerBridgeView:
         bridge: TransformerBridge | None = None,
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
+        attached: Mapping[str, str] | None = None,
     ) -> None:
         from venngram.roles import validate_roles
 
-        self._roles = validate_roles(
-            roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
-        )
+        from interpretune.tuning.views import expand_declared_roles
+
         if bridge is None:
             model = root._modules.get("model")
             resolved = model if model is not None and hasattr(model, "tl_named_parameters") else root
@@ -198,7 +267,15 @@ class TransformerBridgeView:
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
+        self.attached = dict(attached or {})
         self._built = False
+        names = {n for n, _ in root.named_parameters()} | {n for n, _ in root.named_buffers()}
+        # role addresses resolve on the physical names, placed by this view's structure (read only when one is given)
+        by_address = any(key not in names for key in roles or {})
+        roles = expand_declared_roles(root, roles or {}, self.structure() if by_address else None)
+        self._roles = validate_roles(
+            roles, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
+        )
 
     @property
     def untraced(self) -> list[str]:
@@ -326,12 +403,86 @@ class TransformerBridgeView:
             inner = venngram.view(skeleton).structure()
         except (KeyError, RegistryError):  # no published map describes the wrapped model, or none can be read
             return PhysicalStructure(self.root)
-        originals = _wrapped_tensor_names(self.bridge)
-        placed = {}
+        known = {n for n, _ in [*skeleton.named_parameters(remove_duplicate=False), *skeleton.named_buffers()]}
+        placed, views, components = self._placement(known)
+        return _WrappedModelStructure(inner, placed, self._attached_components(inner, components), views)
+
+    def _placement(self, known: set[str]) -> tuple[dict[str, str], dict[str, str], dict[int, str]]:
+        """Each root tensor's name in the wrapped model, the bridge-made views among them, and each bridge
+        component's path in the wrapped model.
+
+        A tensor the bridge makes as a view of a wrapped tensor (GPT-2's ``q``/``k``/``v`` splits of the fused
+        ``c_attn``) has no name in the wrapped model, yet it is what the bridge's forward reads: the fused tensor
+        receives no gradient. Placing the split where the fused tensor is (by shared storage) makes an address such as
+        ``component:attn.qkv`` select the tensors a step can reach; placing it nowhere would thaw only the fused tensor
+        and leave the projection untrained. ``known`` is the wrapped model's own tensor names.
+        """
+        originals, components = _wrapped_names(self.bridge)
+        placed: dict[str, str] = {}
+        views: dict[str, str] = {}
+        owners: dict[tuple[str, int], str] = {}
+        made: list[tuple[str, str, tuple[str, int]]] = []
         for name, t in [*self.root.named_parameters(remove_duplicate=False), *self.root.named_buffers()]:
-            if (original := originals.get(id(t))) is not None:
+            if (original := originals.get(id(t))) is None:
+                continue
+            key = _storage_key(t)
+            if original not in known and key is not None:
+                made.append((name, original, key))
+                continue
+            placed[name] = original
+            if key is not None:
+                owners.setdefault(key, original)
+            owner, sep, rest = name.partition(".parametrizations.")
+            if sep and rest.endswith(".original"):  # also by the name the model holds it under
+                placed[f"{owner}.{rest.removesuffix('.original')}"] = original
+        for name, original, key in made:
+            if (fused := owners.get(key)) is not None:
+                placed[name] = views[name] = fused
+            else:
                 placed[name] = original
-        return _WrappedModelStructure(inner, placed)
+        return placed, views, components
+
+    def wrapped_names(self) -> dict[str, str]:
+        """Each of the root's tensor names mapped to the name, in the model the bridge wraps, of the tensor it is
+        (or, for a split the bridge makes of a fused tensor, the tensor it views), so a set of physical names can
+        be compared with the same model's names on another composition.
+
+        Empty where the bridge keeps no wrapped model.
+        """
+        wrapped = getattr(self.bridge, "original_model", None)
+        if not isinstance(wrapped, nn.Module) or getattr(wrapped, "config", None) is None:
+            return {}
+        with torch.device("meta"):
+            skeleton = type(wrapped)(wrapped.config)
+        known = {n for n, _ in [*skeleton.named_parameters(remove_duplicate=False), *skeleton.named_buffers()]}
+        return self._placement(known)[0]
+
+    def _attached_components(self, inner: StructureProvider, components: Mapping[int, str]) -> dict[str, str]:
+        """Each ``attached`` module's key, by the wrapped model's path of the deepest bridge component holding the
+        module it is attached to (a hook point sits inside a component); one the map places nowhere is left out."""
+        out: dict[str, str] = {}
+        unplaced: list[str] = []
+        for key, at in self.attached.items():
+            path, found = at, None
+            while path and found is None:
+                try:
+                    found = components.get(id(self.root.get_submodule(path)))
+                except AttributeError:
+                    pass
+                path = path.rpartition(".")[0]
+            location = inner.locate(f"{found}.weight") if found is not None else None
+            if found is None or location is None or (location.layer is None and location.component is None):
+                unplaced.append(key)
+            else:
+                out[key] = found
+        if unplaced:
+            from interpretune.utils import rank_zero_warn
+
+            rank_zero_warn(
+                f"{', '.join(unplaced)} could not be placed at their sites: no bridge component the map places holds"
+                " them, so their tensors locate at no layer or component. Address them by name or role."
+            )
+        return out
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from.

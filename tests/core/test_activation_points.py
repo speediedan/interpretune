@@ -208,10 +208,12 @@ class TestDocumentsAreVersioned:
         root = tmp_path / "component"
         (root / "maps").mkdir(parents=True)
         (root / "it_component.yaml").write_text(
-            yaml.safe_dump({"it_schema_version": 1, "kinds": ["hookmaps"], "hookmaps": {"files": ["maps/x.yaml"]}})
+            yaml.safe_dump({"it_schema_version": 1, "kinds": ["hookmaps"], "hookmaps": {"files": ["maps/x.yaml"]}}),
+            encoding="utf-8",
         )
         (root / "maps" / "x.yaml").write_text(
-            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}})
+            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}}),
+            encoding="utf-8",
         )
         with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
             build_component_tree(root, tmp_path / "out")

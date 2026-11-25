@@ -71,8 +71,8 @@ PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 #
 # SAELens is cloned at the wave branch too, but ONLY as the source of the preserved-baseline worktree
 # (`SL_BASELINE_SHA`, materialised in `create_worktrees`). It is deliberately NOT installed from that
-# checkout: the integrated env takes sae-lens from interpretune's pins (currently the git-deps pin to
-# the transformer-lens 4.0 support PR). The wave branch head additionally carries the
+# checkout: the integrated env takes sae-lens from interpretune's pins (its released floor in the
+# `examples` extra). The wave branch head additionally carries the
 # `pretrained_saes.yaml` entries retired as corrupt, so installing it would put a retired commit into
 # the very environment used to verify a corpus.
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
@@ -228,7 +228,7 @@ class RepoSpec:
 
 
 REPOS: tuple[RepoSpec, ...] = (
-    RepoSpec("interpretune", "interpretune", "https://github.com/speediedan/interpretune.git", INTERPRETUNE_BRANCH),
+    RepoSpec("interpretune", "interpretune", "https://github.com/interpretune/interpretune.git", INTERPRETUNE_BRANCH),
     RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", SAE_DASHBOARD_BRANCH),
     RepoSpec("sae_lens", "SAELens", "https://github.com/speediedan/SAELens.git", WAVE_BRANCH),
     RepoSpec("neuronpedia", "neuronpedia", "https://github.com/speediedan/neuronpedia.git", WAVE_BRANCH),
@@ -647,7 +647,7 @@ class Setup:
         hint = ""
         if np_repo and (Path(np_repo) / "Makefile").is_file():
             try:
-                if re.search(r"^db-check:", (Path(np_repo) / "Makefile").read_text(), re.M):
+                if re.search(r"^db-check:", (Path(np_repo) / "Makefile").read_text(encoding="utf-8"), re.M):
                     hint = f" (`cd {np_repo} && make db-check` diagnoses it)"
             except OSError:
                 pass
@@ -710,7 +710,7 @@ class Setup:
         it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
         ex = "requirements/ci/excludes.txt"
         # Only SAEDashboard builds from source, because its fix is unreleased and a maintainer needs the
-        # checkout. Everything else comes from the pins: sae-lens and circuit-tracer (the git-deps group),
+        # checkout. Everything else comes from the pins: sae-lens (its released floor), circuit-tracer (git-deps),
         # TransformerLens/nnsight (override-dependencies + overrides.txt).
         #
         # Do NOT re-add `--from-source=sae_lens:...`. Beyond substituting a retired commit for the
@@ -745,6 +745,7 @@ class Setup:
         baseline_python = baseline_path / "bin" / "python"
         if self.args.skip_env_build:
             self.say(f"- skipped (--skip-env-build); assuming the baseline venv at {baseline_path}")
+            self._install_baseline_only_deps(baseline_path, install=False)
             return baseline_path
         cmd = self._build_it_env_cmd(baseline_path.name, venv_path.parent)
         pin = [
@@ -785,7 +786,7 @@ class Setup:
         self._install_baseline_only_deps(baseline_path)
         return baseline_path
 
-    def _install_baseline_only_deps(self, venv_path: Path) -> None:
+    def _install_baseline_only_deps(self, venv_path: Path, *, install: bool = True) -> None:
         """Install runtime deps the PRESERVED BASELINE trees need and the current pins no longer carry.
 
         The venv is built from interpretune's current pins, but the detached baseline worktrees are older
@@ -799,7 +800,9 @@ class Setup:
         supply what the pins cannot know about, not to reconcile two dependency sets: letting a baseline's
         older constraint downgrade a current package would break the leg it is meant to enable.
 
-        Asks the trees rather than carrying a list, so the next dropped dependency needs no edit here.
+        Asks the trees rather than carrying a list, so the next dropped dependency needs no edit here. With
+        ``install=False`` (a venv this run was told not to build) the absent packages are named in a warning
+        instead, since the legs would otherwise fail on them with nothing pointing back here.
         """
 
         if self.args.dry_run or not self.repo_paths:
@@ -829,8 +832,16 @@ class Setup:
             self.say("- [OK] baseline worktrees need no dependency the current pins lack")
             return
         req = [f"{n}{s}" for n, s in sorted(missing)]
+        if not install:
+            self.warn(
+                f"the baseline venv at {venv_path} lacks baseline-only dependencies ({', '.join(req)}); the "
+                "detached-legacy benchmark legs will fail with ModuleNotFoundError until they are installed "
+                f"(uv pip install --no-config --python {venv_python} {' '.join(repr(r) for r in req)})."
+            )
+            return
         self.say(f"- baseline-only dependencies absent from the current pins: {', '.join(req)}")
-        cmd = [str(venv_python), "-m", "pip", "install", "--quiet", *req]
+        # uv, never pip: these venvs are uv-built, and a pip install leaves a second owner for its packages.
+        cmd = ["uv", "pip", "install", "--no-config", "--quiet", "--python", str(venv_python), *req]
         self.say(f"  $ {' '.join(cmd)}")
         self.actions_taken.append(" ".join(cmd))
         if subprocess.run(cmd).returncode != 0:

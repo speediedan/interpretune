@@ -10,6 +10,7 @@ from jsonargparse import ArgumentError, ArgumentParser
 
 from interpretune.base import LightningCLIAdapter, ITSessionMixin, bootstrap_cli
 from interpretune.base.components.cli import ONE_DOOR_BODY_KEYS
+from interpretune.utils import MisconfigurationException
 from tests.core.loader_equivalence import cli_experiment_configs
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
@@ -315,6 +316,25 @@ def test_profiler_cfg_merges_into_module_cfg():
     assert legacy["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
 
 
+def test_profiler_cfg_summary_options_from_the_cli():
+    """The summary options (finetuning-scheduler's ``ExtendedPyTorchProfiler`` names) reach the module config."""
+    summary = {"filename": "prof", "sort_by_key": "self_cpu_time_total", "row_limit": 50, "max_name_column_width": 100}
+    parser = _session_mixin_parser()
+    config = parser.parse_args(
+        [
+            "--profiler_cfg.which",
+            "pytorch",
+            "--profiler_cfg.pytorch_profiler_cfg",
+            '{"activities": ["cpu"], "schedule": {"wait": 1, "warmup": 1, "active": 2}, '
+            '"filename": "prof", "sort_by_key": "self_cpu_time_total", "row_limit": 50, "max_name_column_width": 100}',
+        ]
+    )
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {"registered_cfg": {"module_cfg": {}}})
+    merged = mapping["registered_cfg"]["module_cfg"]["profiler_cfg"]
+    assert {k: merged["pytorch_profiler_cfg"][k] for k in summary} == summary
+    assert merged["pytorch_profiler_cfg"]["schedule"] == {"wait": 1, "warmup": 1, "active": 2}
+
+
 @RunIf(lightning=True)
 def test_lightning_cli_accepts_trainer_profiler(clean_cli_env, capsys):
     """The Lightning side reuses native --trainer.profiler instead of duplicating it (#11).
@@ -338,3 +358,65 @@ def test_lightning_cli_accepts_trainer_profiler(clean_cli_env, capsys):
         )
     assert exc.value.code == 0
     assert "profiler" in capsys.readouterr().out
+
+
+AUTO_COMP_NAME_PATH = "module_cfg.init_args.auto_comp_cfg.init_args.module_cfg_name"
+
+
+def test_nested_session_args_split_out_of_argv():
+    """A path two or more levels below a session mapping key becomes a nested override, in both argument forms
+    (#66).
+
+    A path one level below the key, and every other argument, is left for jsonargparse.
+    """
+    argv = [
+        "--config",
+        "run.yaml",
+        f"--registered_cfg.{AUTO_COMP_NAME_PATH}",
+        "Probe",
+        "--registered_cfg.module_cfg.init_args.logging_level=10",
+        "--registered_cfg.adapter_ctx",
+        "[core]",
+        "--session_cfg.module_cfg.init_args.flag=true",
+    ]
+    remaining, overrides = ITSessionMixin._split_nested_session_args(argv)
+    assert remaining == ["--config", "run.yaml", "--registered_cfg.adapter_ctx", "[core]"]
+    assert overrides == {
+        "registered_cfg": {
+            "module_cfg": {
+                "init_args": {"auto_comp_cfg": {"init_args": {"module_cfg_name": "Probe"}}, "logging_level": 10}
+            }
+        },
+        "session_cfg": {"module_cfg": {"init_args": {"flag": True}}},
+    }
+    untouched = ["--config", "run.yaml", "--registered_cfg.adapter_ctx", "[core]"]
+    assert ITSessionMixin._split_nested_session_args(untouched) == (untouched, {})
+
+
+def test_nested_session_arg_without_a_value_is_refused():
+    with pytest.raises(MisconfigurationException, match="no value follows it"):
+        ITSessionMixin._split_nested_session_args([f"--registered_cfg.{AUTO_COMP_NAME_PATH}"])
+
+
+def test_auto_comp_cfg_set_from_the_command_line():
+    """``auto_comp_cfg`` is settable from the command line over a file's value (#66).
+
+    jsonargparse alone turns the nested path into one key with dots in it (the negative control); split out first, the
+    value merges into the file's ``auto_comp_cfg`` and keeps the file's other fields.
+    """
+    argv = [f"--registered_cfg.{AUTO_COMP_NAME_PATH}", "Probe"]
+    parser = _session_mixin_parser()
+    flat = parser.parse_args(argv).registered_cfg
+    assert flat == {"module_cfg": {AUTO_COMP_NAME_PATH.split(".", 1)[1]: "Probe"}}
+
+    file_auto_comp = {
+        "class_path": "interpretune.config.shared.AutoCompConfig",
+        "init_args": {"module_cfg_name": "FromFile", "module_cfg_mixin": [{"class_path": "a.Mixin"}]},
+    }
+    file_mapping = {"registered_cfg": {"module_cfg": {"init_args": {"auto_comp_cfg": file_auto_comp}}}}
+    mixin = ITSessionMixin()
+    remaining, mixin._nested_session_overrides = mixin._split_nested_session_args(argv)
+    merged = mixin._merge_parsed_session_overrides(parser.parse_args(remaining), deepcopy(file_mapping))
+    auto_comp = merged["registered_cfg"]["module_cfg"]["init_args"]["auto_comp_cfg"]
+    assert auto_comp["init_args"] == {"module_cfg_name": "Probe", "module_cfg_mixin": [{"class_path": "a.Mixin"}]}
+    assert auto_comp["class_path"] == file_auto_comp["class_path"]

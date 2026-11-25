@@ -56,7 +56,8 @@ Common configuration shared across the initialization modes:
 - **Location**: `src/interpretune/config/transformer_lens.py`
 - **Key Fields**:
   - `move_to_device`: Control device movement (default: True)
-  - `default_padding_side`: Padding side for tokenizer (default: "right")
+  - There is no `default_padding_side`: the bridge wraps the datamodule's tokenizer, so the padding side is set with
+    `tokenizer_kwargs.padding_side`, and passing the field raises a `TypeError` naming it
 - **Purpose**: IT-specific settings that don't map directly to TL configs
 
 ### ITLensFromPretrainedConfig

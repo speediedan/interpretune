@@ -14,7 +14,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
-from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, load_component_manifest
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY, CollectionSpec
@@ -52,6 +52,21 @@ def _partition_required_ops(definition: dict[str, Any]) -> dict[str, Any]:
         "required_ops": [name for name in required if name not in tensor],
         "required_tensor_ops": [*(definition.get("required_tensor_ops") or []), *tensor],
     }
+
+
+def _fast_safe_load(stream: Any) -> Any:
+    """``yaml.safe_load`` through libyaml where PyYAML has it, for the parse that runs on every cache hit."""
+    return yaml.load(stream, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
+
+def _name_difference(declared: set[str], present: set[str]) -> str | None:
+    """How a set of op names differs from the declared one, for a diagnostic, or None when they are equal."""
+    parts = [
+        f"{label} {sorted(names)}"
+        for label, names in (("missing", declared - present), ("not declared by any source", present - declared))
+        if names
+    ]
+    return "; ".join(parts) or None
 
 
 def _ensure_loaded(func):
@@ -237,6 +252,11 @@ class AnalysisOpDispatcher:
         # `_finish_compilation` re-converts once schemas are merged.
         self._raw_definitions: dict[str, Dict] | None = None
         self._raw_composites: dict[str, Dict] = {}
+        # What the last cold load's sources declared (normalized canonical names) and the files it could not read.
+        # A compile that yields anything else is not cached: the cache key covers the sources, not the environment
+        # that dropped an op, so a saved subset would be served to every later session as the whole set.
+        self._declared_ops: set[str] = set()
+        self._unread_op_files: list[Path] = []
         # Whether `_op_definitions` currently holds compiled schemas (warm cache hits set this at
         # load; cold loads set it in `_finish_compilation`).
         self._compiled = False
@@ -253,23 +273,55 @@ class AnalysisOpDispatcher:
         return name.replace("/", ".").replace("-", "_").lower()
 
     def _discover_yaml_files(self, paths: list[Path]) -> list[Path]:
-        """Discover all YAML files from the given paths (files or directories).
+        """Discover the op-definition YAML files of the given paths (files or directories).
 
-        A component manifest is never an op-definitions file. It shares the ``.yaml`` suffix and sits at the root of
-        every interpretune component repo, including op collections, so a directory holding both a manifest and its op
-        YAMLs (the ordinary shape when authoring a collection locally) would otherwise feed the manifest through the op
-        compiler, where its scalar keys (``it_schema_version: 1``) raise on ``op_def.get(...)`` and take down the whole
-        load -- every bundled op included.
+        A file named directly is taken as given. A directory is scanned recursively, except that a component in it (a
+        directory holding a component manifest) supplies exactly the op files its manifest declares: see
+        :meth:`_directory_op_files`. A component manifest is never an op-definitions file itself.
         """
-        yaml_files = []
+        yaml_files: list[Path] = []
         for path in paths:
             if path.is_file() and path.suffix.lower() in (".yaml", ".yml"):
                 yaml_files.append(path)
             elif path.is_dir():
-                # Recursively find all YAML files in the directory
-                yaml_files.extend(path.glob("**/*.yaml"))
-                yaml_files.extend(path.glob("**/*.yml"))
+                yaml_files.extend(self._directory_op_files(path))
         return sorted({p for p in yaml_files if p.name != IT_COMPONENT_MANIFEST})
+
+    @staticmethod
+    def _directory_op_files(directory: Path) -> list[Path]:
+        """The op YAMLs under ``directory``, taking each component's manifest at its word.
+
+        A component repo carries YAML that is not op definitions (address books, model specs, experiment configs). Their
+        scalar keys are refused one by one by the op compiler, but a mapping-valued top-level key reads as an op and
+        would be registered as one. The manifest already says which files are op definitions, and hub collections
+        load only those, so a local component directory does the same: under a manifest, a YAML loads only when
+        ``ops.files`` declares it (a component that declares no ops supplies none). A manifest that cannot be read, or
+        that declares a file which is absent, is reported and its component supplies nothing, rather than falling back
+        to the scan the manifest exists to replace.
+        """
+        found = [*directory.glob("**/*.yaml"), *directory.glob("**/*.yml")]
+        declared: dict[Path, set[Path]] = {}
+        for manifest_path in (p for p in found if p.name == IT_COMPONENT_MANIFEST):
+            # imported here because only a directory holding a component needs it, and this runs at import time
+            from interpretune.hub.opcollections import declared_op_files
+
+            root = manifest_path.parent
+            declared[root] = set()
+            try:
+                files = declared_op_files(load_component_manifest(manifest_path), source=str(manifest_path))
+                if missing := [f for f in files if not (root / f).is_file()]:
+                    raise ValueError(f"`ops.files` declares {missing}, which the component does not hold")
+            except (ValueError, OSError, yaml.YAMLError) as err:
+                op_load_failure(f"Loading no op definitions from {root}: {manifest_path.name} is not usable: {err}")
+                continue
+            declared[root] = {root / f for f in files}
+
+        def loads(path: Path) -> bool:
+            # the nearest component owns a file, so a component nested in another is read by its own manifest
+            owner = next((parent for parent in path.parents if parent in declared), None)
+            return owner is None or path in declared[owner]
+
+        return [p for p in found if loads(p)]
 
     def load_definitions(self) -> None:
         """Load operation definitions from YAML files."""
@@ -309,6 +361,14 @@ class AnalysisOpDispatcher:
             # a non-strict load warned once and cached; the next load with strict enabled reused that cache
             # and reported nothing. Verifying is the whole point of the flag, so it recompiles.
             cached_definitions = None if strict_op_load() else self._cache_manager.load_cache()
+            if cached_definitions is not None:
+                mismatch = self._cache_mismatch(cached_definitions, yaml_files)
+                if mismatch is not None:
+                    rank_zero_warn(
+                        "The compiled op cache does not hold the operations its sources declare, so it is not used "
+                        f"and the operations are compiled again: {mismatch}"
+                    )
+                    cached_definitions = None
             if cached_definitions is not None:
                 rank_zero_debug(f"[DISPATCHER] Cache HIT: Loaded {len(cached_definitions)} definitions from cache")
                 self._op_definitions = cached_definitions
@@ -390,92 +450,143 @@ class AnalysisOpDispatcher:
             target_module = _sys.modules.get("interpretune", OpWrapper._target_module)
             OpWrapper.register_operations(target_module, self)
 
+    def _read_op_file(
+        self,
+        yaml_file: Path,
+        load: Callable[[Any], Any],
+        report: Callable[[str], None],
+        record: bool = True,
+    ) -> tuple[CollectionSpec | None, dict[str, Any]] | None:
+        """Parse one op-definitions YAML to its collection identity and namespaced composition-op content.
+
+        None when the file contributes no ops (empty, not a mapping, or a collection outside its compatibility
+        window, which is passed to ``report``). The one reading of a file, shared by the cold load and by the check
+        of a cached set against its sources, so the two cannot disagree about what a file declares.
+        """
+        with open(yaml_file, "r", encoding="utf-8") as f:
+            yaml_content = load(f)
+
+        if not yaml_content:
+            rank_zero_debug(f"Empty YAML file: {yaml_file}")
+            return None
+
+        if not isinstance(yaml_content, dict):
+            rank_zero_debug(f"Skipping non-dictionary YAML file: {yaml_file}")
+            return None
+
+        collection = self._collection_for(yaml_file, yaml_content, record=record)
+        if collection is not None and (incompatible := collection.incompatibility()) is not None:
+            # Skip the WHOLE collection, not individual ops: the compatibility window is declared
+            # per collection, so a partial load would present half a contract set.
+            report(
+                f"Skipping op collection {collection.name!r} (version {collection.version}) from "
+                f"{yaml_file}: {incompatible}"
+            )
+            return None
+
+        # Drop the header BEFORE namespacing. Namespacing rewrites every top-level key, so a
+        # hub collection's header arrived as `<user>.<repo>.collection` and no longer matched the
+        # header key -- it was then registered as an op, giving every hub collection a junk
+        # `collection` op with the header's mapping as its definition. Bundled files are not
+        # namespaced, which is why the equality check held there and hid this. Tensor ops (an
+        # `op_spec` block) are dropped too: `_register_tensor_ops` registered them, and they are not
+        # composition ops.
+        content = {}
+        for key, value in yaml_content.items():
+            if key == COLLECTION_HEADER_KEY or _is_tensor_op_definition(value):
+                continue
+            if not isinstance(value, dict):
+                # Reject at INGEST, not at conversion: schema compilation runs
+                # first and catches only ValueError, so a scalar reaching it raised
+                # AttributeError from `op_def.get(...)` and took down every op in the process,
+                # bundled included. The usual cause is a non-op YAML being read as op
+                # definitions, where scalar top-level values are perfectly normal.
+                report(
+                    f"Skipping '{key}' in {yaml_file}: an op definition must be a mapping, got "
+                    f"{type(value).__name__}. Is this file an op-definitions YAML?"
+                )
+                continue
+            content[key] = value
+        return collection, self._apply_hub_namespacing(content, yaml_file)
+
+    def _declared_names(self, content: dict[str, Any]) -> set[str]:
+        """The normalized canonical op names one file's content declares, composites included."""
+        names = [key for key in content if key != "composite_operations"]
+        names += list(content.get("composite_operations", {}))
+        return {self._normalize_op_name(name) for name in names}
+
+    def _cache_mismatch(self, cached: dict[str, OpDef], yaml_files: list[Path]) -> str | None:
+        """Why a cached op set is not the set its sources declare, or None when they agree.
+
+        The cache key covers the sources' content and not the process that compiled them, so a file under the right
+        name can still hold a subset: one written where a dependency was missing and some ops were dropped, for
+        instance. Served as valid, the dropped ops do not exist for the session and nothing says so.
+        """
+        declared: set[str] = set()
+        for yaml_file in yaml_files:
+            try:
+                parsed = self._read_op_file(yaml_file, _fast_safe_load, rank_zero_debug, record=False)
+            except OpLoadError:
+                raise
+            except Exception as unreadable:
+                return f"{yaml_file} could not be read to check it: {unreadable}"
+            if parsed is not None:
+                declared |= self._declared_names(parsed[1])
+        return _name_difference(declared, {self._normalize_op_name(op_def.name) for op_def in cached.values()})
+
     def _load_raw_definitions(self, yaml_files: list[Path]):
         """Parse YAML files into raw definitions, retained for compilation at session setup."""
         # Load and merge all YAML files
         raw_definitions = {}
         composite_operations = {}
+        self._declared_ops = set()
+        self._unread_op_files = []
 
         for yaml_file in yaml_files:
             try:
-                with open(yaml_file, "r", encoding="utf-8") as f:
-                    yaml_content = yaml.safe_load(f)
-
-                if not yaml_content:
-                    rank_zero_debug(f"Empty YAML file: {yaml_file}")
+                parsed = self._read_op_file(yaml_file, yaml.safe_load, op_load_failure)
+                if parsed is None:
                     continue
-
-                if not isinstance(yaml_content, dict):
-                    rank_zero_debug(f"Skipping non-dictionary YAML file: {yaml_file}")
-                    continue
-
-                collection = self._collection_for(yaml_file, yaml_content)
-                if collection is not None and (incompatible := collection.incompatibility()) is not None:
-                    # Skip the WHOLE collection, not individual ops: the compatibility window is declared
-                    # per collection, so a partial load would present half a contract set.
-                    op_load_failure(
-                        f"Skipping op collection {collection.name!r} (version {collection.version}) from "
-                        f"{yaml_file}: {incompatible}"
-                    )
-                    continue
-
-                # Drop the header BEFORE namespacing. Namespacing rewrites every top-level key, so a
-                # hub collection's header arrived as `<user>.<repo>.collection` and no longer matched the
-                # header key -- it was then registered as an op, giving every hub collection a junk
-                # `collection` op with the header's mapping as its definition. Bundled files are not
-                # namespaced, which is why the equality check held there and hid this. Tensor ops (an
-                # `op_spec` block) are dropped too: `_register_tensor_ops` registered them, and they are not
-                # composition ops.
-                op_content = {
-                    key: value
-                    for key, value in yaml_content.items()
-                    if key != COLLECTION_HEADER_KEY and not _is_tensor_op_definition(value)
-                }
-                namespaced_content = self._apply_hub_namespacing(op_content, yaml_file)
-
-                source = self._op_source_for(yaml_file)
+                collection, content = parsed
+                self._declared_ops |= self._declared_names(content)
 
                 # Stamped onto every definition from this file so the identity survives the cache: the
                 # `collection:` header is parsed at compile time only, and `op_info` needs it at runtime.
                 provenance = {
-                    "source": source,
+                    "source": self._op_source_for(yaml_file),
                     "collection_name": collection.name if collection else None,
                     "collection_version": collection.version if collection else None,
                 }
 
                 # Separate composite operations from regular operations
-                for key, value in namespaced_content.items():
+                for key, value in content.items():
                     if key == "composite_operations":
                         for comp_name, comp_def in value.items():
                             composite_operations[comp_name] = {**comp_def, **provenance}
                             self._op_declaration_sites[comp_name] = str(yaml_file)
-                    else:
-                        if not isinstance(value, dict):
-                            # Reject at INGEST, not at conversion: schema compilation runs
-                            # first and catches only ValueError, so a scalar reaching it raised
-                            # AttributeError from `op_def.get(...)` and took down every op in the process,
-                            # bundled included. The usual cause is a non-op YAML being read as op
-                            # definitions, where scalar top-level values are perfectly normal.
-                            op_load_failure(
-                                f"Skipping '{key}' in {yaml_file}: an op definition must be a mapping, got "
-                                f"{type(value).__name__}. Is this file an op-definitions YAML?"
-                            )
-                            continue
-                        if key in raw_definitions:
-                            rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = {**_partition_required_ops(value), **provenance}
-                        self._op_declaration_sites[key] = str(yaml_file)
+                        continue
+                    if key in raw_definitions:
+                        rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
+                    try:
+                        definition = _partition_required_ops(value)
+                    except Exception as partition_error:
+                        # Scoped to the one op: raising out of the loop would drop the rest of the file with it.
+                        op_load_failure(f"Skipping '{key}' in {yaml_file}: {partition_error}")
+                        continue
+                    raw_definitions[key] = {**definition, **provenance}
+                    self._op_declaration_sites[key] = str(yaml_file)
 
             except OpLoadError:
                 # Strict loading must not be swallowed by the per-file fail-soft handler: the whole point
                 # of IT_STRICT_OP_LOAD is that a definition problem stops the run, and a broad `except
-                # Exception` here would quietly downgrade it to a debug line -- the same way a warm cache
+                # Exception` here would quietly downgrade it -- the same way a warm cache
                 # used to skip these checks entirely.
                 raise
             except Exception as e:
-                rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
-                # Continue processing other files rather than failing completely
-                continue
+                # Reported, not logged at debug: the other files still load, and a session missing a whole file's
+                # ops with nothing said reads as a broken checkout.
+                self._unread_op_files.append(yaml_file)
+                op_load_failure(f"Failed to load op definitions from {yaml_file}: {e}")
 
         # Retain raw definitions; schemas compile in `_finish_compilation` at session setup (#280),
         # not here, so importing definitions stays cheap. Names, aliases and `it.<op>` gating resolve
@@ -555,8 +666,18 @@ class AnalysisOpDispatcher:
                     self._op_to_aliases[target].append(alias)
                 self._op_definitions.setdefault(alias, self._op_definitions[target])
 
-        # Save to cache for next time
-        self._cache_manager.save_cache(self._op_definitions)
+        # Save to cache for next time, only when every declared op compiled (each one that did not was reported
+        # above). An incomplete set compiles again next session, which reports it again and picks the op up once
+        # whatever dropped it is fixed.
+        if self._unread_op_files:
+            incomplete = f"could not read {[str(path) for path in self._unread_op_files]}"
+        else:
+            compiled = {self._normalize_op_name(op_def.name) for op_def in self._op_definitions.values()}
+            incomplete = _name_difference(self._declared_ops, compiled)
+        if incomplete is None:
+            self._cache_manager.save_cache(self._op_definitions)
+        else:
+            rank_zero_debug(f"[DISPATCHER] Not caching an incomplete op set: {incomplete}")
         self._compiled = True
 
     def ensure_compiled(self) -> None:
@@ -571,8 +692,11 @@ class AnalysisOpDispatcher:
             self.load_definitions()
         self._finish_compilation()
 
-    def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
-        """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
+    def _collection_for(
+        self, yaml_file: Path, yaml_content: dict[str, Any], record: bool = True
+    ) -> CollectionSpec | None:
+        """Parse a YAML's ``collection:`` header, recording it per file for later attribution (``record=False`` for a
+        pass that runs on every load: ``_op_collections`` holds only what compilation parsed).
 
         Fail-soft on a malformed header, matching the surrounding load paths: the ops still load, just without
         collection identity, which surfaces as a missing version in ``op_info`` rather than a dead session.
@@ -582,7 +706,7 @@ class AnalysisOpDispatcher:
         except (ValueError, TypeError) as bad_header:
             op_load_failure(f"Ignoring invalid `{COLLECTION_HEADER_KEY}` header in {yaml_file}: {bad_header}")
             return None
-        if collection is not None:
+        if collection is not None and record:
             self._op_collections[str(yaml_file)] = collection
         return collection
 
@@ -640,6 +764,7 @@ class AnalysisOpDispatcher:
                 required_capabilities=op_def.get("required_capabilities", []),
                 required_tensor_ops=list(op_def.get("required_tensor_ops", []) or []),
                 required_position_scopes=list(op_def.get("required_position_scopes", []) or []),
+                required_techniques=list(op_def.get("required_techniques", []) or []),
                 conformance=op_def.get("conformance"),
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
@@ -670,8 +795,10 @@ class AnalysisOpDispatcher:
                 # a substring gate before parsing: most files define no tensor op, and this runs on every load,
                 # cache hits included, where nothing else parses YAML
                 yaml_content = yaml.safe_load(text) if "op_spec" in text else None
-            except (OSError, yaml.YAMLError):
-                continue  # `_load_raw_definitions` reports an unreadable file; nothing here to register
+            except Exception:
+                # whatever `_load_raw_definitions` treats as an unreadable file (any failure, fail-soft per file) is
+                # reported there; nothing here to register
+                continue
             if not isinstance(yaml_content, dict):
                 continue
             tensor_ops = {
@@ -682,13 +809,16 @@ class AnalysisOpDispatcher:
             from interpretune.analysis.backends.ops import load_tensor_op
 
             source = self._op_source_for(yaml_file)
-            collection = self._collection_for(yaml_file, yaml_content)
+            collection = self._collection_for(yaml_file, yaml_content, record=False)
             revision = None
             if source.startswith("hub:"):
                 revision = self._cache_manager.hub_commit_for_namespace(source.split(":", 1)[1])
             for name, definition in tensor_ops.items():
                 try:
                     executor = self._import_tensor_op_implementation(name, definition, source, revision)
+                    probe = None
+                    if "probe" in definition:
+                        probe = self._import_tensor_op_implementation(name, definition, source, revision, key="probe")
                     load_tensor_op(
                         name,
                         definition["op_spec"],
@@ -697,6 +827,7 @@ class AnalysisOpDispatcher:
                         collection=collection.name if collection else None,
                         version=collection.version if collection else None,
                         revision=revision,
+                        probe=probe,
                     )
                 except OpLoadError:
                     raise
@@ -704,12 +835,13 @@ class AnalysisOpDispatcher:
                     op_load_failure(f"Skipping tensor op {name!r} from {yaml_file}: {exc}")
 
     def _import_tensor_op_implementation(
-        self, name: str, definition: dict[str, Any], source: str, revision: str | None
+        self, name: str, definition: dict[str, Any], source: str, revision: str | None, key: str = "implementation"
     ) -> Callable:
-        """Import a tensor op's executor: from the collection's own revision for a hub op, by path otherwise."""
-        implementation = definition.get("implementation")
+        """Import a tensor op's executor (or, with ``key="probe"``, its contract probe): from the collection's own
+        revision for a hub op, by path otherwise."""
+        implementation = definition.get(key)
         if not isinstance(implementation, str) or "." not in implementation:
-            raise ValueError(f"tensor op {name!r} names no implementation (`module.function`): {implementation!r}")
+            raise ValueError(f"tensor op {name!r} names no {key} (`module.function`): {implementation!r}")
         if not source.startswith("hub:"):
             return self._import_callable(implementation)
         from interpretune.hub.trust import ensure_remote_code_trusted
@@ -1333,6 +1465,7 @@ class AnalysisOpDispatcher:
                 aliases=op_def.aliases,
                 required_tensor_ops=op_def.required_tensor_ops,
                 required_position_scopes=op_def.required_position_scopes,
+                required_techniques=op_def.required_techniques,
             )
             op.description = op_def.description
             op.input_schema = op_def.input_schema
@@ -1385,6 +1518,7 @@ class AnalysisOpDispatcher:
             required_capabilities=op_def.required_capabilities,
             required_tensor_ops=op_def.required_tensor_ops,
             required_position_scopes=op_def.required_position_scopes,
+            required_techniques=op_def.required_techniques,
             op_state=op_def.op_state,
             uses_default_hooks=op_def.uses_default_hooks,
             requires_grad=op_def.requires_grad,

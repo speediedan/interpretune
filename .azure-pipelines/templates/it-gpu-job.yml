@@ -55,11 +55,15 @@ jobs:
         mkdir -p "$hf_cache"
         sock="${DOCKER_HOST#unix://}"
         [[ -S "$sock" ]] || { echo "##vso[task.logissue type=error]no Docker socket at ${sock} (DOCKER_HOST)"; exit 1; }
+      # The memory cap keeps a job from exhausting the host: the heavy stages drew 21.5 GiB median and 26.8 GiB at most,
+      # and one that reached about 30 GiB wedged its agent's host. Swap is capped with it, so the limit cannot be met by
+      # paging the overrun out. No --cpus: rootless docker on these hosts has the memory controller delegated, not cpu.
       containerOptions: |
         -v "${hf_cache}:/opt/interpretune/hf_cache:rw" -v "${sock}:/var/run/docker.sock"
         -e HF_HOME=/opt/interpretune/hf_cache -e HF_DATASETS_CACHE=/opt/interpretune/hf_cache/datasets
         -e HF_HUB_CACHE=/opt/interpretune/hf_cache/hub -e XDG_CACHE_HOME=/opt/interpretune/hf_cache
         -e APPLY_POST_UPGRADES=false -e COVERAGE_CORE=sysmon
+        --memory=28g --memory-swap=28g
       releaseCommand: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release all'
       steps:
         # Backend truth before anything else: the torch build must match the vendor the agent reported, with both

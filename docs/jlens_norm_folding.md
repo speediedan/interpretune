@@ -204,7 +204,7 @@ how it is read. What that does and does not change for folding:
    not made a prerequisite. A J++ lens is recommended for readouts, where folding does not arise because the
    readout applies the norm itself, and not for steering, where it does: on the two-hop swap battery the
    J-lens swaps better on both models we validated
-   ([Qwen3.5-4B, both bases](https://github.com/speediedan/interpretune/issues/925#issuecomment-6729102253)). On Qwen3.5-4B that verdict is the same in the
+   ([Qwen3.5-4B, both bases](https://github.com/interpretune/interpretune/issues/925#issuecomment-6729102253)). On Qwen3.5-4B that verdict is the same in the
    folded and the unfolded basis, so the basis does not explain the J++ deficit there. If you do steer with a
    J++ direction, the first-order check in the decision rule is how to choose its basis.
 2. **J++'s norm handling matches the frozen-denominator convention.** J++ fits its Jacobians with each

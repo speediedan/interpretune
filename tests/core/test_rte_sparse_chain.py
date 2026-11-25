@@ -97,7 +97,7 @@ def _run_cli(rte_component, run_dir, recorder=None, resume_from=None):
     )
     if resume_from is not None:
         cfg["run_cfg"]["resume_from"] = str(resume_from)
-    (run_dir / "run.yaml").write_text(yaml.safe_dump(cfg))
+    (run_dir / "run.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
     EnforcementProbe.seen, StageRecorder.seen, PhaseStartParams.seen = [], [], []
     args = ["--config", str(run_dir / "run.yaml")]
     args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(run_dir / "dataset")}})]
@@ -161,7 +161,7 @@ def test_the_gate_records_an_intermediate_stage_without_judging_it(rte_component
 
     entrypoint = import_snapshot_entrypoint("speediedan/rte", "rte_boolq.py", revision=rte_component, what="test")
     reference = tmp_path / "reference.json"
-    reference.write_text(json.dumps({"rows": {"860": {"errors_share": 0.2, "replacement": 0.5}}}))
+    reference.write_text(json.dumps({"rows": {"860": {"errors_share": 0.2, "replacement": 0.5}}}), encoding="utf-8")
     gate = entrypoint.ChainGraphGate(
         str(reference), hashlib.sha256(reference.read_bytes()).hexdigest(), record_only_depths=(1,)
     )

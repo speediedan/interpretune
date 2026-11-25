@@ -357,12 +357,15 @@ class TestClassTransformerLens:
         bridge(tokens, return_type="loss").backward()
         assert all(p.grad is not None for p in trainable.values())
         assert all(p.grad is None for n, p in bridge.named_parameters() if n not in trainable)
-        adapters = {n for n, r in module.tunable_roles().items() if r == "adapter:default"}
+        from finetuning_scheduler.core.compile import compile_schedule
+        from interpretune.tuning.views import VIEW_ATTR
+
+        # declared by address (#875), and the view's roles are the tensors that address selects
+        assert set(module.tunable_roles()) == {"adapter:default"}
+        adapters = {n for n, r in getattr(module, VIEW_ATTR).roles().items() if r == "adapter:default"}
         assert len(adapters) == 72 and {id(p) for n, p in module.named_parameters() if n in adapters} == {
             id(p) for p in trainable.values()
         }
-        from finetuning_scheduler.core.compile import compile_schedule
-        from interpretune.tuning.views import VIEW_ATTR
 
         compiled = compile_schedule({0: {"params": ["role:adapter"]}}, getattr(module, VIEW_ATTR))
         assert set(compiled.phases[0].physical) | set(compiled.phases[0].coupled) == adapters
@@ -486,6 +489,21 @@ class TestClassTransformerLens:
         test_tl_cfg["tl_cfg"]["use_bridge"] = False
         with pytest.raises(TypeError, match="use_bridge"):
             ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+
+    def test_tl_retired_default_padding_side_is_refused_by_name(self):
+        """``default_padding_side`` is gone from every TL config, and passing it fails by name.
+
+        The adapter never applied it: the bridge wraps the datamodule's tokenizer, built from ``tokenizer_kwargs``
+        before the bridge exists, so a config relying on the field alone got the tokenizer's own padding side.
+        """
+        from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
+
+        for cfg_cls in (ITLensFromPretrainedConfig, ITLensCustomConfig, ITLensBridgeConfig):
+            assert "default_padding_side" not in cfg_cls.__dataclass_fields__, (
+                f"{cfg_cls.__name__} still declares the retired default_padding_side field"
+            )
+        with pytest.raises(TypeError, match="default_padding_side"):
+            ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
 
     def test_tl_custom_config_is_no_longer_special_cased(self):
         """A custom (config-only) tl_cfg builds like any other, with no warn-and-force branch.

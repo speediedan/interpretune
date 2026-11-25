@@ -42,7 +42,8 @@ class TestHubIntegration:
 
         # Create test operation definition
         self.test_ops_yaml = self.snapshot_dir / "ops.yaml"
-        self.test_ops_yaml.write_text("""
+        self.test_ops_yaml.write_text(
+            """
 test_hub_op:
   description: A test operation from hub
   implementation: test_module.test_function
@@ -64,7 +65,9 @@ another_op:
   output_schema:
     result:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Op discovery is manifest-routed: a cached snapshot's op YAMLs are the ones it declares.
         declare_cached_op_files(self.snapshot_dir)
@@ -78,7 +81,8 @@ another_op:
         self.custom_ops_dir = self.custom_ops_root_dir / "custom_ops"
         self.custom_ops_dir.mkdir()
         self.custom_ops_yaml = self.custom_ops_dir / "my_ops.yaml"
-        self.custom_ops_yaml.write_text("""
+        self.custom_ops_yaml.write_text(
+            """
 custom_op:
   description: A custom operation
   implementation: custom.module.custom_function
@@ -88,7 +92,9 @@ custom_op:
   output_schema:
     result:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
 
     def teardown_method(self):
         """Clean up test environment after each test."""
@@ -104,7 +110,8 @@ custom_op:
         another_snapshot.mkdir(parents=True)
 
         another_ops_yaml = another_snapshot / "ops.yaml"
-        another_ops_yaml.write_text("""
+        another_ops_yaml.write_text(
+            """
 test_hub_op:
   description: Same-named operation from different user
   implementation: other_module.test_function
@@ -114,7 +121,9 @@ test_hub_op:
   output_schema:
     result:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(another_snapshot)
 
         with (
@@ -175,7 +184,7 @@ test_hub_op:
 
         # Create invalid YAML file (declared, so it reaches the compiler and its handling is exercised)
         invalid_yaml = self.snapshot_dir / "invalid.yaml"
-        invalid_yaml.write_text("invalid: yaml: content: [")
+        invalid_yaml.write_text("invalid: yaml: content: [", encoding="utf-8")
         declare_cached_op_files(self.snapshot_dir)
 
         with (
@@ -198,7 +207,8 @@ test_hub_op:
 
         # Create operation with missing implementation
         incomplete_yaml = self.snapshot_dir / "incomplete.yaml"
-        incomplete_yaml.write_text("""
+        incomplete_yaml.write_text(
+            """
 incomplete_op:
   description: Operation missing implementation
   input_schema:
@@ -207,7 +217,9 @@ incomplete_op:
   output_schema:
     result:
       datasets_dtype: string
-""")
+""",
+            encoding="utf-8",
+        )
         # re-declared so the incomplete definition still REACHES the compiler; an undeclared YAML would
         # simply be ignored and the test would assert nothing about missing-implementation handling
         declare_cached_op_files(self.snapshot_dir)
@@ -262,7 +274,8 @@ incomplete_op:
             snapshot_dir.mkdir(parents=True)
 
             ops_file = snapshot_dir / "ops.yaml"
-            ops_file.write_text(f"""
+            ops_file.write_text(
+                f"""
 op_{i}:
   description: Operation {i}
   implementation: module{i}.function{i}
@@ -272,7 +285,9 @@ op_{i}:
   output_schema:
     result:
       datasets_dtype: string
-""")
+""",
+                encoding="utf-8",
+            )
             declare_cached_op_files(snapshot_dir)
 
         with (
@@ -325,7 +340,8 @@ class TestDynamicModuleIntegration:
 
         # Create test function file
         test_module = snapshot_dir / "__init__.py"
-        test_module.write_text('''
+        test_module.write_text(
+            '''
 def test_dynamic_function(module, analysis_batch, batch, batch_idx):
     """A test function for dynamic loading."""
     from interpretune.analysis.ops.base import AnalysisBatch
@@ -346,17 +362,22 @@ def another_dynamic_function(module, analysis_batch, batch, batch_idx):
 
     analysis_batch["another_result"] = "another_dynamic_success"
     return analysis_batch
-''')
+''',
+            encoding="utf-8",
+        )
 
         # Create a YAML file to define the operation
         ops_yaml = snapshot_dir / "ops.yaml"
-        ops_yaml.write_text("""
+        ops_yaml.write_text(
+            """
 test_dynamic_function:
   description: A dynamically loaded test function
   implementation: __init__.test_dynamic_function
   input_schema: {}
   output_schema: {}
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(snapshot_dir)
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
@@ -408,24 +429,30 @@ test_dynamic_function:
         snapshot_dir.mkdir(parents=True)
 
         test_module = snapshot_dir / "__init__.py"
-        test_module.write_text("""
+        test_module.write_text(
+            """
 def cached_dynamic_function(module, analysis_batch, batch, batch_idx):
     from interpretune.analysis.ops.base import AnalysisBatch
     if analysis_batch is None:
         analysis_batch = AnalysisBatch()
     analysis_batch["cached_result"] = "cached_success"
     return analysis_batch
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Create a YAML file to define the operation
         ops_yaml = snapshot_dir / "ops.yaml"
-        ops_yaml.write_text("""
+        ops_yaml.write_text(
+            """
 cached_dynamic_function:
   description: A cached dynamic function
   implementation: __init__.cached_dynamic_function
   input_schema: {}
   output_schema: {}
-""")
+""",
+            encoding="utf-8",
+        )
         declare_cached_op_files(snapshot_dir)
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls

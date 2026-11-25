@@ -68,6 +68,50 @@ def fts_views_available() -> bool:
     return True
 
 
+def module_address(*paths: str) -> str:
+    """The venngram address selecting every tensor under the modules at ``paths`` (``module:<path>``, matched on
+    whole segments), as a union."""
+    return " | ".join(f"module:{path}" for path in paths)
+
+
+def merge_roles(*declarations: Mapping[str, str]) -> dict[str, str]:
+    """Merge role declarations as venngram views take them (``roles=``): tensor names mapped to roles, and roles
+    mapped to addresses (speediedan/venngram#109).
+
+    A later name entry replaces an earlier one, as a mapping update does. A role two declarations each map to an
+    address selects the union of both, so cooperative ``tunable_roles()`` overrides add to ``super()``'s rather than
+    replacing it. A key that parses as a role is taken as one here; the view still reads a key naming a tensor as a
+    name entry (venngram's rule, :func:`venngram.tuning.views.expand_roles`).
+    """
+    from venngram.roles import parse_role
+
+    def is_role(key: str) -> bool:
+        try:
+            parse_role(key)
+        except ValueError:
+            return False
+        return True
+
+    merged: dict[str, str] = {}
+    for declared in declarations:
+        for key, value in declared.items():
+            if key in merged and is_role(key) and merged[key] != value:
+                merged[key] = f"{merged[key]} | {value}"
+            else:
+                merged[key] = value
+    return merged
+
+
+def expand_declared_roles(root: nn.Module, roles: Mapping[str, str], structure: Any = None) -> dict[str, str]:
+    """``roles`` (names, or roles mapped to addresses) as tensor names mapped to roles, for a view that takes names
+    only: each address is resolved against ``root``'s parameters and buffers, placed by ``structure`` when given
+    (venngram's :func:`~venngram.tuning.views.expand_roles`, which states what it refuses)."""
+    from venngram.tuning.views import expand_roles
+
+    names = [n for n, _ in root.named_parameters()] + [n for n, _ in root.named_buffers()]
+    return expand_roles(roles, names, structure)
+
+
 def adapter_roles(root: nn.Module) -> dict[str, str]:
     """The roles venngram's overlay maps give ``root``'s tensors: PEFT adapter tensors as ``adapter:<name>``, for
     every tuner family a seed overlay describes, and whatever else a known overlay covers.
@@ -99,9 +143,34 @@ def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> An
 _REMINDED: set[str] = set()
 
 
-def default_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
+def _peft_mount(root: nn.Module) -> str | None:
+    """The path in ``root`` of the model a PEFT wrapper at ``root.model`` carries (``model.base_model.model``), or
+    ``None`` when ``root.model`` is not a PEFT model.
+
+    venngram mounts a base map at the outermost module whose class or ``config.architectures`` names a mapped
+    architecture. A ``PeftModel`` reports its base model's ``config``, which records ``architectures`` once loaded from
+    a checkpoint, so without a named mount the map would be placed at the wrapper, where none of its paths are (#1142).
+    """
+    model = getattr(root, "model", None)
+    get_base_model = getattr(model, "get_base_model", None)
+    if not callable(get_base_model) or type(model).__module__.split(".")[0] != "peft":
+        return None
+    base = get_base_model()
+    return next((path for path, module in root.named_modules() if module is base and path), None)
+
+
+def default_view(
+    root: nn.Module, roles: Mapping[str, str] | None = None, attached: Mapping[str, str] | None = None
+) -> Any:
     """``root``'s view through venngram (``venngram.view``): the base map of the model it carries, mounted where
     the model sits (``model.``), the roles of every overlay that applies, and ``roles`` over them.
+
+    ``attached`` places the modules spliced in beside the model (latent models and interventions, by the module each
+    rewrites: ``BaseITModule.tunable_placements()``), so their tensors take the layer and component of their site and
+    ``role:latent & layers:12:`` selects by depth. A placement the map cannot make (a site no map row places at or
+    above) is left out, with a warning: that module's tensors locate at no layer, and still resolve by name and role.
+
+    A model PEFT wraps is described where PEFT keeps it (``model.base_model.model``), not at the wrapper.
 
     Where no published component map describes the model, this is the identity view (:func:`identity_view`), with an
     info-level reminder that registering a map adds layers and components; where venngram's registry cannot be read,
@@ -109,9 +178,30 @@ def default_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any
     """
     import venngram
     from venngram.registry import RegistryError
+    from venngram.tuning import TunableViewError
 
+    roles, attached, mount = dict(roles or {}), dict(attached or {}), _peft_mount(root)
     try:
-        return venngram.view(root, roles=dict(roles or {}))
+        try:
+            return venngram.view(root, roles=roles, attached=attached, mount=mount)
+        except TunableViewError:
+            if not attached:
+                raise
+        unattached = venngram.view(root, roles=roles, mount=mount)  # a refusal that is not a placement's is raised here
+        # venngram refuses the view for any one placement it cannot make: keep those it can, one by one
+        placeable, unplaced = {}, {}
+        for key, at in attached.items():
+            try:
+                venngram.view(root, roles=roles, attached={key: at}, mount=mount)
+                placeable[key] = at
+            except TunableViewError as err:
+                unplaced[key] = err
+        reasons = "; ".join(map(str, unplaced.values()))
+        rank_zero_warn(
+            f"{', '.join(unplaced)} could not be placed at their sites in {type(root).__name__}'s view, so their"
+            f" tensors locate at no layer or component: address them by name or role ({reasons})."
+        )
+        return venngram.view(root, roles=roles, attached=placeable, mount=mount) if placeable else unattached
     except KeyError as err:
         model = getattr(root, "model", None)
         named = f"{type(root).__name__}" + (f" ({type(model).__name__})" if isinstance(model, nn.Module) else "")
@@ -135,7 +225,9 @@ def configured_view(module: nn.Module) -> Any | None:
 
     The view class is instantiated with ``module`` as its root and the configured ``init_args``. A class taking
     ``roles`` receives the composition's roles (the overlays' roles, :func:`adapter_roles`, and the module's
-    ``tunable_roles()``) unless ``init_args`` sets them.
+    ``tunable_roles()``) unless ``init_args`` sets them, and a class taking ``attached`` (venngram's ``MappedView``)
+    receives the placements of the modules spliced in beside the model (``tunable_placements()``) unless ``init_args``
+    sets them.
     """
     cfg = getattr(getattr(module, "it_cfg", None), "tunable_view", None)
     if not cfg:
@@ -148,6 +240,11 @@ def configured_view(module: nn.Module) -> Any | None:
         tunable_roles = getattr(module, "tunable_roles", None)
         declared = tunable_roles() if callable(tunable_roles) else None
         init_args["roles"] = {**adapter_roles(module), **(declared if isinstance(declared, Mapping) else {})}
+    if "attached" not in init_args and "attached" in inspect.signature(view_cls).parameters:
+        tunable_placements = getattr(module, "tunable_placements", None)
+        placed = tunable_placements() if callable(tunable_placements) else None
+        if isinstance(placed, Mapping) and placed:
+            init_args["attached"] = dict(placed)
     return view_cls(module, **init_args)
 
 

@@ -275,7 +275,8 @@ class TestCollectionSelection:
             "collection:\n  name: staged_ops\n  version: 0.1.0\n\n"
             "staged_op:\n  description: fixture op\n"
             "  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n"
-            "  input_schema: {}\n  output_schema: {}\n"
+            "  input_schema: {}\n  output_schema: {}\n",
+            encoding="utf-8",
         )
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
@@ -421,7 +422,6 @@ class TestReportArtifact:
                     targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
                 ),
             },
-            attribution_graph=None,
         )
 
     def test_describe_capabilities_is_plain_data_with_absent_surfaces_absent(self):
@@ -436,7 +436,7 @@ class TestReportArtifact:
         assert model["ops"] == ["add"] and model["position_scopes"] == ["last_token"]
         assert model["targets"] == {"activation": None}
         assert data["intervention"]["analysis_backend"]["targets"]["features"]["value_sources"] == ["constant"]
-        assert "latent_models" not in data and "capture" not in data and "attribution_graph" not in data
+        assert "latent_models" not in data and "capture" not in data and "techniques" not in data
         assert data["composition"] == ["core", "x"] and data["model_id"] == "gpt2"
 
     def test_the_artifact_carries_targets_outcomes_and_provenance(self, tmp_path):
@@ -451,7 +451,7 @@ class TestReportArtifact:
         report.record("TestX::case_b", "skipped-undeclared")
         path = tmp_path / "out" / "report.json"
         write_report_artifact(report, str(path), exitstatus=0)
-        artifact = json.loads(path.read_text())
+        artifact = json.loads(path.read_text(encoding="utf-8"))
         assert artifact["format"] == "interpretune.conformance.report/2"
         assert artifact["targets"]["TestX"]["intervention"]["model_backend"]["ops"] == ["add"]
         assert artifact["ran"] == ["TestX::case_a"] and artifact["skipped_undeclared"] == ["TestX::case_b"]

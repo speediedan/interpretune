@@ -1,9 +1,9 @@
 """Contract tests for the ``interpretune.analysis.backends`` façade.
 
 ``analysis/backends/__init__.py`` is a re-export façade: the seam's implementation lives in named
-modules (``interventions``, ``feature_selection``, ``capabilities``, ``protocols``) and the package
-``__all__`` is the public surface op authors are told to rely on. These tests pin the two invariants
-that make that arrangement safe to extend.
+modules (``interventions``, ``feature_selection``, ``capabilities``, ``protocols``, ``readouts``) and the
+package ``__all__`` is the public surface op authors are told to rely on. These tests pin the two invariants that
+make that arrangement safe to extend.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from pathlib import Path
 import pytest
 
 BACKENDS_DIR = Path(__file__).parent.parent.parent / "src" / "interpretune" / "analysis" / "backends"
-SEAM_MODULES = ("interventions", "feature_selection", "capabilities", "protocols")
+SEAM_MODULES = ("interventions", "feature_selection", "capabilities", "protocols", "readouts")
 
 
 def _public_module_level_names(module_path: Path) -> set[str]:
-    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     names: set[str] = set()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

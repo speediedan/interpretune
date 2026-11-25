@@ -56,7 +56,7 @@ def test_a_unit_outside_the_supplied_width_and_a_missing_width_refuse_by_name():
         recipe_interventions(_recipe(), site_widths={})
 
 
-def test_an_unapplied_op_refuses_rather_than_narrowing():
+def test_a_unit_replace_changes_only_the_named_units_and_positions():
     doc = {
         **RECIPE,
         "stages": [
@@ -66,8 +66,14 @@ def test_an_unapplied_op_refuses_rather_than_narrowing():
             }
         ],
     }
-    with pytest.raises(MisconfigurationException, match="a unit-targeted `replace` has no native translation"):
-        recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    value = torch.arange(2 * 3 * 8192, dtype=torch.float32).reshape(2, 3, 8192)
+    expected = value.clone()
+    expected[:, 1, 7] = 2.0
+    actual = apply_intervention(value.clone(), spec, last_pos=1)
+    assert torch.equal(actual, expected)
+    assert not torch.equal(actual, value)
 
 
 BASIS = "jlens_folded"
@@ -164,7 +170,7 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
         },
         "stages": [{"site": "blocks.1.hook_resid_post", "tokens": "all", "ops": [{"op": "add", "operand": "concept"}]}],
     }
-    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(doc))
+    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
     payload = recipe_interventions(load_recipe(tmp_path / "recipe.yaml").recipe, site_widths={})
     (spec,) = payload["blocks.1.hook_resid_post"]
     assert torch.equal(spec.intervention_tensor, torch.tensor([0.0, 2.0, 0.0, 0.0]))
@@ -296,13 +302,25 @@ def test_a_doses_table_on_a_composed_target_doses_only_its_members():
     assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
 
 
-def test_an_evidence_value_on_a_composed_target_is_refused():
-    """Venngram lists a composition's members through an op's doses, so an evidence-sourced value is refused, as a
-    unit target and not as a feature one."""
+def test_an_evidence_value_on_a_composed_target_reads_its_column_for_every_member():
+    """``@a - @b`` is units 1 and 2: each takes its own value from the column, and a row for unit 4 (in ``b``) is not a
+    member, so nothing doses it. It was refused before venngram listed a composition's members (venngram#131)."""
     value = {"from": {"evidence": "scores", "column": "score"}}
-    with pytest.raises(MisconfigurationException, match="composes unit sets") as excinfo:
-        recipe_interventions(_composed_recipe("both", value), site_widths={"mlp.out.hook_in": 16})
-    assert "feature" not in str(excinfo.value)
+    evidence = {"scores": {"score": {(12, 1): 0.5, (12, 2): -0.25, (12, 4): 9.0}}}
+    payload = recipe_interventions(
+        _composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence
+    )
+    (spec,) = payload["blocks.12.mlp.out.hook_in"]
+    assert spec.intervention_tensor[1] == 0.5 and spec.intervention_tensor[2] == -0.25
+    assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
+
+
+def test_an_evidence_value_on_a_composed_target_lists_the_members_its_column_misses():
+    """A composed target's member the column has no row for is refused rather than dropped, as for a single set."""
+    value = {"from": {"evidence": "scores", "column": "score"}}
+    evidence = {"scores": {"score": {(12, 1): 0.5}}}
+    with pytest.raises(MisconfigurationException, match=r"no value for \(layer, unit\) \[\(12, 2\)\]"):
+        recipe_interventions(_composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence)
 
 
 def test_a_composed_gradient_target_is_refused_like_a_single_one():
@@ -316,3 +334,13 @@ def test_a_composed_gradient_target_is_refused_like_a_single_one():
     }
     with pytest.raises(MisconfigurationException, match="addresses the gradient"):
         recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 16})
+
+
+def test_position_scoped_recipe_repeats_its_operand_without_touching_other_positions():
+    doc = {**RECIPE, "stages": [{**RECIPE["stages"][0], "tokens": {"positions": [2, 0]}}]}
+    payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    assert spec.positions == (2, 0)
+    result = apply_intervention(torch.zeros(1, 4, 8192), spec, last_pos=3)
+    assert result[0, 2, 7] == result[0, 0, 7] == 0.5
+    assert torch.count_nonzero(result) == 2

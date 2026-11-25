@@ -3,6 +3,8 @@
 from __future__ import annotations
 import hashlib
 import importlib.util
+import os
+import uuid
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -38,7 +40,11 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    skip the axis check and fail late at the backend, and report every op as unsampled.
 # 9: `required_intervention_modes` becomes `required_tensor_ops` (the tensor ops a definition's `required_ops` names,
 #    partitioned from the composition ops at load); a cache carrying the old field would build ops without it.
-CACHE_FORMAT_VERSION = "9"
+# 10: adds `required_techniques` (the techniques an op executes, bound to a component's typed record); a cache without
+#    the field would build the six technique ops with no gate at all.
+# 11: adds `ColCfg.site` (what a column's values name in the model they were computed on); a cache without the field
+#    would write stores that declare no site bindings, which `AnalysisStore.resolve_on` refuses.
+CACHE_FORMAT_VERSION = "11"
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,8 @@ class OpDef:
     # (one key names both kinds; the loader partitions it).
     required_tensor_ops: list[str] = field(default_factory=list)
     required_position_scopes: list[str] = field(default_factory=list)
+    # The techniques the op executes, by name, resolved against the components' `technique_support` records.
+    required_techniques: list[str] = field(default_factory=list)
     # An optional `conformance:` block from the definition: `run_inputs` the op runs on end to end in a
     # conformance suite (OpCollectionConformance). Declared beside the op so a collection carries its own
     # executable example; absent means the suite reports the op as unsampled rather than inventing inputs.
@@ -105,6 +113,7 @@ class OpDef:
             "required_capabilities": self.required_capabilities,
             "required_tensor_ops": self.required_tensor_ops,
             "required_position_scopes": self.required_position_scopes,
+            "required_techniques": self.required_techniques,
             "conformance": self.conformance,
             "composition": self.composition,
             "op_state": self.op_state.to_dict() if self.op_state is not None else None,
@@ -463,6 +472,7 @@ class OpDefinitionsCacheManager:
             "",
             "from interpretune.analysis.inputs import OpStateSpec",
             "from interpretune.analysis.ops.base import OpSchema, ColCfg",
+            "from interpretune.analysis.site_bindings import SiteBinding",
             "from interpretune.analysis.ops.compiler.cache_manager import OpDef",
             "",
             f'FINGERPRINT = "{self.fingerprint}"',
@@ -512,7 +522,7 @@ class OpDefinitionsCacheManager:
             fields.append(f"required_ops={op_def.required_ops!r}")
         if op_def.required_capabilities:
             fields.append(f"required_capabilities={op_def.required_capabilities!r}")
-        for axis in ("required_tensor_ops", "required_position_scopes"):
+        for axis in ("required_tensor_ops", "required_position_scopes", "required_techniques"):
             if value := getattr(op_def, axis):
                 fields.append(f"{axis}={value!r}")
         if op_def.conformance is not None:
@@ -593,8 +603,18 @@ class OpDefinitionsCacheManager:
         # Generate module content
         content = self._generate_module_content(op_definitions)
 
-        # Write to cache file
-        cache_path.write_text(content)
+        # Written beside the target and renamed over it, so a concurrent reader sees the old file or the new one and
+        # never part of one. UTF-8 because Python reads a source file as UTF-8 whatever the locale.
+        partial = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            partial.write_text(content, encoding="utf-8")
+            os.replace(partial, cache_path)
+        except PermissionError as denied:
+            # Windows refuses to replace a file another process has open; that process is reading a cache for the
+            # same fingerprint, so this write is redundant rather than lost.
+            rank_zero_warn(f"Could not write the compiled op cache {cache_path}: {denied}")
+        finally:
+            partial.unlink(missing_ok=True)
 
         return cache_path
 

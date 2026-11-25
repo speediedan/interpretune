@@ -342,7 +342,8 @@ class TestClassSAELens:
         from interpretune.adapters.sae_lens.adapter import BaseSAELensModule
 
         cfg = SAELensFromPretrainedConfig(release="r", sae_id="s", use_error_term=True)
-        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[])
+        # the processing check has its own tests
+        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[], _check_sae_processing=lambda *_: None)
         handle = SimpleNamespace()
         with patch(
             "interpretune.adapters.sae_lens.adapter.SAE.from_pretrained_with_cfg_and_sparsity",
@@ -360,7 +361,8 @@ class TestClassSAELens:
         from interpretune.adapters.sae_lens.adapter import BaseSAELensModule
 
         cfg = SAELensCustomConfig(cfg=deepcopy(TestClassSAELens.test_sae_cust_config), use_error_term=True)
-        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[])
+        # the processing check has its own tests
+        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[], _check_sae_processing=lambda *_: None)
         # The constructor routes through sae_lens' deprecated direct setter; expect exactly that.
         with pytest.warns(DeprecationWarning, match="use_error_term"):
             BaseSAELensModule.instantiate_saes(stub)
@@ -560,6 +562,81 @@ class TestCrossBackendSAEInit:
         assert module.model is not None
 
 
+class TestSAEProcessingCheck:
+    """An SAE declaring weight processing the model lacks is refused by name, with the setting that fixes it."""
+
+    res_jb = SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu")
+
+    def test_refused_on_an_unprocessed_bridge(self, get_it_session_cfg__sl_br_gpt2):
+        from interpretune.adapters.sae_lens.adapter import SAEProcessingMismatchError
+
+        sess_cfg = deepcopy(get_it_session_cfg__sl_br_gpt2)
+        sess_cfg.module_cfg.sae_cfgs = [self.res_jb]
+        with pytest.raises(
+            SAEProcessingMismatchError,
+            match=r"gpt2-small-res-jb/blocks\.0\.hook_resid_pre .*'center_writing_weights': True.*"
+            r"`enable_compatibility_mode: true`",
+        ):
+            ITSession(sess_cfg)
+
+    def test_accepted_on_a_bridge_with_that_processing(self, get_it_session_cfg__sl_br_gpt2):
+        sess_cfg = deepcopy(get_it_session_cfg__sl_br_gpt2)
+        sess_cfg.module_cfg.sae_cfgs = [self.res_jb]
+        sess_cfg.module_cfg.tl_cfg.enable_compatibility_mode = True
+        module = ITSession(sess_cfg).module
+        assert module.model_weight_processing()["center_writing_weights"] is True
+        assert len(module.sae_handles) == 1
+
+    def test_refused_on_nnsight(self, get_it_session_cfg__sl_ns_gpt2):
+        from interpretune.adapters.sae_lens.adapter import SAEProcessingMismatchError
+
+        sess_cfg = deepcopy(get_it_session_cfg__sl_ns_gpt2)
+        sess_cfg.module_cfg.sae_cfgs = [self.res_jb]
+        with pytest.raises(SAEProcessingMismatchError, match="NNsight composition serves the raw Hugging Face weights"):
+            ITSession(sess_cfg)
+
+    def test_compatibility_processing_follows_its_defaults_and_overrides(self):
+        from interpretune.adapters.sae_lens.adapter import SAELensTLModuleMixin, WEIGHT_PROCESSING_STEPS
+
+        defaults = SAELensTLModuleMixin._compatibility_processing({})
+        assert defaults == {
+            "fold_ln": True,
+            "center_writing_weights": True,
+            "center_unembed": True,
+            "fold_value_biases": True,
+            "refactor_factored_attn_matrices": False,
+        }
+        assert SAELensTLModuleMixin._compatibility_processing({"fold_ln": False})["fold_ln"] is False
+        none = SAELensTLModuleMixin._compatibility_processing({"no_processing": True})
+        assert none == dict.fromkeys(WEIGHT_PROCESSING_STEPS, False)
+        # a declared step that differs from compatibility mode's default is named as a kwarg in the hint
+        declared = {"fold_ln": False, "center_writing_weights": True}
+        hint = SAELensTLModuleMixin.processing_fix_hint(SAELensTLModuleMixin, declared)  # pyright: ignore[reportArgumentType]
+        assert "`enable_compatibility_mode_kwargs: {'fold_ln': False}`" in hint
+
+    def test_a_bridge_processed_some_other_way_is_unknown_and_refused(self):
+        from types import SimpleNamespace
+
+        from interpretune.adapters.sae_lens.adapter import (
+            BaseSAELensModule,
+            SAELensTLModuleMixin,
+            SAEProcessingMismatchError,
+        )
+
+        stub = SimpleNamespace(model=SimpleNamespace(_weights_processed=True))
+        assert SAELensTLModuleMixin.model_weight_processing(stub) is None
+        stub.model_weight_processing = lambda: None
+        stub.processing_fix_hint = lambda declared: "this composition cannot say what weight processing its model has"
+        handle = SimpleNamespace(
+            cfg=SimpleNamespace(metadata=SimpleNamespace(model_from_pretrained_kwargs={"fold_ln": True}, hook_name="h"))
+        )
+        with pytest.raises(SAEProcessingMismatchError, match="cannot say"):
+            BaseSAELensModule._check_sae_processing(stub, handle, self.res_jb)
+        # an SAE that declares no processing step is not checked at all
+        handle.cfg.metadata.model_from_pretrained_kwargs = {"n_devices": 1}
+        BaseSAELensModule._check_sae_processing(stub, handle, self.res_jb)
+
+
 class TestNNsightSAEBackend:
     """Tests specific to the NNsight SAE Lens backend."""
 
@@ -612,7 +689,7 @@ class TestBridgeSAEBackend:
         sae_cfg = SAELensFromPretrainedConfig(
             release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
         )
-        bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+        bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small")
         it_cfg = SAELensConfig(backend="transformerlens", tl_cfg=bridge_cfg, sae_cfgs=sae_cfg)
         assert it_cfg.backend == "transformerlens"
         assert isinstance(it_cfg.tl_cfg, ITLensBridgeConfig)
@@ -763,6 +840,54 @@ class TestBridgeTranscoderSupport:
         )
         assert not torch.allclose(pre, post)
         tinystories_bridge_model.reset_saes()
+
+    @pytest.mark.parametrize("site", ["blocks.0.mlp.hook_out", "blocks.0.hook_mlp_out"])
+    @pytest.mark.parametrize("callable_filter", [False, True], ids=["literal", "callable"])
+    def test_transcoder_backend_captures_the_registered_output_site(
+        self, tinystories_bridge_model, tinystories_transcoder, site, callable_filter
+    ):
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend, _build_available_hook_map
+
+        model, transcoder = tinystories_bridge_model, tinystories_transcoder
+        actual = "blocks.0.mlp.hook_out.hook_sae_acts_post"
+        requested = f"{site}.hook_sae_acts_post"
+        available = _build_available_hook_map(model, [transcoder])
+        assert available[actual] == actual
+        assert available[requested] == actual
+        assert "blocks.0.mlp.hook_in.hook_sae_acts_post" not in available
+        batch = {"input": model.to_tokens(TRANSCODER_PROMPT)}
+        expected_logits, expected_cache = model.run_with_cache_with_saes(**batch, saes=[transcoder])
+        names_filter = (lambda name: name == requested) if callable_filter else requested
+        logits, cache = TLModelBackend().fwd_w_cache_and_latent_models(model, batch, [transcoder], names_filter)
+        assert_close(logits, expected_logits)
+        assert_close(cache[requested], expected_cache[actual])
+        assert len(model._acts_to_saes) == 0
+
+    @pytest.mark.parametrize("site", ["blocks.0.mlp.hook_out", "blocks.0.hook_mlp_out", "blocks.*.mlp.hook_out"])
+    def test_transcoder_backend_edits_the_registered_output_site(
+        self, tinystories_bridge_model, tinystories_transcoder, site
+    ):
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        model, transcoder = tinystories_bridge_model, tinystories_transcoder
+        actual = "blocks.0.mlp.hook_out.hook_sae_acts_post"
+        batch = {"input": model.to_tokens(TRANSCODER_PROMPT)}
+        baseline, _ = model.run_with_cache_with_saes(**batch, saes=[transcoder])
+        expected = model.run_with_hooks_with_saes(
+            **batch, saes=[transcoder], fwd_hooks=[(actual, lambda value, hook: torch.zeros_like(value))]
+        )
+        payload = {
+            f"{site}.hook_sae_acts_post": {
+                "op": "replace",
+                "position_scope": "all_positions",
+                "intervention_tensor": torch.zeros(transcoder.cfg.d_sae),
+            }
+        }
+        pre, post = TLModelBackend().fwd_w_intervention(model, batch, payload, latent_model_handles=[transcoder])
+        assert_close(pre, baseline)
+        assert_close(post, expected)
+        assert not torch.allclose(pre, post)
+        assert len(model._acts_to_saes) == 0
 
     def test_transcoder_run_with_cache(
         self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits

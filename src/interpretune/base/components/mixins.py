@@ -10,7 +10,13 @@ from transformers import AutoConfig, PreTrainedModel, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE, _resolve_env_auth_token
+from interpretune.utils import (
+    rank_zero_warn,
+    _import_class,
+    _BNB_AVAILABLE,
+    _resolve_env_auth_token,
+    check_gpu_device_map,
+)
 from interpretune.config import (
     HFFromPretrainedConfig,
     HFGenerationConfig,
@@ -30,6 +36,16 @@ if TYPE_CHECKING:
         """The ``evaluate`` metric surface classification steps use, loaded by the module's ``load_metric``."""
 
         def compute(self, *, predictions: Any = ..., references: Any = ...) -> dict[str, Any]: ...
+
+
+def enable_activation_checkpointing(model: PreTrainedModel) -> None:
+    """Enable activation checkpointing on ``model`` under the name the installed transformers provides.
+
+    transformers 5.24 renamed ``gradient_checkpointing_enable`` to ``activation_checkpointing_enable`` and deprecated
+    the old name (removal in v6), while the releases from interpretune's floor up to 5.24 have only the old one.
+    """
+    enable = getattr(model, "activation_checkpointing_enable", None) or model.gradient_checkpointing_enable
+    enable()
 
 
 class ITStateMixin:
@@ -530,8 +546,10 @@ class HFFromPretrainedMixin:
     def hf_configured_model_init(
         self, cust_config: PretrainedConfig, access_token: str | None = None
     ) -> PreTrainedModel:
-        """Instantiate the HF model from a customized config, applying the configured label count."""
-        cust_config.num_labels = self.it_cfg.num_labels  # mixin provides it_cfg
+        """Instantiate the HF model from a customized config, applying the label count a task configuration declares."""
+        # a task configuration declares its label count; a task-neutral one has none and keeps the pretrained count
+        if (num_labels := getattr(self.it_cfg, "num_labels", None)) is not None:  # mixin provides it_cfg
+            cust_config.num_labels = num_labels
         assert self.hf_cfg is not None, "hf_cfg should be set when calling hf_configured_model_init"
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
         # TODO: parameterize the default model head when one not provided in pretrained config
@@ -542,6 +560,10 @@ class HFFromPretrainedMixin:
                 )  # mixin provides it_cfg
             if self.hf_cfg.meta_init:
                 return self._hf_meta_model_init(cust_config, access_token)
+            # checked here, not when the config is built: an adapter may still rewrite the map before the load (the
+            # TransformerLens adapter loads on the CPU whatever the map said), so only the map loaded with is a request
+            if (device_map := self.hf_cfg.pretrained_kwargs.get("device_map")) is not None:
+                check_gpu_device_map(device_map, field="pretrained_kwargs.device_map")
             model = self.it_cfg.model_class.from_pretrained(  # mixin provides it_cfg
                 **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )
@@ -551,7 +573,7 @@ class HFFromPretrainedMixin:
         return model
 
     def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> PreTrainedModel:
-        """The model built on the meta device, for a data-parallel placement to shard before loading it.
+        """The model built on the meta device, for a placement to shard or split before loading it.
 
         With ``meta_init_load: rank0``, the process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads
         the checkpoint on the CPU, kept as the module's meta-init source for the placement to load from. It is set as
@@ -635,12 +657,12 @@ class HFFromPretrainedMixin:
     def _configure_gradient_checkpointing(self) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_gradient_checkpointing"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            enable_activation_checkpointing(self.model)
 
     def _configure_peft(self, quantized: bool = True) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_peft"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            enable_activation_checkpointing(self.model)
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
         if quantized:
