@@ -40,6 +40,7 @@ def _doc(readout=None, *, stages=None, operands=None, sets=None, schema=4):
                 "read": {"point": "hook_in", "layers": [5]},
                 "read_two": {"point": "hook_in", "layers": [2, 5], "units": [1, 3]},
                 "mixed": {"any": [{"point": "unembed.hook_out"}, {"point": "hook_in", "layers": [5]}]},
+                "outside": "point:ln_final.hook_normalized",
                 "edit_grad": {"point": "hook_out", "layers": [3], "units": [0], "of": "grad"},
                 "other_grad": {"point": "hook_out", "layers": [4], "units": [0], "of": "grad"},
                 **(sets or {}),
@@ -226,6 +227,10 @@ class TestRefusals:
     def test_a_term_mixing_the_logits_with_a_block_site_is_refused(self):
         with pytest.raises(MisconfigurationException, match=r"mixes the logits .* with block sites \['hook_in'\]"):
             _readout({"terms": [{"reduce": "sum", "set": "mixed", "tokens": "last"}]})
+
+    def test_a_term_reading_a_global_point_other_than_the_logits_is_refused(self):
+        with pytest.raises(MisconfigurationException, match=r"\['ln_final.hook_normalized'\] are global points"):
+            _readout({"terms": [{"reduce": "sum", "set": "outside", "tokens": "last"}]})
 
     @pytest.mark.parametrize(
         "tokens, match",
