@@ -67,10 +67,18 @@ The reconstructor reproduces its published per-layer fraction explained on the m
 0.358 against the card's 0.120 to 0.341), with the head's LayerNorm non-affine and the hidden state taken after the
 final norm, which the checkpoint does not state and step 1 measured.
 
+The op was then run on the real weights (bfloat16 base on two 32 GB GPUs) over 12 of those items, 3 positions and layers
+20, 44, 52 and 60, against step 1's `PeftModel` path, each capturing its own activations. All 144 greedy readouts are
+the same text (0 of 144 for a shifted pairing), the base's own forward is bit-identical before the mount and after the
+last read, and an adapter for another base is refused. In a sampled pass the rhyme word appears in 39 of 144 readouts
+(step 1's samples at the same cells: 36), and the reconstructor explains 0.160, 0.356, 0.263 and 0.301 of the activation
+at the four layers (step 1: 0.152, 0.346, 0.269 and 0.303).
+
 ## Limits
 
 - Tested on one task family (poetry planning); how the lens reads other families is not measured.
 - The CPU tests run on a tiny random model of the same architecture: they cover the mechanics and the refusals, not
-  read quality, which needs the real weights (two 32 GB GPUs or more). The op itself has not yet been run on the real
-  weights; step 1's numbers come from the research code it was ported from.
+  read quality, which needs the real weights (two 32 GB GPUs or more).
+- The adapters are held in float32, as they are released. Mounted at the base's bfloat16 instead, 4 of 28 greedy
+  readouts matched the reference; float32 takes about twice as long per read.
 - Compositions: an HF model or an nnsight wrapper of one. A TransformerLens bridge is refused.
