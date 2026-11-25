@@ -79,7 +79,7 @@ def _run_config(interface: str, revision: str, tmp_path: Path, record: Path) -> 
         recorder = "tests.core.rte_ft_record.LightningEpochRecorder"
     callbacks.append({"class_path": recorder, "init_args": {"out": str(record)}})
     path = tmp_path / f"rte_ft.gpt2.{interface}.yaml"
-    path.write_text(yaml.safe_dump(cfg))
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return path
 
 
@@ -110,7 +110,7 @@ def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed:
         if gpu:
             args.append("--trainer.accelerator=gpu")
         l_cli_main(run_mode=True, args=["fit", *args])
-    result = json.loads(record.read_text())
+    result = json.loads(record.read_text(encoding="utf-8"))
     epochs = result["epochs"]
     result["transition_epochs"] = [e["epoch"] for prev, e in zip(epochs, epochs[1:]) if e["depth"] != prev["depth"]]
     return result
@@ -176,7 +176,7 @@ def _torchrun(revision: str, work: Path, cli: Path, meta_init_load: str | None) 
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(repo_root), env.get("PYTHONPATH")) if p)
     proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=1500)
     assert proc.returncode == 0, f"torchrun failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    return [json.loads((work / f"record_rank{rank}.json").read_text()) for rank in range(2)]
+    return [json.loads((work / f"record_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -231,7 +231,7 @@ def _test_config(revision: str, work: Path) -> Path:
     cfg["session_ref"] = f"{cfg['session_ref']}@{revision}"
     cfg["run_cfg"].pop("callbacks")
     path = work / "rte_test.gpt2.core.yaml"
-    path.write_text(yaml.safe_dump(cfg))
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return path
 
 

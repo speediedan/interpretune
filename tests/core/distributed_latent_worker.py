@@ -123,7 +123,7 @@ def main() -> None:
     try:
         runner.train()
     except MisconfigurationException as err:
-        (out_dir / f"rank{rank}.json").write_text(json.dumps({"refused": str(err)}))
+        (out_dir / f"rank{rank}.json").write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
     record = {
         "losses": recorder.losses,
@@ -139,7 +139,7 @@ def main() -> None:
         "peak_allocated_gb": (torch.cuda.max_memory_allocated() / 2**30) if torch.cuda.is_available() else None,
         "torch": torch.__version__,
     }
-    (out_dir / f"rank{rank}.json").write_text(json.dumps(record))
+    (out_dir / f"rank{rank}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

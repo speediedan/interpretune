@@ -139,7 +139,7 @@ class TestOperands:
             _book({HOOK: spec})
         document = _book({HOOK: spec}, sidecar_dir=tmp_path)
         path = tmp_path / "book.yaml"
-        path.write_text(yaml.safe_dump(document))
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
         recipe = load_recipe(path).recipe
         operand = recipe.operands["operand_0"]
         assert operand.file == "exported.operands.safetensors" and operand.values is None
@@ -215,8 +215,8 @@ def test_an_exported_book_passes_venngrams_conformance_under_the_published_recor
     assert check_recipe(load_recipe(document).recipe, support) == []
     root = tmp_path / "published"
     root.mkdir()
-    (root / "book.yaml").write_text(yaml.safe_dump(document))
-    (root / "support.yaml").write_text(yaml.safe_dump(support_mapping(support)))
+    (root / "book.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
+    (root / "support.yaml").write_text(yaml.safe_dump(support_mapping(support)), encoding="utf-8")
     store.publish(
         "local", str(root), root, documents=[("address_book", "book.yaml"), ("support_record", "support.yaml")]
     )

@@ -240,5 +240,5 @@ def save_memory_footprint_results(results: Dict):
     mem_footprint = {}
     for fq_alias, rv in results.items():
         mem_footprint[fq_alias] = {"mem_results": rv}
-    with open(MEMORY_FOOTPRINTS_PATH, "w") as file:
+    with open(MEMORY_FOOTPRINTS_PATH, "w", encoding="utf-8") as file:
         yaml.dump(mem_footprint, file)

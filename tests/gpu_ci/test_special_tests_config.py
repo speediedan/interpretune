@@ -20,7 +20,7 @@ phase_evidence = pytest.importorskip("gpu_epsilon.phase_evidence")
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = special_tests.RunnerConfig.load(ROOT / "pyproject.toml")
 GPU_PHASES = phase_evidence.EvidenceConfig.load(ROOT / "pyproject.toml").phases
-CONFTEST = (ROOT / "tests" / "conftest.py").read_text()
+CONFTEST = (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
 
 
 def _run(*argv: str):
@@ -82,7 +82,7 @@ def test_rerun_options_keep_their_defaults(monkeypatch):
 
 def test_the_experiments_default_to_off(monkeypatch):
     monkeypatch.chdir(ROOT)
-    names = (ROOT / CONFIG.experiments_list).read_text().split()
+    names = (ROOT / CONFIG.experiments_list).read_text(encoding="utf-8").split()
     run = _run("--mark_type=standalone")
     assert run.experiment_flags() == dict.fromkeys(names, False)
     env = run.environment()
@@ -91,7 +91,7 @@ def test_the_experiments_default_to_off(monkeypatch):
 
 def test_the_hosted_linux_job_runs_the_device_free_standalone_tests():
     """``standalone_cpu`` tests left the GPU standalone phase (#731), so the hosted Linux job must run them."""
-    workflow = (ROOT / ".github" / "workflows" / "ci_test-full.yml").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "ci_test-full.yml").read_text(encoding="utf-8")
     step = workflow[workflow.index("Run the device-free standalone tests") :]
     step = step[: step.index("- name:")]
     assert "runner.os == 'Linux'" in step and 'CUDA_VISIBLE_DEVICES: ""' in step

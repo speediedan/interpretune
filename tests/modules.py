@@ -451,7 +451,7 @@ class StateLogInspectMixin:
         dump_path = Path(self.state_log_dir)
         state_log = dump_path / "dev_state_log.yaml"
         fs = get_filesystem(state_log)
-        with fs.open(state_log, "a", newline="") as fp:
+        with fs.open(state_log, "a", newline="", encoding="utf-8") as fp:
             fp.write(f"State log for test `{self.test_alias}`:{os.linesep}")
             for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
                 fp.write(os.linesep)

@@ -108,7 +108,7 @@ def pytest_runtest_protocol(item, nextitem):
         "declared_gb": declared,
         "torch": torch.__version__,
     }
-    with Path(report_path).open("a") as f:
+    with Path(report_path).open("a", encoding="utf-8") as f:
         f.write(json.dumps(row) + "\n")
 
 

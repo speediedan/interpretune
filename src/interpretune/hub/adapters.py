@@ -474,7 +474,9 @@ def hub_adapter_hint(name: str, cache_dir: Path | None = None) -> str:
         repo_id = repo_dir.name.removeprefix("models--").replace("--", "/", 1)
         for revision in components.cached_component_revisions(repo_id, cache_dir):
             try:
-                manifest = yaml.safe_load((repo_dir / "snapshots" / revision / IT_COMPONENT_MANIFEST).read_text())
+                manifest = yaml.safe_load(
+                    (repo_dir / "snapshots" / revision / IT_COMPONENT_MANIFEST).read_text(encoding="utf-8")
+                )
                 declares = declared_adapters(manifest, source=repo_id) if isinstance(manifest, dict) else []
             except (OSError, yaml.YAMLError, AdapterComponentError):
                 continue

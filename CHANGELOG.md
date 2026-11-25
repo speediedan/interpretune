@@ -463,6 +463,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
+
 - A phased schedule over a TransformerLens bridge thaws its biases under placements `fsdp2` and `tp`. A placement registers new tensors in place of the module's own, and the bridge kept each bias alias (`b_in`, `b_out`, ...) pointing at the old tensor, so its view lost the name and the biases stayed frozen, with nothing said. Once placed, a module now refreshes such references in a cooperative `refresh_tensor_references()`, which the TransformerLens composition implements ([#1200](https://github.com/interpretune/interpretune/issues/1200))
 
 - An `AnalysisStore` write refuses a value changed at an integer dtype's limit on every CPU. The guard compared a cast there and back, and on a CPU whose casts saturate (Apple silicon) an `int32` maximum stored as `float32` 2147483648.0 compared equal ([#1204](https://github.com/interpretune/interpretune/issues/1204))

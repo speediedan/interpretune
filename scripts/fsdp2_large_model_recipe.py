@@ -130,7 +130,7 @@ class HostMemWatch:
 
     def _run(self):
         while not self._stop.is_set():
-            with open("/proc/meminfo") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemAvailable:"):
                         self.low = min(self.low, int(line.split()[1]) / 2**20)
@@ -330,7 +330,7 @@ def load(model, args, rank, tied, rename, buffers, dev):
         for n, b in model.named_buffers():
             b.copy_(buffers[n].to(device=b.device, dtype=b.dtype))
     path = snapshot_download(args.model, allow_patterns=["*.safetensors", "*.json"])
-    index = json.load(open(os.path.join(path, "model.safetensors.index.json")))["weight_map"]
+    index = json.load(open(os.path.join(path, "model.safetensors.index.json"), encoding="utf-8"))["weight_map"]
     msd = model.state_dict()
     model_keys = {checkpoint_name(n): n for n in msd if "lora_" not in n and ".mlp.tc." not in n}
     sd = {}
@@ -404,12 +404,12 @@ def target_loss(model, batch, k):
 def mem_report(mt, rank, out_dir):
     """One rank's FSDP2MemTracker peak (bytes per category and device) and module-wise report."""
     peak = {str(d): {str(k): int(v) for k, v in c.items()} for d, c in mt.get_tracker_snapshot("peak").items()}
-    json.dump(peak, open(os.path.join(out_dir, f"mem_peak_rank{rank}.json"), "w"), indent=1)
+    json.dump(peak, open(os.path.join(out_dir, f"mem_peak_rank{rank}.json"), "w", encoding="utf-8"), indent=1)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         mt.display_snapshot("peak", units="GiB")
         mt.display_modulewise_snapshots(depth=4, units="GiB")
-    open(os.path.join(out_dir, f"mem_modulewise_rank{rank}.txt"), "w").write(buf.getvalue())
+    open(os.path.join(out_dir, f"mem_modulewise_rank{rank}.txt"), "w", encoding="utf-8").write(buf.getvalue())
 
 
 def run_phase(model, args, name, batch, dev, rank, res):
@@ -555,7 +555,7 @@ def main():
     allres = [None] * world
     dist.all_gather_object(allres, res)
     if rank == 0:
-        json.dump(allres, open(os.path.join(args.out, "recipe.json"), "w"), indent=1)
+        json.dump(allres, open(os.path.join(args.out, "recipe.json"), "w", encoding="utf-8"), indent=1)
         for i, r in enumerate(allres):
             print(
                 f"rank {i}: lora peak {r['lora']['peak_gpu_gib']:.2f} GiB, peak RSS {r['peak_rss_gib']:.1f} GiB, "

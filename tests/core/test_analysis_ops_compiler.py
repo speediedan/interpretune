@@ -472,7 +472,7 @@ class TestYamlFileInfo:
     def test_from_path_valid_file(self, tmp_path):
         """Test creating YamlFileInfo from a valid file."""
         yaml_file = tmp_path / "test.yaml"
-        yaml_file.write_text("test: content")
+        yaml_file.write_text("test: content", encoding="utf-8")
 
         file_info = YamlFileInfo.from_path(yaml_file)
 
@@ -491,10 +491,10 @@ class TestYamlFileInfo:
         """Test that content hash changes when file content changes."""
         yaml_file = tmp_path / "test.yaml"
 
-        yaml_file.write_text("content1")
+        yaml_file.write_text("content1", encoding="utf-8")
         info1 = YamlFileInfo.from_path(yaml_file)
 
-        yaml_file.write_text("content2")
+        yaml_file.write_text("content2", encoding="utf-8")
         info2 = YamlFileInfo.from_path(yaml_file)
 
         assert info1.content_hash != info2.content_hash
@@ -626,7 +626,7 @@ test_op:
     field2:
       datasets_dtype: float32
 """
-        yaml_file.write_text(yaml_content)
+        yaml_file.write_text(yaml_content, encoding="utf-8")
         return yaml_file
 
     def test_cache_manager_initialization(self, tmp_path):
@@ -672,13 +672,13 @@ test_op:
     def test_fingerprint_changes_with_content(self, cache_manager, tmp_path):
         """Test that fingerprint changes when file content changes."""
         yaml_file = tmp_path / "test.yaml"
-        yaml_file.write_text("content1")
+        yaml_file.write_text("content1", encoding="utf-8")
 
         cache_manager.add_yaml_file(yaml_file)
         fingerprint1 = cache_manager.fingerprint
 
         # Modify file and create new cache manager
-        yaml_file.write_text("content2")
+        yaml_file.write_text("content2", encoding="utf-8")
         cache_manager2 = OpDefinitionsCacheManager(cache_dir=tmp_path)
         cache_manager2.add_yaml_file(yaml_file)
         fingerprint2 = cache_manager2.fingerprint
@@ -707,14 +707,14 @@ test_op:
 
         # Create a fake cache file
         cache_path = cache_manager._get_cache_module_path()
-        cache_path.write_text("# fake cache")
+        cache_path.write_text("# fake cache", encoding="utf-8")
 
         # File should be considered valid initially
         assert cache_manager.is_cache_valid()
 
         # Modify the source file
         time.sleep(0.01)  # Ensure different mtime
-        sample_yaml_file.write_text("modified content")
+        sample_yaml_file.write_text("modified content", encoding="utf-8")
 
         # Cache should now be invalid
         assert not cache_manager.is_cache_valid()
@@ -878,8 +878,8 @@ test_op:
         # Create some old cache files
         old_cache1 = cache_manager.cache_dir / "op_definitions_old1.py"
         old_cache2 = cache_manager.cache_dir / "op_definitions_old2.py"
-        old_cache1.write_text("# old cache 1")
-        old_cache2.write_text("# old cache 2")
+        old_cache1.write_text("# old cache 1", encoding="utf-8")
+        old_cache2.write_text("# old cache 2", encoding="utf-8")
 
         # Save current cache (should trigger cleanup)
         op_definitions = {
@@ -908,7 +908,7 @@ test_op:
 
         # Create a real cache file that we'll try to delete
         old_cache_file = cache_manager.cache_dir / "op_definitions_old_fingerprint.py"
-        old_cache_file.write_text("# old cache")
+        old_cache_file.write_text("# old cache", encoding="utf-8")
 
         # Create a mock file that will raise OSError when unlink is called
         mock_file = MagicMock()
@@ -931,7 +931,7 @@ test_op:
                 "output_schema": {"output1": {"datasets_dtype": "float32"}},
             }
         }
-        with open(yaml_file, "w") as f:
+        with open(yaml_file, "w", encoding="utf-8") as f:
             yaml.dump(yaml_content, f)
 
         cache_manager.add_yaml_file(yaml_file)
@@ -939,7 +939,7 @@ test_op:
         # Create a cache file
         cache_path = cache_manager._get_cache_module_path()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text("# cache content")
+        cache_path.write_text("# cache content", encoding="utf-8")
 
         # Initially should be valid
         assert cache_manager.is_cache_valid()
@@ -960,7 +960,7 @@ test_op:
         # Create invalid cache file that will cause import error
         cache_path = cache_manager._get_cache_module_path()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text("invalid python syntax !!!")
+        cache_path.write_text("invalid python syntax !!!", encoding="utf-8")
 
         # Should return None when import fails
         result = cache_manager.load_cache()
@@ -974,7 +974,7 @@ test_op:
         # as we're mocking the import mechanism before content is read.
         cache_path = cache_manager._get_cache_module_path()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}')
+        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}', encoding="utf-8")
 
         # Scenario 1: spec is None
         with patch("importlib.util.spec_from_file_location", return_value=None) as mock_spec_from_file:
@@ -1025,7 +1025,7 @@ test_op:
 
         # Create a valid cache file
         cache_path = cache_manager._get_cache_module_path()
-        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}')
+        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}', encoding="utf-8")
 
         # Remove the source YAML file
         sample_yaml_file.unlink()
@@ -1039,11 +1039,14 @@ test_op:
 
         # Create a cache file that will cause import errors
         cache_path = cache_manager._get_cache_module_path()
-        cache_path.write_text("""
+        cache_path.write_text(
+            """
 import nonexistent_module  # This will cause an import error
 FINGERPRINT = "test"
 OP_DEFINITIONS = {}
-""")
+""",
+            encoding="utf-8",
+        )
 
         with patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn:
             result = cache_manager.load_cache()
@@ -1244,9 +1247,9 @@ OP_DEFINITIONS = {}
         # Save a valid cache
         cache_path = cache_manager.save_cache(op_definitions)
         # --- Fingerprint mismatch ---
-        orig = cache_path.read_text()
+        orig = cache_path.read_text(encoding="utf-8")
         wrong_fp = orig.replace(f'FINGERPRINT = "{cache_manager.fingerprint}"', 'FINGERPRINT = "not_the_real_fp"')
-        cache_path.write_text(wrong_fp)
+        cache_path.write_text(wrong_fp, encoding="utf-8")
         with pytest.warns(match="Cache fingerprint mismatch, invalidating cache"):
             # Should warn and return None
             assert cache_manager.load_cache() is None
@@ -1254,10 +1257,10 @@ OP_DEFINITIONS = {}
 
         # --- OP_DEFINITIONS missing ---
         cache_manager.save_cache(op_definitions)  # restore valid cache
-        valid = cache_path.read_text()
+        valid = cache_path.read_text(encoding="utf-8")
         # Remove OP_DEFINITIONS by overwriting it at the end of the file
         missing_defs = valid + "\nOP_DEFINITIONS = {}\n"
-        cache_path.write_text(missing_defs)
+        cache_path.write_text(missing_defs, encoding="utf-8")
         with pytest.warns(match="No operation definitions found in cache"):
             # Should warn and return None
             assert cache_manager.load_cache() is None
@@ -1341,13 +1344,13 @@ class TestCacheManagerHubFunctionality:
 
             # Create YAML files
             ops_yaml = repo_dir / "ops.yaml"
-            ops_yaml.write_text("test_op: {}")
+            ops_yaml.write_text("test_op: {}", encoding="utf-8")
             expected_files.append(ops_yaml)
 
             # Also test .yml extension
             if repo == repos[0]:
                 ops_yml = repo_dir / "operations.yml"
-                ops_yml.write_text("another_op: {}")
+                ops_yml.write_text("another_op: {}", encoding="utf-8")
                 expected_files.append(ops_yml)
 
             declare_cached_op_files(repo_dir)
@@ -1397,7 +1400,7 @@ class TestCacheManagerHubFunctionality:
         valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
         valid_repo.mkdir(parents=True)
         ops_yaml_file = valid_repo / "ops.yaml"
-        ops_yaml_file.write_text("valid_op: {}")
+        ops_yaml_file.write_text("valid_op: {}", encoding="utf-8")
         declare_cached_op_files(valid_repo)
 
         # Invalid repository names (should be ignored)
@@ -1409,7 +1412,7 @@ class TestCacheManagerHubFunctionality:
         for invalid_repo in invalid_repos:
             invalid_dir = hub_cache / invalid_repo / "snapshots" / "abc"
             invalid_dir.mkdir(parents=True)
-            (invalid_dir / "ops.yaml").write_text("invalid_op: {}")
+            (invalid_dir / "ops.yaml").write_text("invalid_op: {}", encoding="utf-8")
 
         # Mock scan_cache_dir to only return valid repo
         from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
@@ -1458,15 +1461,15 @@ class TestCacheManagerHubFunctionality:
         # Multiple snapshots with different files
         snapshot1 = snapshots_dir / "snapshot1"
         snapshot1.mkdir(parents=True)
-        (snapshot1 / "ops.yaml").write_text("op1: {}")
+        (snapshot1 / "ops.yaml").write_text("op1: {}", encoding="utf-8")
         subfolder = snapshot1 / "subfolder"
         subfolder.mkdir(parents=True)
-        (subfolder / "more_ops.yml").write_text("op2: {}")
+        (subfolder / "more_ops.yml").write_text("op2: {}", encoding="utf-8")
 
         snapshot2 = snapshots_dir / "snapshot2"
         snapshot2.mkdir(parents=True)
         operations_yaml_file = snapshot2 / "operations.yaml"
-        operations_yaml_file.write_text("op3: {}")
+        operations_yaml_file.write_text("op3: {}", encoding="utf-8")
         from tests.hub_op_fixtures import declare_cached_op_files
 
         declare_cached_op_files(snapshot2)
@@ -1678,7 +1681,7 @@ class TestCacheManagerHubFunctionality:
         snapshot_dir = hub_cache / "models--testuser--repo" / "snapshots" / "abc123"
         snapshot_dir.mkdir(parents=True)
         yaml_file = snapshot_dir / "operations.yml"
-        yaml_file.write_text("another_op: {}")
+        yaml_file.write_text("another_op: {}", encoding="utf-8")
         declare_cached_op_files(snapshot_dir)
 
         mock_revision = Mock(spec=CachedRevisionInfo)

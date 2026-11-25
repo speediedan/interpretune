@@ -25,7 +25,7 @@ def main():
 
     # Load the YAML config to understand what we're working with
     config_path = "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml"
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     log(f"Config: {config_path}")
@@ -213,7 +213,7 @@ def main():
     log_dir = os.environ.get("IT_DEBUG_LOG_DIR", "/tmp/it_benchmark_debugging")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"it_pipeline_debug_{timestamp}.log")
-    with open(log_path, "w") as f:
+    with open(log_path, "w", encoding="utf-8") as f:
         f.write("\n".join(log_lines))
     log(f"\nLog saved to: {log_path}")
 

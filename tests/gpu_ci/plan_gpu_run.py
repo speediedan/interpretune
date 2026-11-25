@@ -205,7 +205,7 @@ def write_plan_record(record: dict, path: Path) -> None:
     """Write ``record`` to ``path``; a failure is reported and ignored, since the record never changes the run."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(record, indent=2) + "\n")
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"plan record {path}")
     except OSError as e:
         print(f"##vso[task.logissue type=warning]could not write the plan record to {path}: {e}")
@@ -224,7 +224,7 @@ def selection_covers(target: str, mode: str, selection_file: str | None) -> bool
     if mode != "selected":
         return True
     try:
-        lines = [ln.strip() for ln in Path(selection_file or "").read_text().splitlines() if ln.strip()]
+        lines = [ln.strip() for ln in Path(selection_file or "").read_text(encoding="utf-8").splitlines() if ln.strip()]
     except OSError:
         return True
     lines = [ln for ln in lines if not ln.startswith("!")]  # a deferred case narrows a prefix, it adds none
@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(plan.selection.to_json(), sys.stdout, indent=2)
         print()
     if selection_file is not None:
-        print(f"selection file {selection_file}:\n{selection_file.read_text()}", end="")
+        print(f"selection file {selection_file}:\n{selection_file.read_text(encoding='utf-8')}", end="")
     for line in azure_variables(plan, selection_file):
         print(line)
     return 0

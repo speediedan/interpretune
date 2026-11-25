@@ -35,10 +35,10 @@ def _fake_hub(cache: Path, commits: dict[str, dict], *, main: str | None):
         repo_dir = cache / f"models--{repo_id.replace('/', '--')}"
         snap = repo_dir / "snapshots" / commit
         snap.mkdir(parents=True, exist_ok=True)
-        (snap / filename).write_text(yaml.safe_dump(commits[commit]))
+        (snap / filename).write_text(yaml.safe_dump(commits[commit]), encoding="utf-8")
         if revision in (None, "main"):
             (repo_dir / "refs").mkdir(exist_ok=True)
-            (repo_dir / "refs" / "main").write_text(commit)
+            (repo_dir / "refs" / "main").write_text(commit, encoding="utf-8")
         return str(snap / filename)
 
     return download
@@ -84,7 +84,7 @@ class TestPinnedPullIsAddressable:
 
         it.hub.pull(REPO, revision=SHA_A, cache_dir=hub)
         it.hub.pull(REPO, cache_dir=hub)  # a later unpinned fetch moves refs/main to B
-        assert (hub / "models--org--pinned" / "refs" / "main").read_text() == SHA_B
+        assert (hub / "models--org--pinned" / "refs" / "main").read_text(encoding="utf-8") == SHA_B
         assert resolve_component_manifest(REPO, cache_dir=hub)[2] == SHA_A, (
             "a republish must not change a pinned environment"
         )
@@ -118,7 +118,7 @@ class TestPinnedPullIsAddressable:
         # an ambiguous prefix is refused naming the candidates rather than picking one
         (hub / "models--org--pinned" / "snapshots" / ("a" * 39 + "c")).mkdir()
         (hub / "models--org--pinned" / "snapshots" / ("a" * 39 + "c") / "it_component.yaml").write_text(
-            yaml.safe_dump(MANIFEST_A)
+            yaml.safe_dump(MANIFEST_A), encoding="utf-8"
         )
         with pytest.raises(KeyError, match="ambiguous among cached snapshots"):
             resolve_component_manifest(REPO, cache_dir=hub, revision="a" * 12)

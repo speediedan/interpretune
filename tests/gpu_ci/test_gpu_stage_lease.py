@@ -44,7 +44,7 @@ def _run(tmp_path: Path, *args: str, tool_rc: int = 0, with_tool: bool = True, w
     tool = tmp_path / "tool.sh"
     log = tmp_path / "tool.log"
     if with_tool:
-        tool.write_text(STUB.format(log=log, rc=tool_rc))
+        tool.write_text(STUB.format(log=log, rc=tool_rc), encoding="utf-8")
         tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
     full_env = {
         **os.environ,
@@ -60,7 +60,7 @@ def _run(tmp_path: Path, *args: str, tool_rc: int = 0, with_tool: bool = True, w
         **env,
     }
     proc = subprocess.run(["bash", str(SCRIPT), *args], cwd=ROOT, env=full_env, capture_output=True, text=True)
-    calls = log.read_text().splitlines() if log.exists() else []
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc, calls
 
 
@@ -115,7 +115,7 @@ def _needs(tmp_path: Path, *rows: dict) -> None:
 
     d = tmp_path / "stage-needs"
     d.mkdir(exist_ok=True)
-    (d / f"session-{len(list(d.iterdir()))}.json").write_text(json.dumps(list(rows)))
+    (d / f"session-{len(list(d.iterdir()))}.json").write_text(json.dumps(list(rows)), encoding="utf-8")
 
 
 def test_the_large_stage_leases_one_device_that_fits_its_largest_test(tmp_path):
@@ -224,7 +224,9 @@ echo 12345 > "$pidfile"; echo GPU-small > "$pidfile.device"
 def test_a_gate_held_on_its_second_wait_proceeds(tmp_path):
     """The tool times out once, then grants: the stage holds its lease after one retry."""
     proc, _ = _run(tmp_path, "acquire", "small", IT_GPU_LEASE_WAIT="30", IT_GPU_LEASE_BUDGET="90")  # writes the stub
-    (tmp_path / "tool.sh").write_text(ONCE_STUB.format(log=tmp_path / "once.log", flag=tmp_path / "timed_out"))
+    (tmp_path / "tool.sh").write_text(
+        ONCE_STUB.format(log=tmp_path / "once.log", flag=tmp_path / "timed_out"), encoding="utf-8"
+    )
     env = {
         **os.environ,
         "GPU_STAGE_LEASE_DIR": str(tmp_path / "leases"),
@@ -252,7 +254,7 @@ def _phase_counts(tmp_path: Path, **states: str) -> dict:
     counts = tmp_path / "gpu_phase_counts"
     counts.mkdir(exist_ok=True)
     for name, state in states.items():
-        (counts / name.replace("__", ".")).write_text(state + "\n")
+        (counts / name.replace("__", ".")).write_text(state + "\n", encoding="utf-8")
     return {**os.environ, "AGENT_TEMPDIRECTORY": str(tmp_path)}
 
 
@@ -295,7 +297,7 @@ def _events(tmp_path: Path) -> list[dict]:
     import json
 
     path = tmp_path / "telemetry" / "events.jsonl"
-    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
 
 
 def test_a_stage_records_its_wait_its_grant_with_devices_and_its_release(tmp_path):
@@ -339,19 +341,21 @@ def test_the_large_stage_reads_declarations_from_its_default_directory(tmp_path)
     default = tmp_path / "evidence" / "it-phases" / "stage-needs"
     scripts = tmp_path / ".azure-pipelines" / "scripts"
     scripts.mkdir(parents=True)
-    source = SCRIPT.read_text()
+    source = SCRIPT.read_text(encoding="utf-8")
     assert source.count("/evidence/it-phases/stage-needs") == 1, "the default directory moved; update this case"
     for sibling in SCRIPT.parent.iterdir():  # the scripts it sources, beside the copy and two levels up
         if sibling.name != SCRIPT.name:
             (scripts / sibling.name).symlink_to(sibling)
     copy = scripts / SCRIPT.name
-    copy.write_text(source.replace("/evidence/it-phases/stage-needs", str(default)))
+    copy.write_text(source.replace("/evidence/it-phases/stage-needs", str(default)), encoding="utf-8")
     for top in ("tests", "scripts"):
         (tmp_path / top).symlink_to(ROOT / top)
     default.mkdir(parents=True)
-    (default / "session-0.json").write_text('[{"nodeid": "b", "gpus": 1, "mem_gb": 14.2, "bf16": false}]')
+    (default / "session-0.json").write_text(
+        '[{"nodeid": "b", "gpus": 1, "mem_gb": 14.2, "bf16": false}]', encoding="utf-8"
+    )
     tool, log = tmp_path / "tool.sh", tmp_path / "tool.log"
-    tool.write_text(STUB.format(log=log, rc=0))
+    tool.write_text(STUB.format(log=log, rc=0), encoding="utf-8")
     tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "leases").mkdir()
     env = {
@@ -371,5 +375,5 @@ def test_the_large_stage_reads_declarations_from_its_default_directory(tmp_path)
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "unbound variable" not in proc.stderr, proc.stderr
-    calls = log.read_text().splitlines()
+    calls = log.read_text(encoding="utf-8").splitlines()
     assert len(calls) == 1 and "--gpus 1 --min-vram 15" in calls[0], calls

@@ -66,7 +66,7 @@ class TestTheStubCoversThePublicSurface:
         type checker even though it exists and is exported. The consumer that reaches is our own adapter
         repository, where the natural response to an error on real public API is a permanent `# type: ignore`.
         """
-        missing = sorted(set(interpretune.__all__) - names_reexported_by(STUB_PATH.read_text()))
+        missing = sorted(set(interpretune.__all__) - names_reexported_by(STUB_PATH.read_text(encoding="utf-8")))
         assert not missing, (
             f"{len(missing)} of {len(interpretune.__all__)} public names are absent from __init__.pyi and so are "
             f"invisible to a type checker: {missing}. Regenerate with `python scripts/generate_op_stubs.py`."
@@ -78,7 +78,7 @@ class TestTheStubCoversThePublicSurface:
         The assertion above is a check for an ABSENCE, which passes when it never really ran. Deleting one re-export
         from the stub source has to make it report that name, or it is measuring nothing.
         """
-        source = STUB_PATH.read_text()
+        source = STUB_PATH.read_text(encoding="utf-8")
         victim = "ITSession"
         assert victim in names_reexported_by(source), f"{victim} should be re-exported before planting the defect"
         planted = "\n".join(line for line in source.splitlines() if f"{victim} as {victim}" not in line)
@@ -96,7 +96,10 @@ class TestTheStubCoversThePublicSurface:
         """
         gen = _generator()
         doctored = tmp_path / "__init__.py"
-        doctored.write_text(INIT_PATH.read_text().replace("__all__ = [", '__all__ = [\n    "a_name_from_nowhere",', 1))
+        doctored.write_text(
+            INIT_PATH.read_text(encoding="utf-8").replace("__all__ = [", '__all__ = [\n    "a_name_from_nowhere",', 1),
+            encoding="utf-8",
+        )
         with pytest.raises(RuntimeError, match="a_name_from_nowhere"):
             gen.public_surface_imports(doctored)
 

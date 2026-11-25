@@ -874,7 +874,7 @@ class TestRunnerConfig:
 
         # Create the op dir and test the exception when it's not empty
         op_dir.mkdir(parents=True)
-        (op_dir / "test_file.txt").write_text("test")
+        (op_dir / "test_file.txt").write_text("test", encoding="utf-8")
 
         with pytest.raises(Exception, match="is not empty"):
             init_analysis_dirs(module, op_output_dataset_path=custom_output_path, analysis_cfgs=[analysis_cfg])

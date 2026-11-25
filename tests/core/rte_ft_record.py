@@ -38,7 +38,7 @@ def _write(
         "epochs": epochs,
         **extra,
     }
-    Path(out.format(rank=os.environ.get("RANK", "0"))).write_text(json.dumps(record, indent=1))
+    Path(out.format(rank=os.environ.get("RANK", "0"))).write_text(json.dumps(record, indent=1), encoding="utf-8")
 
 
 class CoreEpochRecorder:
