@@ -471,6 +471,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The direct-forward input check (a batch keyed by a primary input the model's forward cannot take is refused by name) covers nnsight wrappers, circuit-tracer's nnsight replacement model among them, PEFT models and SAE Lens bridges. It skipped all four, the PEFT ones because it looked for the model on `base_model`, which is the tuner, so such a configuration failed inside the model with its own message about a missing input ([#748](https://github.com/interpretune/interpretune/issues/748))
+
 - A venngram site address names a point outside the block stack (`point:unembed.hook_in`, `point:ln_final.hook_normalized`) by its one layer-free name, in value and gradient addresses. It used to resolve to `blocks.<layer>.unembed.hook_in` for every layer, which a backend refused, so the tutorials' steering site had no address. A `layers` term never selects a global point, and a unit address or a readout term naming one is refused ([#1232](https://github.com/interpretune/interpretune/issues/1232))
 
 - A session no longer reads a prepared dataset another session is rewriting. The default `dataset_path` was one directory per task, for every model, tokenizer and prompt configuration, and each session rewrote in place the Arrow files another had memory-mapped, whose labels turned to garbage mid-training. The default is now keyed by what determines the rows (`<datasets cache>/<task>__<key>`; an explicit path is left alone), and `ITDataModule.save_prepared_dataset` moves whole files into place, which a datamodule's `prepare_data` calls in place of `save_to_disk`. The `knowing_using` example does ([#1220](https://github.com/interpretune/interpretune/issues/1220))
