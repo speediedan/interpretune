@@ -11,6 +11,7 @@ a plausible guess. Only the model id is required, since a store with no stated m
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +26,7 @@ class StoreSubject:
 
     Args:
         model_id: The Hub model id or local path the module loaded (required).
-        model_revision: The resolved commit of the model's weights, when the loader reports one.
+        model_revision: The commit the model's weights were loaded from, when it is known.
         architecture: The model's architecture class name (``config.architectures[0]``).
         tokenizer_id: The tokenizer's ``name_or_path``.
         component_map: The component map that resolved the store's sites: its ``architecture``, ``source`` and
@@ -139,6 +140,49 @@ def _dictionaries(it_cfg) -> tuple[dict[str, Any], ...]:
     return tuple(records)
 
 
+def loaded_revision(module, *, revision: str | None = None, cache_dir: Any = None) -> str | None:
+    """The commit the module's model was just loaded from, or ``None`` where it has none (a model built from a
+    configuration, or loaded from a local path).
+
+    transformers 5.18 and later keep no record of it on the model or its config, so it is read from the Hub cache, where
+    the load recorded the commit ``revision`` resolved to. Read it when the model is loaded: another load may move the
+    cache's entry for a branch.
+
+    Args:
+        module: The module whose model was loaded.
+        revision: The revision the load asked for (the default branch when ``None``).
+        cache_dir: The cache the load used (the default Hub cache when ``None``).
+    """
+    config = _hf_config(module)
+    if commit := _str(getattr(config, "_commit_hash", None)):  # transformers before 5.18
+        return commit
+    repo = _str(getattr(config, "_name_or_path", None))
+    if repo is None or os.path.exists(repo):
+        return None
+    from huggingface_hub import try_to_load_from_cache
+    from huggingface_hub.errors import HFValidationError
+    from transformers.utils.hub import extract_commit_hash
+
+    try:
+        cached = try_to_load_from_cache(repo, "config.json", revision=revision, cache_dir=cache_dir)
+    except HFValidationError:  # a path that no longer exists, or any other name that is not a repository's
+        return None
+    return extract_commit_hash(cached, None) if isinstance(cached, str) else None
+
+
+def model_identity(module) -> tuple[str | None, str | None]:
+    """The id of the module's base model and the commit it was loaded from, each ``None`` where the module does not
+    state it.
+
+    The commit is the one recorded when the module's model was built (:func:`loaded_revision`), or else the one its
+    config states.
+    """
+    config = _hf_config(module)
+    recorded = getattr(getattr(module, "_it_state", None), "_model_revision", None)
+    revision = _str(recorded) or _str(getattr(config, "_commit_hash", None))
+    return _model_id(getattr(module, "it_cfg", None), config), revision
+
+
 def subject_from_module(module) -> StoreSubject:
     """Read the subject of a store computed on ``module``.
 
@@ -147,7 +191,7 @@ def subject_from_module(module) -> StoreSubject:
     """
     it_cfg = getattr(module, "it_cfg", None)
     config = _hf_config(module)
-    model_id = _model_id(it_cfg, config)
+    model_id, revision = model_identity(module)
     if not model_id:
         raise StoreSubjectError(
             f"{type(module).__name__} states no model id (`it_cfg.model_name_or_path`), so a store computed on it"
@@ -159,7 +203,7 @@ def subject_from_module(module) -> StoreSubject:
     tokenizer = getattr(datamodule, "tokenizer", None) or getattr(it_cfg, "tokenizer", None)
     return StoreSubject(
         model_id=model_id,
-        model_revision=_str(getattr(config, "_commit_hash", None)),
+        model_revision=revision,
         architecture=architecture,
         tokenizer_id=_str(getattr(tokenizer, "name_or_path", None)),
         component_map=_component_map_record(architecture),

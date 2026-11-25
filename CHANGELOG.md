@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- Address books pinned to the models they were written against: `interpretune.tuning.pins` writes a module's base model (id and commit) and latent models (release and frame versions) into a book's `requires` (`pinned_book`, and `export_book(pins=)`), and `book_sets`, configured interventions and `load_recipe` refuse a book whose pins differ from what the module has loaded, naming each entry. `attach_latent_model` takes `release=`, and modules report their dictionaries' sources with `latent_model_releases()` ([#875](https://github.com/interpretune/interpretune/issues/875))
+
 - An evidence-sourced value (`from: {evidence, column}`) applies on a composed unit target (`@a & @b`, `@a - @control`) as on a single set: each member venngram lists for the composition reads its value from the column, a row for a unit outside the composition doses nothing, and a member the column has no row for is refused. It was refused for any composed target before. venngram is pinned at `26258252`, its main with `Op.unit_members` (speediedan/venngram#131) ([#905](https://github.com/interpretune/interpretune/issues/905))
 
 - Helper modules in Hub components: a manifest may declare `kinds: [helpers]` with `helpers.modules` (import name to `.py` path), a key-less `it.hub.pull` fetches them, and `it.hub.load_helpers(repo_id, name, revision=...)` imports one from the cache behind the remote-code gate, scoped by revision and without touching `sys.path` ([#1194](https://github.com/interpretune/interpretune/issues/1194))
@@ -465,6 +467,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - sae-lens installs from a released floor (`sae-lens >=6.55.0,<7` in the `examples` extra) instead of a git pin to the head of decoderesearch/SAELens#739: 6.55.0 is the first release that imports under transformer-lens 4.0. The Neuronpedia dashboard pipeline's generation subprocess therefore imports the installed release: a SAELens checkout goes on its `PYTHONPATH` only when `--saelens-repo-root` names one, as the preserved-baseline benchmark legs do. It used to prepend `SAELENS_REPO_ROOT` (default `~/repos/SAELens`) whenever that directory existed, so a stale checkout silently shadowed the release while benchmark lineage recorded the release version. The benchmark setup installs the preserved baseline's missing dependencies with uv rather than pip, and under `--skip-env-build` names any it finds missing. ([#652](https://github.com/interpretune/interpretune/issues/652))
 
 ### Fixed
+
+- A module records the commit its model was loaded from, so an AnalysisStore's subject states the model's revision under transformers 5.18 and later, which keep no record of it, and `resolve_on` accepts `frame` columns on the model they were computed on again ([#1243](https://github.com/interpretune/interpretune/issues/1243))
 
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
 

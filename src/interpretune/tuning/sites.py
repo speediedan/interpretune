@@ -71,31 +71,47 @@ def is_site_address(site: str) -> bool:
     return ":" in site or site.startswith("@")
 
 
-def book_sets(book: Any) -> dict[str, Any]:
+def book_sets(book: Any, root: nn.Module | None = None, *, catalog: Any = None) -> dict[str, Any]:
     """The named sets of an address book, for ``@<set>`` references in a site address.
 
     Args:
         book: A venngram ``AddressBook``, a book document (a mapping), a local path to one, or a venngram store
             reference to a published one.
+        root: The module the sets will be resolved on. Required for a book that pins the models it was written
+            against, which is checked against this module's
+            (:func:`~interpretune.tuning.pins.check_book_pins`).
+        catalog: The ``LatentCatalog`` whose frame versions a pinned book's are checked against.
 
     Returns:
         The book's sets by name (``AddressBook.sets()``).
+
+    Raises:
+        ValueError: ``book`` is a reference to another document, or it pins its models and no ``root`` was given.
+        PinMismatchError: ``root``'s models are not the ones the book pins.
     """
+    from interpretune.tuning.pins import check_book_pins
+
+    loaded = _load_book(book)
+    check_book_pins(loaded, root, catalog=catalog)
+    return loaded.sets()
+
+
+def _load_book(book: Any) -> Any:
     from pathlib import Path
 
     from venngram.book import AddressBook
     from venngram.store import is_reference, load
 
     if isinstance(book, AddressBook):
-        return book.sets()
+        return book
     if isinstance(book, Mapping):
-        return AddressBook.from_mapping(book).sets()
+        return AddressBook.from_mapping(book)
     if isinstance(book, str) and is_reference(book):
         loaded = load(book)
         if not isinstance(loaded, AddressBook):
             raise ValueError(f"{book!r} is a {type(loaded).__name__}, not an address book")
-        return loaded.sets()
-    return AddressBook.from_file(Path(book)).sets()
+        return loaded
+    return AddressBook.from_file(Path(book))
 
 
 def _path_of(root: nn.Module, target: Any) -> str | None:
