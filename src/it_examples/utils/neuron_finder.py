@@ -15,6 +15,11 @@ from typing import Any, NamedTuple, cast
 
 import torch
 
+from interpretune.harness.measures import (  # noqa: F401 - promoted; re-exported for the notebooks until they move
+    answer_margin,
+    cached_revision,
+)
+
 #: The site neuron-finder's neurons are units of: the MLP's hidden activation, the down projection's input.
 SITE = "mlp.out.hook_in"
 
@@ -252,30 +257,6 @@ def found(signed_effects: Mapping[Any, float], control_effects: Iterable[float],
         raise ValueError("No control effects given")
     threshold = float(torch.quantile(controls, q))
     return {key: float(value) > threshold for key, value in signed_effects.items()}
-
-
-def cached_revision(model_id: str) -> str:
-    """The commit of the snapshot ``model_id`` loads from the local Hugging Face cache: the checkpoint its neuron
-    indices belong to, which a checkpoint book pins.
-
-    Raises:
-        ValueError: If the model is not in the cache (load it first).
-    """
-    from pathlib import Path
-
-    from huggingface_hub import try_to_load_from_cache
-
-    path = try_to_load_from_cache(model_id, "config.json")
-    if not isinstance(path, str):
-        raise ValueError(f"{model_id} is not in the local Hugging Face cache; load it before pinning its revision")
-    return Path(path).parent.name
-
-
-def answer_margin(logits: torch.Tensor, answer_ids: tuple[int, int]) -> torch.Tensor:
-    """The behaviour measured: the first answer's logit minus the second's at the answer position (the last, with
-    left padding), one value per item."""
-    last = logits[:, -1, :].float()
-    return last[:, answer_ids[0]] - last[:, answer_ids[1]]
 
 
 def down_projections(module: Any, n_layers: int) -> dict[int, torch.nn.Module]:
