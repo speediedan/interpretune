@@ -155,6 +155,33 @@ class TestCircuitTracerConfig:
         assert cfg.max_feature_nodes == 4096
 
 
+class TestLocalTranscoderSets:
+    """A ``transcoder_set`` naming a local folder, as a composition loads it (``load_transcoder_from_hub``)."""
+
+    def test_a_top_k_set_keeps_its_activation(self, tmp_path):
+        """Its ``config.yaml`` states the activation and ``k``; a set loaded without them runs as ReLU (circuit-tracer
+        0.5.5)."""
+        import yaml
+        from circuit_tracer.utils.hf_utils import load_transcoder_from_hub
+        from safetensors.torch import save_file
+
+        torch.manual_seed(0)
+        for layer in range(2):
+            tensors = {"W_enc": torch.randn(16, 8), "W_dec": torch.randn(16, 8)}
+            tensors |= {"b_enc": torch.zeros(16), "b_dec": torch.zeros(8)}
+            save_file(tensors, str(tmp_path / f"layer_{layer}.safetensors"))
+        config = {"model_kind": "transcoder_set", "activation": "topk", "k": 2}
+        config |= {"feature_input_hook": "mlp.hook_in", "feature_output_hook": "mlp.hook_out"}
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        cfg = CircuitTracerConfig(transcoder_set=str(tmp_path), dtype="float32")
+        transcoders, _ = load_transcoder_from_hub(
+            cfg.transcoder_set, device=torch.device("cpu"), dtype=cfg.dtype, lazy_encoder=False, lazy_decoder=False
+        )
+        x = torch.randn(2, 5, 8)
+        active = (transcoders.encode(x) != 0).sum(-1)
+        assert (active <= 2).all() and (active == 2).any()
+
+
 # =============================================================================
 # Circuit Tracer Backend Type Tests
 # =============================================================================
