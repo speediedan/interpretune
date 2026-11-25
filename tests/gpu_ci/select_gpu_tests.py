@@ -75,7 +75,7 @@ def _matches(path: str, patterns: list[str]) -> bool:
 
 
 def load_areas(path: Path = AREAS_FILE) -> dict:
-    spec = yaml.safe_load(path.read_text())
+    spec = yaml.safe_load(path.read_text(encoding="utf-8"))
     if spec.get("version") != 1:
         raise ValueError(f"{path}: unsupported areas version {spec.get('version')!r}; this selector reads version 1")
     return spec
@@ -97,7 +97,7 @@ def _test_importers(root: Path) -> dict[str, set[str]]:
     for f in [*root.glob("tests/**/*.py"), *root.glob("src/it_examples/tests/**/*.py")]:
         rel = f.relative_to(root).as_posix()
         try:
-            tree = ast.parse(f.read_text())
+            tree = ast.parse(f.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
         mods = set()
@@ -187,10 +187,10 @@ def write_selection_file(sel: Selection, spec: dict, path: Path) -> None:
     then one ``!<node id>`` line per deferred ``full_run_only`` case the prefixes would otherwise select."""
     prefixes = selected_prefixes(sel, spec)
     if prefixes is None:
-        path.write_text("full\n")
+        path.write_text("full\n", encoding="utf-8")
         return
     deferred = [d for d in sel.deferred if d.startswith(tuple(prefixes))]
-    path.write_text("".join(f"{p}\n" for p in prefixes) + "".join(f"!{d}\n" for d in deferred))
+    path.write_text("".join(f"{p}\n" for p in prefixes) + "".join(f"!{d}\n" for d in deferred), encoding="utf-8")
 
 
 def changed_files(base: str, head: str = "HEAD", cwd: Path | None = None) -> list[str]:

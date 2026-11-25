@@ -96,7 +96,7 @@ def test_dispatcher_discovers_the_op(tmp_path):
 @pytest.mark.parametrize("book", sorted((COMPONENT / "books").glob("*.yaml")), ids=lambda p: p.stem)
 def test_books_are_lens_books(book):
     R = _runtime()
-    doc = yaml.safe_load(book.read_text())
+    doc = yaml.safe_load(book.read_text(encoding="utf-8"))
     assert doc["applies_to"]["architectures"] == ["Inkling2LoopForConditionalGeneration"]
     lens = doc["lens"]
     assert lens["variant"] == "plain" and set(lens["filters"]) <= R.FILTERS
@@ -191,7 +191,7 @@ def test_a_venngram_without_execution_maps_is_refused(monkeypatch, tmp_path):
     R = _runtime()
     book = sorted((COMPONENT / "books").glob("*.yaml"))[0]
     map_path = tmp_path / "inkling2_mini.yaml"
-    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n")
+    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n", encoding="utf-8")
     monkeypatch.setattr(venngram.book, "AddressBook", _Book)
     monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: object())
     with pytest.raises(ValueError, match="venngram read no execution map"):
@@ -279,10 +279,11 @@ def test_a_book_position_outside_the_runtimes_is_refused(monkeypatch, tmp_path):
     R = _runtime()
     book = tmp_path / "b.yaml"
     book.write_text(
-        "lens: {model: m, K: 3, variant: plain, filters: [], readouts: [{set: s, readout: plain, position: answer}]}\n"
+        "lens: {model: m, K: 3, variant: plain, filters: [], readouts: [{set: s, readout: plain, position: answer}]}\n",
+        encoding="utf-8",
     )
     map_path = tmp_path / "inkling2_mini.yaml"
-    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n")
+    map_path.write_text("architecture: Inkling2LoopForConditionalGeneration\n", encoding="utf-8")
     monkeypatch.setattr(venngram.book, "AddressBook", _Book)
     monkeypatch.setattr(venngram.maps, "load_component_map", lambda path: _Map())
     with pytest.raises(ValueError, match="readout position 'answer' is not one this lens reads"):

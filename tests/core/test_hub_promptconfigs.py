@@ -130,7 +130,9 @@ class TestCachedEntrypointResolution:
         src_copy = tmp_path / "component"
         shutil.copytree(prompt_component_dir, src_copy, ignore=shutil.ignore_patterns("__pycache__"))
         ep = src_copy / "prompt_configs.py"
-        ep.write_text(ep.read_text(encoding="utf-8").replace('B_TEXT: str = "<bos>"', 'B_TEXT: str = "<BOS2>"'))
+        ep.write_text(
+            ep.read_text(encoding="utf-8").replace('B_TEXT: str = "<bos>"', 'B_TEXT: str = "<BOS2>"'), encoding="utf-8"
+        )
         local_publish(src_copy, "speediedan/prompt-configs", cache_dir=seeded_cache)
         cls_v2 = resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig", cache_dir=seeded_cache)
         assert cls_v1 is not cls_v2 and cls_v2().B_TEXT == "<BOS2>" and cls_v1().B_TEXT == "<bos>"

@@ -140,7 +140,7 @@ def main() -> None:
                     stepped[name] = forward(input_ids)
             record["step_diff"] = float((stepped["placed"] - stepped["reference"]).abs().max())
             record["step_effect"] = float((stepped["reference"] - expected).abs().max())
-    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record))
+    Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

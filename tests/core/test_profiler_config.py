@@ -222,7 +222,10 @@ class TestCoreRunnersProfile:
         """Positive control for the row count above: a larger limit shows more of the same run's operators."""
         module = _profiled_module(tmp_path, pytorch_profiler_cfg={"activities": ["cpu"], **SUMMARY, "row_limit": 50})
         _run_phase(module, "test", n_batches=2)
-        assert len(_table_rows((tmp_path / "pytorch_profiler" / "test-prof.txt").read_text())) > SUMMARY["row_limit"]
+        assert (
+            len(_table_rows((tmp_path / "pytorch_profiler" / "test-prof.txt").read_text(encoding="utf-8")))
+            > SUMMARY["row_limit"]
+        )
 
     def test_no_recorded_window_warns_and_writes_no_summary(self, tmp_path):
         never_active = {"wait": 5, "warmup": 0, "active": 1}

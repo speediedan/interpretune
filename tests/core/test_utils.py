@@ -457,7 +457,7 @@ class TestClassUtils:
         assert len(debug_files) == 1
 
         # Check file contents
-        with open(debug_files[0], "r") as f:
+        with open(debug_files[0], "r", encoding="utf-8") as f:
             debug_data = json.load(f)
 
         assert debug_data["error"] == "Integration test exception"

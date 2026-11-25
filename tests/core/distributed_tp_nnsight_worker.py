@@ -95,7 +95,7 @@ def main() -> None:
     try:
         place_module(placed, run)
     except MisconfigurationException as err:
-        out.write_text(json.dumps({"refused": str(err)}))
+        out.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
     record: dict = {
         "split_params": sorted(n for n, p in placed.named_parameters() if type(p.data).__name__ == "DTensor")
@@ -107,7 +107,7 @@ def main() -> None:
     record["diff"] = {k: float((got[k] - ref[k]).abs().max()) for k in ref}
     record["effect"] = {k: float((ref[k] - ref["logits"]).abs().max()) for k in ref if k.endswith("_edit")}
     record["split_slice_edit_vs_unedited"] = float((got["split_slice_edit"] - ref["logits"]).abs().max())
-    out.write_text(json.dumps(record))
+    out.write_text(json.dumps(record), encoding="utf-8")
 
 
 if __name__ == "__main__":

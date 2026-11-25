@@ -19,7 +19,7 @@ SEAM_MODULES = ("interventions", "feature_selection", "capabilities", "protocols
 
 
 def _public_module_level_names(module_path: Path) -> set[str]:
-    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     names: set[str] = set()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

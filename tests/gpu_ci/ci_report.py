@@ -592,9 +592,9 @@ def main(argv: list[str] | None = None) -> int:
     except (Refused, urllib.error.URLError) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
-    args.out.write_text(json.dumps(report, indent=2) + "\n")
+    args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.markdown:
-        args.markdown.write_text(markdown(report))
+        args.markdown.write_text(markdown(report), encoding="utf-8")
     m = report["selector_misses"]
     counts = f"{m['miss']} miss, {m['selected']} selected, {m['undetermined']} undetermined"
     print(f"{len(report['builds'])} builds, {m['full_runs']} full runs: {counts}")

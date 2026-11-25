@@ -175,7 +175,9 @@ class TestPulledOpParity:
 
     def test_declared_collection_identity_survives_the_trip(self, pulled_dispatcher):
         op_def = pulled_dispatcher._op_definitions[f"{NAMESPACE}.concept_direction"]
-        declared = yaml.safe_load((CONCEPT_FAMILY / "concept_ops.yaml").read_text())["collection"]["version"]
+        declared = yaml.safe_load((CONCEPT_FAMILY / "concept_ops.yaml").read_text(encoding="utf-8"))["collection"][
+            "version"
+        ]
         assert (op_def.collection_name, op_def.collection_version) == ("concept_direction_ops", declared)
 
     def test_op_state_survives_the_trip(self, pulled_dispatcher):

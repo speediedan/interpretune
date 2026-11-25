@@ -198,7 +198,7 @@ def _read_disk_cache(key: str, ttl_seconds: int) -> tuple[str, str] | None:
     than going silent.
     """
     try:
-        payload = json.loads(_cache_path().read_text())
+        payload = json.loads(_cache_path().read_text(encoding="utf-8"))
         entry = payload.get(key)
         if not isinstance(entry, dict):
             return None
@@ -219,14 +219,14 @@ def _write_disk_cache(key: str, choice: str, reason: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, Any] = {}
         try:
-            payload = json.loads(path.read_text())
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
         payload[key] = {"choice": choice, "ts": time.time(), "reason": reason}
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(path)
     except OSError:
         pass

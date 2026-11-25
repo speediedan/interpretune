@@ -345,7 +345,7 @@ def test_fts_core_callback_round_trips_through_a_parsed_configuration(tmp_path, 
     *_, earlier, last = [n for n, p in module.named_parameters() if p.requires_grad]
     schedule_path = tmp_path / "schedule.yaml"
     schedule_path.write_text(
-        yaml.safe_dump({0: {"params": [last], "max_transition_epoch": 1}, 1: {"params": [earlier]}})
+        yaml.safe_dump({0: {"params": [last], "max_transition_epoch": 1}, 1: {"params": [earlier]}}), encoding="utf-8"
     )
     config = {
         "run_cfg": {

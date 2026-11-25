@@ -36,7 +36,7 @@ def _collection(root, dir_name: str, yaml_text: str):
     """Write a one-file op collection and return its directory."""
     op_dir = root / dir_name
     op_dir.mkdir()
-    (op_dir / f"{dir_name}.yaml").write_text(yaml_text)
+    (op_dir / f"{dir_name}.yaml").write_text(yaml_text, encoding="utf-8")
     return op_dir
 
 
@@ -205,7 +205,7 @@ class TestNonOpYamlIsNotParsedAsOps:
     def test_a_collection_dir_with_its_manifest_loads_cleanly(self, tmp_path, cache_dir, recwarn):
         """The ordinary local-authoring shape: one manifest plus the op YAMLs it declares, same directory."""
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
 
         dispatcher = _dispatcher(cache_dir, op_dir)
         dispatcher.load_definitions()
@@ -218,7 +218,7 @@ class TestNonOpYamlIsNotParsedAsOps:
 
     def test_manifest_is_excluded_from_discovery(self, tmp_path, cache_dir):
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
 
         discovered = _dispatcher(cache_dir, op_dir)._discover_yaml_files([op_dir])
         assert [p.name for p in discovered] == ["collection.yaml"]
@@ -226,10 +226,12 @@ class TestNonOpYamlIsNotParsedAsOps:
     def test_only_the_files_a_manifest_declares_are_op_files(self, tmp_path, cache_dir, recwarn, monkeypatch):
         """A component's other YAML holds mapping-valued keys, which read as ops if they reach the compiler."""
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
         (op_dir / "books").mkdir()
-        (op_dir / "books" / "book.yaml").write_text("schema_version: 12\nsets:\n  a: x\nlens:\n  K: 10\n")
-        (op_dir / "specs.yml").write_text("model_specs:\n  fam: {}\n")
+        (op_dir / "books" / "book.yaml").write_text(
+            "schema_version: 12\nsets:\n  a: x\nlens:\n  K: 10\n", encoding="utf-8"
+        )
+        (op_dir / "specs.yml").write_text("model_specs:\n  fam: {}\n", encoding="utf-8")
 
         dispatcher = _dispatcher(cache_dir, op_dir)
         assert [p.name for p in dispatcher._discover_yaml_files([op_dir])] == ["collection.yaml"]
@@ -245,9 +247,9 @@ class TestNonOpYamlIsNotParsedAsOps:
 
     def test_a_file_named_directly_loads_whatever_its_manifest_declares(self, tmp_path, cache_dir):
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
         other = op_dir / "other.yaml"
-        other.write_text(_op_yaml("other_op"))
+        other.write_text(_op_yaml("other_op"), encoding="utf-8")
         dispatcher = _dispatcher(cache_dir, op_dir, other)
         dispatcher.load_definitions()
         assert {"my_op", "other_op"} <= set(dispatcher._op_definitions)
@@ -255,18 +257,21 @@ class TestNonOpYamlIsNotParsedAsOps:
     def test_components_and_loose_yaml_under_one_directory(self, tmp_path, cache_dir, recwarn):
         """A parent directory: each component answers for its own files, and YAML outside any component is scanned."""
         comp = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (comp / "it_component.yaml").write_text(self._MANIFEST)
-        (comp / "book.yaml").write_text("sets:\n  a: x\n")
+        (comp / "it_component.yaml").write_text(self._MANIFEST, encoding="utf-8")
+        (comp / "book.yaml").write_text("sets:\n  a: x\n", encoding="utf-8")
         nested = _collection(comp, "inner", _op_yaml("inner_op"))
-        (nested / "it_component.yaml").write_text(self._MANIFEST.replace("collection.yaml", "inner.yaml"))
+        (nested / "it_component.yaml").write_text(
+            self._MANIFEST.replace("collection.yaml", "inner.yaml"), encoding="utf-8"
+        )
         no_ops = tmp_path / "configs"
         no_ops.mkdir()
         (no_ops / "it_component.yaml").write_text(
             "it_schema_version: 1\nkinds: [promptconfigs]\n"
-            "promptconfigs:\n  entrypoint: cfg.py\n  definitions: {A: {}}\n"
+            "promptconfigs:\n  entrypoint: cfg.py\n  definitions: {A: {}}\n",
+            encoding="utf-8",
         )
-        (no_ops / "cfg.yaml").write_text("some_config:\n  a: 1\n")
-        (tmp_path / "loose.yaml").write_text(_op_yaml("loose_op"))
+        (no_ops / "cfg.yaml").write_text("some_config:\n  a: 1\n", encoding="utf-8")
+        (tmp_path / "loose.yaml").write_text(_op_yaml("loose_op"), encoding="utf-8")
         found = _dispatcher(cache_dir, tmp_path)._discover_yaml_files([tmp_path])
         assert sorted(p.name for p in found) == ["collection.yaml", "inner.yaml", "loose.yaml"]
         # the component that declares no ops supplies none because it declares none, not because it was unusable
@@ -285,7 +290,7 @@ class TestNonOpYamlIsNotParsedAsOps:
     ):
         """Falling back to the scan would load what the manifest exists to keep out."""
         op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
-        (op_dir / "it_component.yaml").write_text(manifest)
+        (op_dir / "it_component.yaml").write_text(manifest, encoding="utf-8")
         dispatcher = _dispatcher(cache_dir, op_dir)
         with pytest.warns(UserWarning, match=match):
             assert dispatcher._discover_yaml_files([op_dir]) == []
