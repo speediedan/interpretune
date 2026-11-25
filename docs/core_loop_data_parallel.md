@@ -138,7 +138,9 @@ gets the same graph. Every rank makes every call, since the forward and backward
 
 - Set `circuit_tracer_cfg.tune_base: true`. It registers the base model, whose layers the plan selects; a composition
   without it is refused.
-- Every rank holds the whole transcoders.
+- Every rank holds the whole transcoders. A composition over nnsight can build the base model on the meta device
+  (`hf_from_pretrained_cfg.meta_init`), so that no rank holds the whole model on its accelerator; its transcoders are
+  then loaded eagerly, and rank 0 loads both on its host.
 - `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
   weight, or a head inside a split layer.
 - The attribution runner itself takes one process (`AnalysisRunnerCfg` accepts `placement: single` only), so attribute

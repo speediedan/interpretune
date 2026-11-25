@@ -262,6 +262,25 @@ class BaseCircuitTracerModule(BaseITModule):
             calls.extend(transcoder_direct_calls(transcoders))
         return calls
 
+    def refresh_tensor_references(self) -> None:
+        """Point the nnsight replacement model's ``embed_weight`` and ``unembed_weight`` at the tensors placement
+        registered.
+
+        circuit-tracer resolves both once, when it configures the model, and attribution reads its targets' unembedding
+        vectors from the reference. After a placement the reference still names the replaced tensor: the weights from
+        before any tuning, or a meta tensor when the model was built on the meta device.
+        """
+        super().refresh_tensor_references()
+        replacement_model: Any = getattr(self, "_replacement_model", None)
+        resolve = getattr(replacement_model, "_resolve_attr", None)
+        if resolve is None or isinstance(replacement_model, nn.Module):
+            return  # another backend's weights are its modules' own
+        from circuit_tracer.utils.tl_nnsight_mapping import get_mapping
+
+        mapping = get_mapping(replacement_model.config.architectures[0])
+        replacement_model.embed_weight = resolve(replacement_model, mapping.embed_weight)
+        replacement_model.unembed_weight = resolve(replacement_model, mapping.unembed_weight)
+
     def meta_load_target(self) -> nn.Module:
         """The base model registered under ``tune_base`` (or by the nnsight adapter) when there is one, since the
         nnsight backend's model is a wrapper around it and not a torch module."""

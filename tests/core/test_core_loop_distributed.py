@@ -1405,13 +1405,15 @@ def _launch_tp_ct(out_dir: Path, *extra: str) -> list[dict]:
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
-def test_two_rank_tp_attributes_like_one_process(tmp_path):
+@pytest.mark.parametrize("meta", [False, True], ids=["loaded", "meta_init"])
+def test_two_rank_tp_attributes_like_one_process(tmp_path, meta):
     """A circuit-tracer composition whose base model ``tp`` split by its declared plan gives the graph, and the
     feature interventions, of the whole model on every rank, with ``offload='cpu'`` and with live attention too.
 
-    The calls that read inside a split layer or a split weight are refused before they start.
+    The calls that read inside a split layer or a split weight are refused before they start. A model built on the meta
+    device gives the same, which needs the unembedding circuit-tracer resolved at its build to be refreshed.
     """
-    for record in _launch_tp_ct(tmp_path / "tune_base"):
+    for record in _launch_tp_ct(tmp_path / "placed", *(["--meta"] if meta else [])):
         assert record["split_params"] == sorted(
             f"hf_model.model.layers.{i}.{proj}.weight"
             for i in range(3)

@@ -4,7 +4,8 @@ Each rank builds the same tiny replacement model (``tests/core/circuit_tracer_to
 module that registers its base model (``tune_base``). One copy is placed under ``tp`` with its default plan, the one
 transformers declares; the other stays whole as the reference. Rank 1's placed copy is perturbed first, so only the
 broadcast can make the ranks agree. With ``--attribution-only`` the base model is not registered, and the placement's
-refusal is recorded.
+refusal is recorded. With ``--meta``, the placed copy is built on the meta device instead, and rank 0 keeps a loaded
+copy that the placement loads every rank from.
 
 Readings on both copies: an attribution graph, one with ``offload='cpu'``, one with live attention, and a feature
 intervention's logits with attention frozen and live. After them one rank's shard of one split weight is perturbed and
@@ -24,8 +25,10 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 
+from interpretune.runners.distributed import META_INIT_SOURCE
 
-def build(tune_base: bool):
+
+def build(tune_base: bool, replacement_model=None, source=None):
     from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, CircuitTracerAttributeMixin
     from interpretune.config import CircuitTracerConfig
     from tests.core.circuit_tracer_toy import tiny_gemma2_replacement_model
@@ -33,7 +36,7 @@ def build(tune_base: bool):
     class _CTModule(CircuitTracerAttributeMixin, BaseCircuitTracerModule):
         """A circuit-tracer module holding only what placement and attribution read, without a session."""
 
-    replacement_model = tiny_gemma2_replacement_model()
+    replacement_model = tiny_gemma2_replacement_model() if replacement_model is None else replacement_model
     module = _CTModule.__new__(_CTModule)
     nn.Module.__init__(module)
     object.__setattr__(
@@ -43,7 +46,23 @@ def build(tune_base: bool):
     object.__setattr__(module, "attribution_graphs", [])
     module.model = replacement_model
     module.register_tunable_modules()
+    if source is not None:
+        object.__setattr__(module, META_INIT_SOURCE, source)
     return module
+
+
+def build_meta(rank0: bool):
+    """The placed copy built on the meta device (its base model registered as the nnsight adapter registers it),
+    and the loaded copy to compare with, both with the one-dimensional thresholds of the toy's meta build."""
+    from tests.core.circuit_tracer_toy import tiny_gemma2_replacement_model
+    from tests.core.distributed_ct_worker import toy_meta_build, widen_scalars
+
+    meta, source = toy_meta_build(rank0)
+    placed = build(False, meta, source)
+    placed._modules["hf_model"] = meta._module
+    reference = tiny_gemma2_replacement_model()
+    widen_scalars(reference)
+    return placed, build(True, reference)
 
 
 def graph(module, **kwargs):
@@ -93,6 +112,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--attribution-only", action="store_true")
+    parser.add_argument("--meta", action="store_true", help="build on the meta device and load from rank 0")
     args = parser.parse_args()
 
     import torch.distributed as dist
@@ -103,8 +123,11 @@ def main() -> None:
     run = resolve_placement("tp")
     assert run is not None
     init_process_group(run)
-    placed, reference = (build(not args.attribution_only) for _ in range(2))
-    if run.rank:
+    if args.meta:
+        placed, reference = build_meta(rank0=run.rank == 0)
+    else:
+        placed, reference = (build(not args.attribution_only) for _ in range(2))
+    if run.rank and not args.meta:
         with torch.no_grad():
             for param in placed.parameters():
                 param.add_(0.1)
