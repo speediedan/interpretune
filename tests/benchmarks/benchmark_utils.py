@@ -357,7 +357,7 @@ def _detect_cli_mode_from_config(config_path: str) -> str:
     Falls back to ``"lightning"`` when adapter_ctx cannot be determined.
     """
     try:
-        with open(config_path) as fh:
+        with open(config_path, encoding="utf-8") as fh:
             import yaml as _yaml
 
             cfg = _yaml.safe_load(fh)
@@ -410,7 +410,7 @@ def run_shared_diagnostics(config_path: str, output_path: str | None = None, cli
     output = buf.getvalue()
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(output)
             f.write(f"\n\n{'=' * 70}\nResults JSON:\n{'=' * 70}\n")
             f.write(json.dumps(results, indent=2, default=str))

@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = ROOT / "pyproject.toml"
 CONFIG = phases.DriverConfig.load(PYPROJECT)
 RUNNER = special_tests.RunnerConfig.load(PYPROJECT)
-SCRIPT = (ROOT / "scripts" / "gen_it_coverage.sh").read_text()
+SCRIPT = (ROOT / "scripts" / "gen_it_coverage.sh").read_text(encoding="utf-8")
 PHASES = {p.name: p for p in CONFIG.phases}
 CUDA_PROBE = ("-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)")
 
@@ -60,7 +60,7 @@ def test_the_main_suite_phases_partition_on_cuda():
     # every visible device, and only the cuda-marked selection (conftest reads IT_RUN_CUDA_TESTS)
     assert cuda.env == {"IT_RUN_CUDA_TESTS": "1"} and cuda.unset == ("CUDA_VISIBLE_DEVICES",)
     assert cuda.skip_unless == CUDA_PROBE and PHASES["benchmark"].skip_unless == CUDA_PROBE
-    assert 'os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"' in (ROOT / "tests" / "conftest.py").read_text()
+    assert 'os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"' in (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
 
 
 def test_every_special_test_phase_runs_a_configured_mark():

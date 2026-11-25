@@ -27,7 +27,7 @@ class TestModulesAxis:
 
     def test_nothing_is_imported_to_answer(self, tmp_path, monkeypatch):
         """find_spec, not import: a module with an import-time side effect is located without running it."""
-        (tmp_path / "side_effect_probe.py").write_text("raise RuntimeError('imported')\n")
+        (tmp_path / "side_effect_probe.py").write_text("raise RuntimeError('imported')\n", encoding="utf-8")
         monkeypatch.syspath_prepend(str(tmp_path))
         assert requirement_status({"modules": ["side_effect_probe"]}, "t") == []
 

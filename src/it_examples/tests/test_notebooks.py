@@ -127,7 +127,7 @@ def validate_notebook_outputs(
     import re
 
     # Read the executed notebook
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     # Check for errors in prompt processing
@@ -789,7 +789,7 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
 
     import nbformat
 
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
     errors = [
         (i, output.get("ename", "") + ": " + output.get("evalue", ""))
@@ -833,7 +833,7 @@ def test_gradient_readouts_notebook(tmp_path: Path):
         parameters={"REVISION": rev},
         output_dir=output_dir,
     )
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
     errors = [
         output.get("ename", "") + ": " + output.get("evalue", "")
@@ -881,7 +881,7 @@ def test_role_kinds_tuning_notebook(tmp_path: Path):
 
     import nbformat
 
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
     errors = [
         output.get("ename", "") + ": " + output.get("evalue", "")
@@ -938,7 +938,7 @@ def test_runner_flexibility_demo_notebook(tmp_path: Path):
 
     import nbformat
 
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
     errors = [
         (i, output.get("ename", "") + ": " + output.get("evalue", ""))
@@ -983,7 +983,7 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
         parameters={"MAX_EXAMPLES": 4},
         output_dir=output_dir,
     )
-    with open(output_notebook) as f:
+    with open(output_notebook, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
     errors = [
         output.get("ename", "") + ": " + output.get("evalue", "")

@@ -183,7 +183,7 @@ class TestCacheRootMessages:
 
     def test_root_under_a_regular_file_is_refused_by_name(self, tmp_path):
         blocker = tmp_path / "not_a_dir"
-        blocker.write_text("")
+        blocker.write_text("", encoding="utf-8")
         root = blocker / "interpretune"
         with pytest.raises(MisconfigurationException) as err:
             hub_cache.ensure_writable_cache_root(root, "IT_CACHE")
@@ -207,7 +207,7 @@ class TestCacheRootMessages:
         from interpretune.hub import components
 
         blocker = tmp_path / "file"
-        blocker.write_text("")
+        blocker.write_text("", encoding="utf-8")
         monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", blocker / "components")
         monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE_SETTING", "IT_COMPONENTS_HUB_CACHE")
         with pytest.raises(MisconfigurationException, match="set by IT_COMPONENTS_HUB_CACHE"):
@@ -323,7 +323,7 @@ class TestTroubleshootingPageStaysInSync:
             str(gpu.value), "asks for the GPU device", "To run on the CPU, set `tl_cfg.device` to 'cpu'"
         )
         blocker = tmp_path / "file"
-        blocker.write_text("")
+        blocker.write_text("", encoding="utf-8")
         with pytest.raises(MisconfigurationException) as cache:
             hub_cache.ensure_writable_cache_root(blocker / "it", "IT_CACHE")
         self._assert_quoted(str(cache.value), "is not a writable directory", "Set it before importing interpretune")

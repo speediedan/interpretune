@@ -397,6 +397,21 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
             meta_built(partial)
 
+    def test_what_is_attached_beside_a_meta_built_model_holds_its_values(self):
+        """The model's checkpoint does not hold it, so it must be built with values, which the placement keeps."""
+
+        def holder(model_device: str, latent_device: str) -> nn.Module:
+            root = nn.Module()
+            root.model = nn.Linear(2, 2, device=model_device)
+            root.latent_models = nn.ModuleDict({"probe": nn.Linear(2, 2, device=latent_device)})
+            return root
+
+        assert meta_built(holder("meta", "cpu"))
+        assert not meta_built(holder("cpu", "cpu"))
+        for model_device in ("meta", "cpu"):
+            with pytest.raises(MisconfigurationException, match="2 parameters attached beside the model"):
+                meta_built(holder(model_device, "meta"))
+
     def test_a_meta_build_materializes_on_the_cpu_only_when_every_unit_offloads(self):
         """FSDP2 keeps an offloaded unit's shards on the CPU, so a meta-built module is materialized there when
         every unit offloads, on the rank's device when none does, and a plan offloading only some units is
@@ -492,14 +507,14 @@ def _launch(placement: str, out_dir: Path, *extra: str, devices: str = "") -> No
 def global_batch_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("dist_reference")
     _launch("single", out_dir)
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def phased_global_batch_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("dist_phased_reference")
     _launch("single", out_dir, "--phased")
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 # one unit per TransformerBlock, then the module itself as the root unit
@@ -522,7 +537,7 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
     reference's epoch metrics: the cross-rank average.
     """
     _launch(placement, tmp_path, *extra)
-    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert len(rank_mean) == len(global_batch_reference["losses"]) == 3
     assert rank_mean == pytest.approx(global_batch_reference["losses"], rel=1e-5)
@@ -545,7 +560,7 @@ INTERVENTION = ("--intervention-site", "model.layers.0")
 def intervention_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("dist_intervention_reference")
     _launch("single", out_dir, *INTERVENTION)
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -565,7 +580,7 @@ def test_two_rank_training_applies_an_intervention_with_its_whole_operand(
     train another value; and the operand must move, or the comparison would pass with it never applied.
     """
     _launch(placement, tmp_path, *extra, *INTERVENTION)
-    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(intervention_reference["losses"], rel=1e-5)
     assert rank_mean != pytest.approx(global_batch_reference["losses"], rel=1e-5)  # the intervention has an effect
@@ -594,7 +609,7 @@ FFN_TP_PLAN = (
 def shared_batch_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("tp_reference")
     _launch("single", out_dir, "--world-size", "1")
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -608,7 +623,7 @@ def test_two_rank_tensor_parallel_matches_one_process_on_the_shared_batch(shared
     reduced back to the whole activation. Only the planned layers become ``DTensor``\\ s.
     """
     _launch("tp", tmp_path, *FFN_TP_PLAN)
-    records = [json.loads((tmp_path / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"tp_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     assert len(shared_batch_reference["losses"]) == 3
     for record in records:
         assert record["losses"] == pytest.approx(shared_batch_reference["losses"], rel=1e-5)
@@ -630,7 +645,7 @@ LATENT_SITE = "model.layers.0.feed_forward.gelu"
 def latent_shared_batch_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("tp_latent_reference")
     _launch("single", out_dir, "--world-size", "1", "--latent-site", LATENT_SITE)
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -649,14 +664,14 @@ def test_two_rank_tp_gathers_a_split_activation_for_a_spliced_latent_model(laten
     _launch("tp", tmp_path, "--tp-plan", json.dumps(plan), "--latent-site", LATENT_SITE)
     reference = latent_shared_batch_reference
     for rank in range(2):
-        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text(encoding="utf-8"))
         assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
         assert record["latent_params"].keys() == reference["latent_params"].keys()
         for name, values in record["latent_params"].items():
             assert values == pytest.approx(reference["latent_params"][name], rel=1e-4, abs=1e-6), name
     _launch("tp", tmp_path, *FFN_TP_PLAN, "--latent-site", "model.layers.0.feed_forward.w1", "--out-name", "local")
     for rank in range(2):
-        refused = json.loads((tmp_path / f"local_rank{rank}.json").read_text())["refused"]
+        refused = json.loads((tmp_path / f"local_rank{rank}.json").read_text(encoding="utf-8"))["refused"]
         assert "spliced at model.layers.0.feed_forward.w1" in refused and "use_local_output: false" in refused
 
 
@@ -671,7 +686,7 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
     """
     reference = phased_global_batch_reference
     _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased")
-    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert len(rank_mean) == len(reference["losses"]) == 6
     assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
@@ -681,11 +696,13 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert len(record["fsdp_units"]) == 3
 
 
-@pytest.fixture(scope="module")
-def addressed_reference(tmp_path_factory):
-    out_dir = tmp_path_factory.mktemp("dist_addressed_reference")
-    _launch("single", out_dir, "--addressed")
-    return json.loads((out_dir / "single_rank0.json").read_text())
+@pytest.fixture(scope="module", params=["roles", "promote"])
+def addressed_reference(request, tmp_path_factory):
+    """One process's record, with how the latent model is attached: tunable (``roles``), or frozen and promoted in
+    the second phase (``promote``)."""
+    out_dir = tmp_path_factory.mktemp(f"dist_addressed_reference_{request.param}")
+    _launch("single", out_dir, "--addressed", request.param)
+    return request.param, json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 # the last block's MLP, then the latent model too, then the first block's attention too: what the worker's addresses
@@ -701,10 +718,11 @@ ADDRESSED_EPOCHS = [_MLP, _MLP | _PROBE, _MLP | _PROBE | {f"model.layers.0.atten
 @pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
 def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extra, addressed_reference, tmp_path):
     """A schedule naming what to tune by layer and component and by role (never by parameter name) thaws the same
-    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values."""
-    _launch(placement, tmp_path, *extra, "--addressed")
-    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text()) for rank in range(2)]
-    reference = addressed_reference
+    tensors of a sharded composition as of one process, phase by phase, and trains them to the same values, a
+    frozen latent model the second phase promotes included."""
+    attached, reference = addressed_reference
+    _launch(placement, tmp_path, *extra, "--addressed", attached)
+    records = [json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
     for record in (reference, *records):
@@ -719,20 +737,6 @@ def test_two_rank_tuning_by_venngram_address_matches_one_process(placement, extr
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
-@pytest.mark.skipif(not _FTS_AVAILABLE, reason="promotion is finetuning-scheduler's")
-@pytest.mark.parametrize("placement, extra", [("ddp", ()), ("fsdp2", BLOCK_PLAN)], ids=["ddp", "fsdp2"])
-def test_promoting_a_frozen_latent_model_is_refused_by_name_when_sharded(placement, extra, tmp_path):
-    """Finetuning-scheduler cannot promote an ``artifact`` tensor of a sharded model, and says so on every rank
-    before training; one process promotes it (``test_tuning_latents.py``), so the same schedule is not silently
-    different."""
-    _launch(placement, tmp_path, *extra, "--addressed", "promote")
-    for rank in range(2):
-        record = json.loads((tmp_path / f"{placement}_rank{rank}.json").read_text())
-        assert "`promote` tensors of a sharded model" in record["refused"]
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
-@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the memory profiler and phased tuning are finetuning-scheduler's")
 def test_two_rank_fsdp2_memory_profile_covers_each_iteration_per_phase(phased_global_batch_reference, tmp_path):
     """The memory profiler's ``FSDP2MemTracker`` profiles a phased fsdp2 run on every rank, one report entry per
@@ -743,11 +747,11 @@ def test_two_rank_fsdp2_memory_profile_covers_each_iteration_per_phase(phased_gl
     phase comes from ``FTSCoreCallback``, and the tracker is rebuilt over the optimizer the transition installs.
     """
     _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--memprof-fsdp")
-    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(phased_global_batch_reference["losses"], rel=1e-5)
     for rank, record in enumerate(records):
-        report = json.loads(Path(record["fsdp_mem_report"]).read_text())
+        report = json.loads(Path(record["fsdp_mem_report"]).read_text(encoding="utf-8"))
         assert (report["rank"], report["world_size"]) == (rank, 2)
         entries = report["entries"]
         assert [(e["fn_name"], e["iter"], e["phase"]) for e in entries] == [
@@ -808,9 +812,9 @@ def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra,
         str(checkpoint_dir),
     )
     for rank in range(2):
-        full = json.loads((tmp_path / f"full_rank{rank}.json").read_text())
-        first = json.loads((tmp_path / f"first_rank{rank}.json").read_text())
-        resumed = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text())
+        full = json.loads((tmp_path / f"full_rank{rank}.json").read_text(encoding="utf-8"))
+        first = json.loads((tmp_path / f"first_rank{rank}.json").read_text(encoding="utf-8"))
+        resumed = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text(encoding="utf-8"))
         assert first["losses"][:3] + resumed["losses"] == full["losses"]
         assert resumed["epoch_metrics"] == full["epoch_metrics"][1:]
 
@@ -830,7 +834,7 @@ def test_two_rank_phased_resume_across_the_transition_matches(phased_global_batc
     _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--out-name", "resumed",
             "--resume-from", str(checkpoint_dir))  # fmt: skip
     reference = phased_global_batch_reference
-    records = [json.loads((tmp_path / f"resumed_rank{rank}.json").read_text()) for rank in range(2)]
+    records = [json.loads((tmp_path / f"resumed_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(reference["losses"][3:], rel=1e-5)
     for record in records:
@@ -842,7 +846,7 @@ def test_two_rank_phased_resume_across_the_transition_matches(phased_global_batc
 def phased_shared_batch_reference(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("tp_phased_reference")
     _launch("single", out_dir, "--world-size", "1", "--phased")
-    return json.loads((out_dir / "single_rank0.json").read_text())
+    return json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -859,7 +863,7 @@ def test_two_rank_phased_tuning_under_tp_matches_one_process(phased_shared_batch
     reference = phased_shared_batch_reference
     _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased")
     for rank in range(2):
-        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text(encoding="utf-8"))
         assert len(record["losses"]) == len(reference["losses"]) == 6
         assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
         assert record["depth"] == reference["depth"] == 1
@@ -880,7 +884,7 @@ def test_two_rank_phased_tp_resume_across_the_transition_matches(phased_shared_b
             "--resume-from", str(checkpoint_dir))  # fmt: skip
     reference = phased_shared_batch_reference
     for rank in range(2):
-        record = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text())
+        record = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text(encoding="utf-8"))
         assert record["losses"] == pytest.approx(reference["losses"][3:], rel=1e-5)
         assert record["depth"] == reference["depth"] == 1
         assert record["trainable"] == reference["trainable"]
@@ -896,8 +900,8 @@ def _phased_transcoder_records(out_dir: Path, devices: tuple[str, str] = ("", ""
     phased run that tunes the transcoder first, then everything else."""
     _launch("single", out_dir, "--world-size", "1", "--phased", *TRANSCODER, devices=devices[0])
     _launch("tp", out_dir, *FFN_TP_PLAN, "--phased", *TRANSCODER, devices=devices[1])
-    reference = json.loads((out_dir / "single_rank0.json").read_text())
-    return reference, [json.loads((out_dir / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+    reference = json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
+    return reference, [json.loads((out_dir / f"tp_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
 
 def _check_phased_transcoder(reference: dict, records: list[dict]) -> None:
@@ -949,7 +953,7 @@ def _launch_meta(checkpoint: Path, out_dir: Path, *extra: str) -> list[dict]:
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"meta-init run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
 
 @pytest.fixture(scope="module")
@@ -991,6 +995,64 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert record["tied"] and record["source_dropped"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+@pytest.mark.parametrize("extra", [(), ("--loader", "dcp"), ("--latent-unit",)], ids=["rank0", "dcp", "own-unit"])
+def test_a_latent_model_beside_a_meta_built_model_keeps_rank_zeros_values(tiny_gpt2_checkpoint, tmp_path, extra):
+    """Materializing a meta-built module discards every parameter's value, and the checkpoint gives back only the
+    model's: an attached latent model's are kept, rank 0's on every rank, so the spliced logits match one
+    process's."""
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "out", "--latent", *extra):
+        assert record["max_abs_diff"] < 1e-5 and record["adapter_effect"] > 0.1
+        assert record["param_types"] == ["DTensor"] and record["tied"] and record["source_dropped"]
+
+
+@pytest.fixture(scope="module")
+def tied_tiny_llama_checkpoint(tmp_path_factory):
+    """A Llama checkpoint whose LM head is tied to its embedding, both of which the default plan leaves whole."""
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tied_tiny_llama")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+        tie_word_embeddings=True,
+    )
+    LlamaForCausalLM(config).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+@pytest.mark.parametrize("loader", ["rank0", "dcp"])
+@pytest.mark.parametrize("latent", [False, True], ids=["model", "latent"])
+def test_a_meta_built_model_is_split_then_loaded(tied_tiny_llama_checkpoint, tmp_path, loader, latent):
+    """A model built on the meta device and split by its default tensor-parallel plan holds about half of the split
+    parameters on each rank and computes, and trains, what one process does: the LM head stays tied to the
+    embedding the plan leaves whole, and a latent model attached beside the model keeps rank 0's values."""
+    extra = ("--arch", "llama", "--placement", "tp", "--loader", loader, "--train-step")
+    for record in _launch_meta(
+        tied_tiny_llama_checkpoint, tmp_path / "out", *extra, *(("--latent",) if latent else ())
+    ):
+        assert record["max_abs_diff"] < 1e-5
+        assert record["step_diff"] < 1e-5 and record["step_effect"] > 0.01
+        assert record["tied"] and record["source_dropped"]
+        split = record["split_params"]
+        assert len(split) == 14 and all(".layers." in name for name in split)  # q, k, v, o and gate, up, down, twice
+        assert record["held_numel"] < 0.75 * record["whole_numel"]
+        if latent:
+            assert record["adapter_effect"] > 0.1
+
+
 # the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads
 # every head (TransformerLens's attention reshapes q, k and v by the model's head count)
 JOINT_QKV_TP_PLAN = {
@@ -1011,7 +1073,7 @@ def _launch_tp_bridge(checkpoint: Path, out_dir: Path, plan: dict, *extra: str) 
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"tp bridge run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
@@ -1088,7 +1150,7 @@ def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_c
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"tp hf run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
     for rank in range(2):
-        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        record = json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8"))
         assert record["split_params"] == sorted(
             f"model.model.layers.{i}.{proj}.weight"
             for i in range(2)
@@ -1160,7 +1222,7 @@ def test_two_rank_tp_nnsight_composition_default_plan_traces_like_one_process(ti
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"tp nnsight run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
     for rank in range(2):
-        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        record = json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8"))
         assert record["split_params"] == sorted(
             f"hf_model.model.layers.{i}.{proj}.weight"
             for i in range(2)
@@ -1223,7 +1285,7 @@ def launch_latent_worker(out_dir: Path, *extra: str, placement: str = "fsdp2", d
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"latent run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
     ranks = 1 if placement == "single" else 2
-    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(ranks)]
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(ranks)]
 
 
 def check_latent_phases(records: list[dict]) -> None:
@@ -1336,7 +1398,7 @@ def _launch_ct(plan: dict, out_dir: Path, meta: bool = False) -> list[dict]:
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"circuit-tracer run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
 
 @pytest.fixture(scope="module")

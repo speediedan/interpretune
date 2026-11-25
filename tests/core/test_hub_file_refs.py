@@ -85,7 +85,9 @@ def test_a_session_ref_seeds_the_session_and_files_merge_over_it(rte_cache, tmp_
     import yaml
 
     overlay = tmp_path / "overlay.yaml"
-    overlay.write_text(yaml.safe_dump({"registered_cfg": {"datamodule_cfg": {"train_batch_size": 2}}}))
+    overlay.write_text(
+        yaml.safe_dump({"registered_cfg": {"datamodule_cfg": {"train_batch_size": 2}}}), encoding="utf-8"
+    )
     mapping = ITSessionMixin()._session_mapping_from_sources([overlay], None, "speediedan/rte:rte_ft.gpt2.core")
     assert set(mapping) == {"shared_config", "registered_cfg", "adapter_ctx"}
     assert mapping["adapter_ctx"] == ["core"]

@@ -1344,7 +1344,7 @@ def invoke_explanation_cli(
     prompt_file: Path | None = None
     if resolved_spec.prompt_via_file:
         prompt_file = Path(tempfile.mkdtemp(prefix="it_explanation_prompt_")) / "prompt.md"
-        prompt_file.write_text(prompt)
+        prompt_file.write_text(prompt, encoding="utf-8")
         argv += [resolved_spec.prompt_file_arg, str(prompt_file)]
     else:
         argv.append(prompt)

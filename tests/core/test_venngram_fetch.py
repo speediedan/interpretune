@@ -39,7 +39,7 @@ def test_a_mapping_and_a_recipe_pass_through():
 
 def test_a_local_path_reads_the_file(tmp_path):
     path = tmp_path / "recipe.yaml"
-    path.write_text(yaml.safe_dump(RECIPE))
+    path.write_text(yaml.safe_dump(RECIPE), encoding="utf-8")
     fetched = load_recipe(path)
     assert fetched.recipe.name == "dose-the-units" and fetched.reference is None and fetched.source == str(path)
 
@@ -53,7 +53,7 @@ def test_a_store_reference_fetches_and_pins(tmp_path):
     root.mkdir()
     treatment = {"model": RECIPE["model"], "stages": RECIPE["stages"]}
     book = {**RECIPE["book"], "treatments": {RECIPE["name"]: treatment}}
-    (root / "book.yaml").write_text(yaml.safe_dump(book))
+    (root / "book.yaml").write_text(yaml.safe_dump(book), encoding="utf-8")
     store.publish("local", str(root), root, documents=[("address_book", "book.yaml")])
 
     fetched = load_recipe(f"local:{root}:book.yaml")
@@ -76,7 +76,8 @@ def test_a_non_recipe_document_and_a_bare_number_refuse(tmp_path):
                 "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
                 "sets": {"any": "component:mlp.out & layers:0"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
     store.publish("local", str(root), root, documents=[("address_book", "book.yaml")])
     with pytest.raises(MisconfigurationException, match="not a recipe"):
@@ -108,7 +109,7 @@ class TestBookTreatments:
         assert load_recipe(book).recipe.name == "dose"
         root = tmp_path / "published"
         root.mkdir()
-        (root / "book.yaml").write_text(yaml.safe_dump(book))
+        (root / "book.yaml").write_text(yaml.safe_dump(book), encoding="utf-8")
         assert load_recipe(root / "book.yaml").recipe.name == "dose"
         store.publish("local", str(root), root, documents=[("address_book", "book.yaml")])
         fetched = load_recipe(f"local:{root}:book.yaml")

@@ -213,7 +213,7 @@ def prune_torch_only_deps(lockfile_path: str) -> list[str]:
     max_iterations = 10  # Safety limit
 
     for _ in range(max_iterations):
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         # Parse the lockfile fresh each iteration
         packages = parse_lockfile(content)
@@ -226,7 +226,7 @@ def prune_torch_only_deps(lockfile_path: str) -> list[str]:
 
         # Prune and write back
         new_content = prune_packages(content, to_prune)
-        path.write_text(new_content)
+        path.write_text(new_content, encoding="utf-8")
 
         all_pruned.update(to_prune)
 

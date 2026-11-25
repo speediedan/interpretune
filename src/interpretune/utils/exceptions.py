@@ -107,7 +107,7 @@ def handle_exception_with_debug_dump(
         debug_info["context"] = _introspect_variable(context_data)
 
     # Save debug info to file
-    with open(dump_file, "w") as f:
+    with open(dump_file, "w", encoding="utf-8") as f:
         json.dump(debug_info, f, indent=2, default=_json_serializer)
 
     log.error(f"{operation_name.capitalize()} failed: {e}. Debug info saved to {dump_file}")

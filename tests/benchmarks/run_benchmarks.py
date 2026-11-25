@@ -55,12 +55,12 @@ DEFAULT_TIMEOUT = 1800
 
 
 def load_registry() -> dict:
-    with open(REGISTRY_PATH) as f:
+    with open(REGISTRY_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def save_registry(registry: dict) -> None:
-    with open(REGISTRY_PATH, "w") as f:
+    with open(REGISTRY_PATH, "w", encoding="utf-8") as f:
         yaml.dump(registry, f, default_flow_style=False, sort_keys=False, width=120)
 
 
@@ -234,7 +234,7 @@ def run_cli_benchmark(
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"benchmark_{ts}.log"
-        with open(log_file, "w") as f:
+        with open(log_file, "w", encoding="utf-8") as f:
             f.write(f"CMD: {' '.join(cmd)}\n")
             f.write(f"RETURN CODE: {result.returncode}\n")
             f.write(f"DURATION: {duration:.1f}s\n")
@@ -299,7 +299,7 @@ def run_debug_diagnostics(
     )
 
     combined = result.stdout + "\n--- STDERR ---\n" + result.stderr
-    with open(diag_log, "w") as f:
+    with open(diag_log, "w", encoding="utf-8") as f:
         f.write(combined)
 
     return {

@@ -47,10 +47,10 @@ IMPL = "def fake_impl(module, analysis_batch, batch, batch_idx, **kw):\n    retu
 def _write_snapshot(repo_dir, sha, complete=True):
     snap = repo_dir / "snapshots" / sha
     snap.mkdir(parents=True)
-    (snap / "fake_defs.py").write_text(IMPL)
+    (snap / "fake_defs.py").write_text(IMPL, encoding="utf-8")
     if complete:
-        (snap / "it_component.yaml").write_text(MANIFEST)
-        (snap / "fake_ops.yaml").write_text(OPS_YAML)
+        (snap / "it_component.yaml").write_text(MANIFEST, encoding="utf-8")
+        (snap / "fake_ops.yaml").write_text(OPS_YAML, encoding="utf-8")
     return snap
 
 
@@ -63,7 +63,7 @@ def republished_hub_cache(tmp_path):
     _write_snapshot(repo, REPUBLISHED_SHA)
     refs = repo / "refs"
     refs.mkdir()
-    (refs / "main").write_text(REPUBLISHED_SHA)
+    (refs / "main").write_text(REPUBLISHED_SHA, encoding="utf-8")
     return cache
 
 
@@ -111,7 +111,7 @@ class TestPinBindsDiscovery:
         _write_snapshot(repo, PINNED_SHA, complete=False)
         _write_snapshot(repo, REPUBLISHED_SHA)
         (repo / "refs").mkdir()
-        (repo / "refs" / "main").write_text(REPUBLISHED_SHA)
+        (repo / "refs" / "main").write_text(REPUBLISHED_SHA, encoding="utf-8")
         record_op_pin("pinuser/pinned_repo", PINNED_SHA, "v0.0.1", cache_root=cache)
         _, yaml_files = _discover(cache, tmp_path, monkeypatch)
         assert yaml_files == []
@@ -122,7 +122,7 @@ class TestPinBindsDiscovery:
         other = republished_hub_cache / "models--other--healthy_repo"
         _write_snapshot(other, REPUBLISHED_SHA)
         (other / "refs").mkdir()
-        (other / "refs" / "main").write_text(REPUBLISHED_SHA)
+        (other / "refs" / "main").write_text(REPUBLISHED_SHA, encoding="utf-8")
         record_op_pin("pinuser/pinned_repo", EVICTED_SHA, EVICTED_SHA, cache_root=republished_hub_cache)
         _, yaml_files = _discover(republished_hub_cache, tmp_path, monkeypatch)
         assert any("healthy_repo" in str(p) for p in yaml_files), (
@@ -148,10 +148,10 @@ class TestPinRecordLifecycle:
 
     def test_malformed_record_degrades_to_unpinned_with_a_warning(self, tmp_path, recwarn):
         path = record_op_pin("u/r", PINNED_SHA, "v1", cache_root=tmp_path / "cache")
-        path.write_text("{not json")
+        path.write_text("{not json", encoding="utf-8")
         assert read_op_pin("u/r", cache_root=tmp_path / "cache") is None
         assert any("malformed" in str(w.message) for w in recwarn.list)
-        path.write_text(json.dumps({"repo_id": "u/r"}))  # parseable but no commit
+        path.write_text(json.dumps({"repo_id": "u/r"}), encoding="utf-8")  # parseable but no commit
         assert read_op_pin("u/r", cache_root=tmp_path / "cache") is None
 
     def test_list_includes_pins_for_uncached_repos(self, tmp_path):
@@ -196,7 +196,7 @@ class TestProvenanceReportsThePin:
         cache = tmp_path / "hub"
         refs = cache / "models--pinuser--pinned_repo" / "refs"
         refs.mkdir(parents=True)
-        (refs / "main").write_text(REPUBLISHED_SHA)
+        (refs / "main").write_text(REPUBLISHED_SHA, encoding="utf-8")
         monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", cache)
         assert _cached_op_revision("hub:pinuser.pinned_repo") == REPUBLISHED_SHA
         record_op_pin("pinuser/pinned_repo", PINNED_SHA, "v1", cache_root=cache)

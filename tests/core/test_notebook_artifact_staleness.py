@@ -75,7 +75,7 @@ def _repo(tmp_path: Path, *, extra: str = "", hooks_path: Path | None = None) ->
     )
     if hooks_path is not None:
         table += f"docs_hooks = {json.dumps(str(hooks_path))}\n"
-    (root / "pyproject.toml").write_text(table + extra)
+    (root / "pyproject.toml").write_text(table + extra, encoding="utf-8")
     return root
 
 
@@ -176,7 +176,7 @@ class TestDriftExitCodeContract:
 
     def test_workflow_branches_on_the_code_the_script_actually_returns(self):
         """The engine and `docs-build.yml` must agree, and nothing else checks that they do."""
-        workflow = (PROJECT_ROOT / ".github" / "workflows" / "docs-build.yml").read_text()
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "docs-build.yml").read_text(encoding="utf-8")
         assert f"\n            {engine.DRIFT_EXIT_CODE}) echo " in workflow, (
             f"docs-build.yml has no branch for DRIFT_EXIT_CODE={engine.DRIFT_EXIT_CODE}"
         )
@@ -258,8 +258,8 @@ class TestStampUnderRecording:
         err = capsys.readouterr().err
         # `rel` is a native Path, so the separator differs by OS -- assert the native rendering.
         assert f"REFUSED {Path('demo') / 'dead.ipynb'}" in err and "re-execute" in err
-        restamped = json.loads((root / "artifacts" / "demo" / "fixable.ipynb").read_text())
-        kept = json.loads((root / "artifacts" / "demo" / "dead.ipynb").read_text())
+        restamped = json.loads((root / "artifacts" / "demo" / "fixable.ipynb").read_text(encoding="utf-8"))
+        kept = json.loads((root / "artifacts" / "demo" / "dead.ipynb").read_text(encoding="utf-8"))
         assert restamped["metadata"][hooks.OP_SURFACE_KEY] == ["live_op"]
         assert "dead_op" in kept["metadata"][hooks.OP_SURFACE_KEY]
 
@@ -273,9 +273,9 @@ class TestStampUnderRecording:
         _write(root / "artifacts" / "lane" / "nb.ipynb", nb)
         assert engine.main(["--restamp"], root=root) == 1
         assert "op surface unreadable" in capsys.readouterr().err
-        assert json.loads((root / "artifacts" / "lane" / "nb.ipynb").read_text())["metadata"][hooks.OP_SURFACE_KEY] == [
-            "live_op"
-        ]
+        assert json.loads((root / "artifacts" / "lane" / "nb.ipynb").read_text(encoding="utf-8"))["metadata"][
+            hooks.OP_SURFACE_KEY
+        ] == ["live_op"]
 
 
 class TestInterpretuneConfiguration:

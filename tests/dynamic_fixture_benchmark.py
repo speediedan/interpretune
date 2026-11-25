@@ -246,7 +246,7 @@ def test_minimal():
 '''
 
     try:
-        with open(baseline_test_path, "w") as f:
+        with open(baseline_test_path, "w", encoding="utf-8") as f:
             f.write(baseline_content)
 
         # Measure pytest execution time for minimal test
@@ -297,7 +297,7 @@ def test_minimal():
     artifacts = {}
 
     try:
-        with open(baseline_test_path, "w") as f:
+        with open(baseline_test_path, "w", encoding="utf-8") as f:
             f.write(baseline_content)
 
         # First: attempt a py-spy speedscope recording (this adds overhead but produces useful artifacts)
@@ -456,7 +456,7 @@ def test_fixture_benchmark({fixture_name}):
 
         try:
             # Run baseline test first
-            with open(baseline_test_path, "w") as f:
+            with open(baseline_test_path, "w", encoding="utf-8") as f:
                 f.write(minimal_test_content)
 
             cmd = [sys.executable, "-m", "pytest", str(baseline_test_path), "-v", "--tb=short", "-p", "no:warnings"]
@@ -471,7 +471,7 @@ def test_fixture_benchmark({fixture_name}):
             baseline_memory = 0.0
             baseline_gpu = 0.0
             if baseline_result.returncode == 0 and Path("/tmp/baseline_memory_results.txt").exists():
-                with open("/tmp/baseline_memory_results.txt", "r") as f:
+                with open("/tmp/baseline_memory_results.txt", "r", encoding="utf-8") as f:
                     lines = f.readlines()
                     if len(lines) >= 2:
                         baseline_memory = float(lines[0].strip())
@@ -479,7 +479,7 @@ def test_fixture_benchmark({fixture_name}):
                 Path("/tmp/baseline_memory_results.txt").unlink(missing_ok=True)
 
             # Now run fixture test
-            with open(fixture_test_path, "w") as f:
+            with open(fixture_test_path, "w", encoding="utf-8") as f:
                 f.write(fixture_test_content)
 
             # Run the test with pytest
@@ -503,7 +503,7 @@ def test_fixture_benchmark({fixture_name}):
             results_file = "/tmp/fixture_benchmark_results.txt"
             if result.returncode == 0 and Path(results_file).exists():
                 # Read the benchmark results
-                with open(results_file, "r") as f:
+                with open(results_file, "r", encoding="utf-8") as f:
                     lines = f.readlines()
                     if len(lines) >= 3:
                         fixture_memory = float(lines[1].strip())
@@ -584,7 +584,7 @@ def discover_static_fixtures() -> dict[str, dict[str, Any]]:
     static_fixtures = {}
 
     try:
-        with open(conftest_path, "r") as f:
+        with open(conftest_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         # Parse AST to find pytest fixtures
@@ -850,7 +850,7 @@ def main():
 
         # Write report to file
         report_path = Path(__file__).parent / "fixture_benchmark_report.md"
-        with open(report_path, "w") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write(report)
 
         print("\nBenchmark complete!")
