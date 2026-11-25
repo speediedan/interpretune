@@ -45,6 +45,7 @@ LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
 TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
 TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
 TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
+TP_CT_WORKER = Path(__file__).with_name("distributed_tp_ct_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -1325,6 +1326,60 @@ def test_a_meta_built_model_is_loaded_from_each_ranks_checkpoint_slices(
             "Keys no model key matches: ['transformer.h.0.attn.extra']; parameters no key supplies: []"
             in (record["refused"])
         )
+
+
+def _launch_tp_ct(out_dir: Path, *extra: str) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_CT_WORKER), "--out-dir", str(out_dir), *extra]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp circuit-tracer run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_attributes_like_one_process(tmp_path):
+    """A circuit-tracer composition whose base model ``tp`` split by its declared plan gives the graph, and the
+    feature interventions, of the whole model on every rank, with ``offload='cpu'`` and with live attention too.
+
+    The calls that read inside a split layer or a split weight are refused before they start.
+    """
+    for record in _launch_tp_ct(tmp_path / "tune_base"):
+        assert record["split_params"] == sorted(
+            f"hf_model.model.layers.{i}.{proj}.weight"
+            for i in range(3)
+            for proj in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        )
+        assert record["n_features"] > 0 and record["same_nodes"] and record["ranks_equal"]
+        assert record["diff"].keys() >= {"graph", "offload_cpu", "live", "frozen_edit", "unfrozen_edit"}
+        assert max(record["diff"].values()) < 1e-4, record["diff"]
+        # each edit moves the reference, so a dropped edit could not pass as a match
+        assert min(record["effect"].values()) > 1e-2, record["effect"]
+        assert record["refusals"].keys() == {"offload_disk", "head_loadings", "head_conductance"}
+        assert all("'tp' has split across ranks" in message for message in record["refusals"].values())
+        # one rank's perturbed shard changes the graph, so the comparison above can fail
+        assert record["control_differs"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_refuses_a_composition_whose_base_model_it_cannot_reach(tmp_path):
+    for record in _launch_tp_ct(tmp_path / "attribution_only", "--attribution-only"):
+        assert "tune_base: true" in record["refused"]
 
 
 def _launch_ct(plan: dict, out_dir: Path, meta: bool = False) -> list[dict]:

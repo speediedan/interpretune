@@ -127,6 +127,22 @@ run_cfg:
 Where a split layer hands on each rank's local shard instead (the default), the splice is refused, naming the site and
 this fix: a latent model's when the module is placed, an SAE's at the first forward pass.
 
+### Circuit-tracer attribution under `tp`
+
+A circuit-tracer composition over nnsight attributes a split model as it does a whole one. The plan transformers
+declares splits each attention and MLP block inside and makes the activation whole again at the block's output, and
+attribution reads, replaces and injects gradients only there. `generate_attribution_graph` (with live or frozen
+attention, and with `offload='cpu'`) and `feature_intervention` therefore need nothing from the caller, and every rank
+gets the same graph. Every rank makes every call, since the forward and backward passes are shared.
+
+- Set `circuit_tracer_cfg.tune_base: true`. It registers the base model, whose layers the plan selects; a composition
+  without it is refused.
+- Every rank holds the whole transcoders.
+- `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
+  weight, or a head inside a split layer.
+- The attribution runner itself takes one process (`AnalysisRunnerCfg` accepts `placement: single` only), so attribute
+  from a module a core-loop runner has placed.
+
 ## Models larger than one rank's accelerator
 
 By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded

@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- Circuit-tracer attribution and feature interventions on a base model placement `tp` split across ranks: a composition over nnsight that sets `tune_base` places with its model's declared plan, and every rank gets the whole model's graph (two ranks against one process). `offload='disk'`, head loading reports and head conductance reports are refused on a split model, since they read a whole weight or a head inside a split layer, and so is `tp` on a composition that registers only its transcoders ([#1020](https://github.com/interpretune/interpretune/issues/1020))
+
 - An evidence-sourced value (`from: {evidence, column}`) applies on a composed unit target (`@a & @b`, `@a - @control`) as on a single set: each member venngram lists for the composition reads its value from the column, a row for a unit outside the composition doses nothing, and a member the column has no row for is refused. It was refused for any composed target before. venngram is pinned at `26258252`, its main with `Op.unit_members` (speediedan/venngram#131) ([#905](https://github.com/interpretune/interpretune/issues/905))
 
 - Helper modules in Hub components: a manifest may declare `kinds: [helpers]` with `helpers.modules` (import name to `.py` path), a key-less `it.hub.pull` fetches them, and `it.hub.load_helpers(repo_id, name, revision=...)` imports one from the cache behind the remote-code gate, scoped by revision and without touching `sys.path` ([#1194](https://github.com/interpretune/interpretune/issues/1194))

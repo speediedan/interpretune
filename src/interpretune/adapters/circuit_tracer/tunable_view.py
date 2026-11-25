@@ -49,6 +49,8 @@ from torch import nn, Tensor
 from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder
 
+from interpretune.utils import MisconfigurationException
+
 if TYPE_CHECKING:
     from venngram.errors import Refusal
     from venngram.resolve import Location
@@ -259,6 +261,28 @@ def attribution_frozen(*modules: Any) -> Iterator[list[nn.Parameter]]:
     finally:
         for p in thawed:
             p.requires_grad_(True)
+
+
+def refuse_split_base(replacement_model: Any, call: str, reason: str) -> None:
+    """Refuse ``call`` on a replacement model whose base model placement 'tp' has split across ranks.
+
+    Attribution and feature interventions read activations only where the split layers hand them on whole. A call that
+    reads inside a split layer, or a split weight, would meet one rank's part of it.
+
+    Raises:
+        MisconfigurationException: Naming the call and the first split weight, when any parameter is split.
+    """
+    from interpretune.tuning.latents import _split
+
+    if not isinstance(replacement_model, nn.Module):  # nnsight's is an envoy, interp-engine's holds the HF model
+        replacement_model = getattr(replacement_model, "_module", getattr(replacement_model, "hf_model", None))
+    if not isinstance(replacement_model, nn.Module):
+        return
+    split = next((name for name, param in replacement_model.named_parameters() if _split(param.data)), None)
+    if split is not None:
+        raise MisconfigurationException(
+            f"{call} is not supported on a model placement 'tp' has split across ranks ({split}): {reason}."
+        )
 
 
 @contextmanager
