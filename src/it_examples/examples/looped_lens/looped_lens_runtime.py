@@ -224,6 +224,75 @@ def build_lists(top: torch.Tensor, vocab: list[str], prompt: str, k: int, filter
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# a store of reads -> the challenge's readouts
+# ---------------------------------------------------------------------------------------------------------------------
+_LABEL = re.compile(r"^L(\d+)(?:p([123]))?(?::|$)")
+MAX_CHALLENGE_LAYERS, MAX_CHALLENGE_TOKENS = 10, 10
+
+
+def visit_index(label: str) -> int:
+    """The layer visit (0 to 47, in the order they run) a read-site label names: ``L15p3:coda`` is 39,
+    ``L19:active`` 43.
+
+    A core layer (6 to 17) runs three passes, so its label must carry one; a label that names no visit is refused.
+    """
+    m = _LABEL.match(label)
+    if m is None:
+        raise ValueError(f"{label!r} names no layer visit (expected L<layer>, or L<layer>p<pass> for a core layer)")
+    layer, pas, (start, end) = int(m[1]), m[2], LOOP
+    core = start <= layer < end
+    if core != (pas is not None):
+        raise ValueError(f"{label!r}: a core layer ({start} to {end - 1}) needs a pass, and no other layer has one")
+    if layer >= 24:
+        raise ValueError(f"{label!r}: layer {layer} is not a decoder layer (0 to 23)")
+    if core:
+        return start + (layer - start) + (end - start) * (int(pas) - 1)
+    return layer if layer < start else layer + 2 * (end - start)
+
+
+def challenge_readouts(rows: Any, ids: list[str], *, allow_several_positions: bool = False) -> list[dict]:
+    """Stored ``looped_lens_read`` rows as the Looped Lens Challenge's readouts file, one dict per question.
+
+    ``rows`` is anything that yields the op's rows: an :class:`AnalysisStore` (iterated, so a streamed one works) or a
+    list of row dicts. Each row is one op call and may hold several prompts; ``ids`` are the questions' ids in prompt
+    order, and their number must match. Each readout is ``{"layer": visit, "tokens": [...]}`` for one read site, at most
+    ten sites and ten tokens per site, as the challenge allows.
+
+    The challenge takes a prompt's readouts at a single token position, so a prompt whose sites were read at more than
+    one (a book with ``question_end`` sites) is refused, unless ``allow_several_positions``.
+    """
+    out: list[dict] = []
+    for row in rows:
+        labels = [str(x) for x in row["looped_lens_labels"]]
+        visits = [visit_index(label) for label in labels]
+        if len(set(visits)) != len(visits) or len(visits) > MAX_CHALLENGE_LAYERS:
+            raise ValueError(
+                f"the challenge takes at most {MAX_CHALLENGE_LAYERS} layers per question, one readout each: {labels}"
+            )
+        if "looped_lens_site_positions" not in row:
+            raise ValueError("the rows have no looped_lens_site_positions, so where their sites were read is unknown")
+        prompts, where = row["looped_lens_tokens"], [[int(p) for p in w] for w in row["looped_lens_site_positions"]]
+        if len(where) != len(prompts):
+            raise ValueError(f"read positions for {len(where)} prompts, and token lists for {len(prompts)}")
+        for prompt, at in zip(prompts, where):
+            if len(prompt) != len(labels) or len(at) != len(labels):
+                raise ValueError(f"{len(prompt)} token lists and {len(at)} positions for {len(labels)} read sites")
+            if len(set(at)) > 1 and not allow_several_positions:
+                raise ValueError(
+                    f"a prompt's sites were read at {len(set(at))} token positions {dict(zip(labels, at))}; the "
+                    "challenge takes a single position per prompt (allow_several_positions=True writes them anyway)"
+                )
+            sites = sorted(zip(visits, prompt), key=lambda item: item[0])
+            if len(out) == len(ids):
+                raise ValueError(f"the store holds more prompts than the {len(ids)} question ids given")
+            readouts = [{"layer": v, "tokens": [str(t) for t in toks][:MAX_CHALLENGE_TOKENS]} for v, toks in sites]
+            out.append({"id": ids[len(out)], "readouts": readouts})
+    if len(out) != len(ids):
+        raise ValueError(f"the store holds {len(out)} prompts for {len(ids)} question ids")
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # the coda mirror (a line-for-line mirror of the text model's coda, from a visit's state)
 # ---------------------------------------------------------------------------------------------------------------------
 def _mask_maps(tm, M, embeds: torch.Tensor, attention_mask: torch.Tensor, position_ids: torch.Tensor):

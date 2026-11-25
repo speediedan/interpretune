@@ -151,8 +151,8 @@ def target_members(recipe: Any, op: Any) -> list[Member]:
     unit target (``@a & @b``) lists the members venngram resolves for it (see :func:`_composed_members`).
 
     Raises:
-        MisconfigurationException: If the set does not name explicit layers and members, or a composed target's value
-            is neither a ``dose`` nor a ``doses`` table.
+        MisconfigurationException: If the set does not name explicit layers and members, or venngram cannot resolve a
+            composed target's members.
     """
     from venngram.address import Term
 
@@ -178,19 +178,14 @@ def target_members(recipe: Any, op: Any) -> list[Member]:
 def _composed_members(recipe: Any, op: Any) -> list[Member]:
     """A composed unit target's members (``@a & @b``, ``@a - @control``), as venngram resolves the composition.
 
-    Venngram lists a composition's ``(layer, unit)`` pairs through an op's doses (``Op.unit_doses``), so a composed
-    target takes a ``dose`` or ``doses`` value; with ``doses``, its members are the ones the table doses.
+    Venngram lists them in order of first appearance whatever the op's value is (``Op.unit_members``), as a single
+    set's members are listed here: a ``doses`` table then doses only the members it lists, and an evidence-sourced
+    value reads its column for every member.
     """
     from venngram.errors import AddressError
 
-    value = op.value
-    if value is None or value.source not in ("dose", "doses"):
-        raise MisconfigurationException(
-            f"set `{op.target}` composes unit sets, whose members are listed through the op's doses: give it a"
-            " `dose` or `doses` value (an evidence-sourced value on a composed target is not applied yet)"
-        )
     try:
-        return list(op.unit_doses(recipe.book))
+        return list(op.unit_members(recipe.book))
     except AddressError as err:
         raise MisconfigurationException(str(err)) from err
 
