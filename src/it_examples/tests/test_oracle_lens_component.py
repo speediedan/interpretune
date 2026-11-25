@@ -162,7 +162,7 @@ def test_a_hub_copy_runs_the_runtime_of_its_own_revision(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     for name in [n for n in sys.modules if n.partition(".")[0] == dynamic_module_utils.IT_DYNAMIC_MODULE_NAME]:
         monkeypatch.delitem(sys.modules, name)
-    assert pathlib.Path(sys.modules["oracle_lens_runtime"].__file__).parent == COMPONENT  # the local copy
+    assert pathlib.Path(str(sys.modules["oracle_lens_runtime"].__file__)).parent == COMPONENT  # the local copy
     op = dynamic_module_utils.get_function_from_dynamic_module(
         "oracle_lens_ops.oracle_lens_read_impl", "Some-Org.oracle-lens", cache_dir=tmp_path / "hub", revision=revision
     )
