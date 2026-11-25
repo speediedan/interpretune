@@ -5,8 +5,9 @@ Resolving venngram Site Addresses
 venngram resolves parameter addresses itself and leaves site addresses to a consumer: a term that sets ``point``
 names an activation point, and turning a point at a layer into something a backend can hook is interpretune's to do.
 :func:`resolve_sites` evaluates a site address into the concrete hook names it selects, ``blocks.<layer>.<point>``
-in the vocabulary's spelling, together with what the address acts on there: ``value`` or, under ``of: grad``, the
-gradient with respect to the activation at each site.
+in the vocabulary's spelling (or the bare point for a global one, such as ``unembed.hook_in``, which belongs to no
+block), together with what the address acts on there: ``value`` or, under ``of: grad``, the gradient with respect to the
+activation at each site. A global point has no layer, so a ``layers`` term never selects it.
 
 The fields a site term may set are ``point``, ``layers`` and ``of``; ``&``, ``|`` and ``-`` combine terms and
 ``@<set>`` follows a reference into the address book's sets. A ``point`` is a spelling of the activation-point
@@ -32,16 +33,27 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from interpretune.analysis.points import UnknownPointError, parse
+from interpretune.analysis.points import UnknownPointError, component_map_for, known_architectures, parse
 from interpretune.utils import MisconfigurationException
 
 #: The term fields a site address may set here.
 SITE_FIELDS = frozenset({"point", "layers", "of"})
 
+#: Where a block layer would be in a ``(layer, point)`` pair: a point that belongs to no block.
+GLOBAL = -1
+
+
+def _global_components() -> frozenset[str]:
+    """The components outside every block stack across the known maps, excluding names used by a block."""
+    maps = [component_map_for(name) for name in known_architectures()]
+    stacked = {c for m in maps for stack in m.stack_names() for c in m.block_components(stack)}
+    return frozenset(c for m in maps for c in m.global_components()) - stacked
+
 
 @dataclass(frozen=True)
 class SiteSelection:
-    """The sites an address selects, as concrete hook names in layer order, and what it acts on there."""
+    """The sites an address selects, as concrete hook names in layer order with global points last, and what it
+    acts on there."""
 
     sites: tuple[str, ...]
     flow: str
@@ -80,6 +92,8 @@ def resolve_unit_sites(
         evaluator = _UnitEvaluator(a, sets, n_layers, where=str(address))
         points = evaluator.points(expr, ())
         selected = {}
+        if outside := sorted(point for point in points if evaluator.is_global(point)):
+            raise evaluator._refuse(f"{outside} are global points; a unit address names points inside the block stack")
         for point in sorted(points):
             width = site_widths.get(point)
             if type(width) is not int or width <= 0:
@@ -137,12 +151,18 @@ def resolve_sites(address: Any, *, n_layers: int, sets: Mapping[str, Any] | None
         raise MisconfigurationException(
             f"the site address {address!r} names no `point`, so it selects no site; a site term sets `point`"
         )
-    universe = frozenset((layer, point) for point in points for layer in range(n_layers))
-    selected = evaluator.evaluate(expr, universe, ())
+    outside = {point for point in points if evaluator.is_global(point)}
+    universe = frozenset((layer, point) for point in points - outside for layer in range(n_layers))
+    selected = evaluator.evaluate(expr, universe | {(GLOBAL, point) for point in outside}, ())
     if not selected:
-        raise MisconfigurationException(f"the site address {address!r} selects no site of a {n_layers}-layer stack")
-    ordered = sorted(selected, key=lambda pair: (pair[0], sorted(points).index(pair[1])))
-    return SiteSelection(sites=tuple(f"blocks.{layer}.{point}" for layer, point in ordered), flow=flow)
+        note = f" ({sorted(outside)} are global points, which have no layer)" if outside else ""
+        raise MisconfigurationException(
+            f"the site address {address!r} selects no site of a {n_layers}-layer stack{note}"
+        )
+    ordered = sorted(selected, key=lambda pair: (pair[0] == GLOBAL, pair[0], sorted(points).index(pair[1])))
+    return SiteSelection(
+        sites=tuple(point if layer == GLOBAL else f"blocks.{layer}.{point}" for layer, point in ordered), flow=flow
+    )
 
 
 class _SiteEvaluator:
@@ -151,6 +171,11 @@ class _SiteEvaluator:
 
     def __init__(self, address_mod: Any, sets: Mapping[str, Any], n_layers: int, *, where: str) -> None:
         self._a, self._sets, self._n_layers, self._where = address_mod, sets, n_layers, where
+        self._globals = _global_components()
+
+    def is_global(self, point: str) -> bool:
+        """Whether a point spelling names a component outside the block stack."""
+        return parse(point).component in self._globals
 
     def _refuse(self, reason: str) -> MisconfigurationException:
         return MisconfigurationException(f"cannot resolve the site address {self._where!r}: {reason}")

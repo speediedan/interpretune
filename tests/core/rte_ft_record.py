@@ -2,9 +2,10 @@
 interface.
 
 Each writes the same JSON record when training ends: every epoch's schedule depth, thawed parameters and validation
-metrics, the final depth, and the best checkpoint's depth and score. A test adds one to a shipped run configuration,
-so both interfaces are compared through the CLI that runs them. Under a launcher, ``{rank}`` in the output path is
-replaced by the process's rank, and the core recorder also records the parameter types (``DTensor`` once sharded).
+metrics, the final depth, the best checkpoint's depth and score, and the devices the parameters ended on. A test adds
+one to a shipped run configuration, so both interfaces are compared through the CLI that runs them. Under a launcher,
+``{rank}`` in the output path is replaced by the process's rank, and the core recorder also records the parameter types
+(``DTensor`` once sharded).
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ METRICS = ("val_loss", "accuracy")
 
 def _thawed(module: torch.nn.Module) -> list[str]:
     return sorted(n for n, p in module.named_parameters() if p.requires_grad)
+
+
+def _devices(module: torch.nn.Module) -> list[str]:
+    return sorted({str(p.device) for p in module.parameters()})
 
 
 def _write(
@@ -66,7 +71,13 @@ class CoreEpochRecorder:
         checkpoint = ts._checkpoint
         param_types = sorted({type(p).__name__ for p in ctx.module.parameters()})
         _write(
-            self.out, self.epochs, ts.curr_depth, checkpoint.best_depth, checkpoint.best_score, param_types=param_types
+            self.out,
+            self.epochs,
+            ts.curr_depth,
+            checkpoint.best_depth,
+            checkpoint.best_score,
+            param_types=param_types,
+            devices=_devices(ctx.module),
         )
 
 
@@ -140,4 +151,11 @@ class LightningEpochRecorder(Callback):  # type: ignore[misc,valid-type]
     def on_train_end(self, trainer: Any, pl_module: Any) -> None:
         checkpoint = self._callback(trainer, "FTSCheckpoint")
         depth = self._callback(trainer, "FinetuningScheduler").curr_depth
-        _write(self.out, self.epochs, depth, checkpoint.best_ckpt_depth, checkpoint.best_model_score)
+        _write(
+            self.out,
+            self.epochs,
+            depth,
+            checkpoint.best_ckpt_depth,
+            checkpoint.best_model_score,
+            devices=_devices(pl_module),
+        )
