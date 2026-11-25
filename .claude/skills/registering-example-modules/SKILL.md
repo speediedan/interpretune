@@ -43,14 +43,14 @@ Each entry follows this structure (in a component tree's `configs/<key>.yaml`, o
     tokenizer_id_overrides:          # Optional tokenizer overrides
       pad_token_id: {id}
     tokenizer_kwargs:                # Tokenizer configuration
-      model_input_names: ['input']
+      model_input_names: ['input_ids', 'attention_mask']  # the key the model's forward takes: 'input' for a TransformerLens bridge, with the mask either way
       padding_side: left
       add_bos_token: false
   registered_cfg:
     datamodule_cfg:                  # ITDataModuleConfig settings
       prompt_cfg:
         class_path: {prompt_config_class}
-      signature_columns: ['input', 'labels']
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -241,14 +241,14 @@ gpt2.rte.nnsight:
     tokenizer_id_overrides:
       pad_token_id: 50256
     tokenizer_kwargs:
-      model_input_names: ['input']
+      model_input_names: ['input_ids', 'attention_mask']
       padding_side: left
       add_bos_token: false
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'labels']
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2

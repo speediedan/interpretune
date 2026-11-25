@@ -43,6 +43,7 @@ def test_slices_and_negative_indices_use_the_supplied_checkpoint_width():
         (f"point:{POINT} & layers:0 & units:[9]", "outside"),
         (f"point:{POINT} & layers:0 & units:[1] & features:sae", "no unit-site meaning"),
         (f"point:{POINT} & layers:0 & units:[1] & space:jlens", "no unit-site meaning"),
+        ("point:unembed.hook_in & units:[1]", "global points"),
     ],
 )
 def test_unsupported_unit_addresses_are_refused(address, match):

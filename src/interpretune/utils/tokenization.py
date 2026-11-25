@@ -43,20 +43,33 @@ def _named_forward_params(cls: type) -> frozenset[str] | None:
     return frozenset(name for name, p in params.items() if p.kind in kinds and name != "self") or None
 
 
+def _derives_from(model: object, package: str) -> bool:
+    """Whether a class of ``model``'s MRO is defined in ``package``, without importing it."""
+    return any(cls.__module__.partition(".")[0] == package for cls in type(model).__mro__)
+
+
 def verifiable_forward_inputs(model: object) -> frozenset[str] | None:
     """The named input parameters of ``model``'s forward, or None when they cannot be read reliably.
 
     Only forwards whose call semantics are known are read: a HuggingFace ``PreTrainedModel`` (directly or under a PEFT
     wrapper), whose forward also accepts ``**kwargs`` so an unknown key is swallowed and fails later as a missing
-    ``input_ids``, and a TransformerLens bridge. A wrapper whose ``__call__`` dispatches through its own machinery
-    (nnsight, circuit-tracer's replacement models) may expose the wrapped model's ``forward`` while accepting other
-    keys, so its signature is not evidence and None is returned rather than a guess.
+    ``input_ids``; a TransformerLens bridge or a subclass of one; and an nnsight wrapper (circuit-tracer's nnsight
+    replacement model is one), which outside a trace calls the module it wraps with the keywords it was given, so the
+    wrapped module's forward is the contract. Any other wrapper's signature is not evidence, and None is returned rather
+    than a guess.
     """
     from transformers import PreTrainedModel
 
-    known = isinstance(model, PreTrainedModel)
-    known = known or isinstance(getattr(model, "base_model", None), PreTrainedModel)  # a PEFT wrapper
-    known = known or type(model).__module__.startswith("transformer_lens.")
+    if _derives_from(model, "nnsight"):
+        # a subclass with a `__call__` of its own may rename inputs, so only nnsight's own call is vouched for
+        passes_through = type(model).__call__.__module__.partition(".")[0] == "nnsight"  # type: ignore[operator]
+        wrapped = vars(model).get("_module")
+        return verifiable_forward_inputs(wrapped) if passes_through and wrapped is not None else None
+    if _derives_from(model, "peft"):
+        # `base_model` is the tuner that holds the wrapped model, not the model itself
+        base = getattr(model, "get_base_model", None)
+        return verifiable_forward_inputs(base()) if base is not None else None
+    known = isinstance(model, PreTrainedModel) or _derives_from(model, "transformer_lens")
     return _named_forward_params(type(model)) if known else None
 
 
