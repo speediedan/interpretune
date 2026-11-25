@@ -15,7 +15,7 @@ to the output of the block at that path (``tuning.interventions``), so its opera
 With ``--addressed``, the test model has a venngram component map, a latent model is spliced over the first block's
 feed-forward, and a three-phase schedule written only in venngram addresses tunes the last block's MLP by layer and
 component, then the latent model by role, then the first block's attention. ``--addressed promote`` attaches the latent
-model frozen (its tensors are ``artifact``) and promotes it in the second phase, which a sharded model refuses.
+model frozen (its tensors are ``artifact``) and promotes it in the second phase.
 ``--device-type cuda`` places each rank (and the reference) on its own GPU.
 ``--memprof-fsdp`` profiles every training iteration with the memory profiler's ``FSDP2MemTracker``.
 
@@ -304,16 +304,7 @@ def main() -> None:
             0: {"params": first, "max_transition_epoch": 1},
             1: {"params": [n for n in trainable if n not in first]},
         }
-    if args.addressed == "promote" and args.placement != "single":
-        from finetuning_scheduler.core.exceptions import FTSConfigurationError
-
-        try:
-            runner.train()
-        except FTSConfigurationError as err:
-            out_path.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
-            return
-    else:
-        runner.train()
+    runner.train()
     record = {
         "losses": recorder.losses,
         "epoch_metrics": recorder.epoch_metrics,

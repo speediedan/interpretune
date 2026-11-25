@@ -112,10 +112,11 @@ class HFFromPretrainedConfig(ITSerializableCfg):
     # Whether to enable gradients for the input embeddings. Useful for finetuning adapter weights w/ a frozen model.
     enable_input_require_grads: bool = True
     default_head: str = "transformers.AutoModelForCausalLM"
-    # Build the model on the meta device in every process, for a data-parallel placement to shard before it holds any
-    # weights. The process a launcher made rank 0 (or one with no launcher) also loads the checkpoint on the CPU, and
-    # the placement loads it into the sharded model from there (`interpretune.runners.distributed`), so no rank's
-    # accelerator holds the whole model and only rank 0's host does. A model with no placement to load it stays on meta.
+    # Build the model on the meta device in every process, for a placement to shard (or, under `tp`, split) before it
+    # holds any weights. The process a launcher made rank 0 (or one with no launcher) also loads the checkpoint on the
+    # CPU, and the placement loads it into the placed model from there (`interpretune.runners.distributed`), so no
+    # rank's accelerator holds the whole model and only rank 0's host does. A model with no placement to load it stays
+    # on meta.
     meta_init: bool = False
     # How a `meta_init` model is loaded once sharded. "rank0": rank 0 loads the whole checkpoint on its CPU and the
     # placement scatters it, which works for any checkpoint `from_pretrained` reads. "dcp": every rank reads only its
