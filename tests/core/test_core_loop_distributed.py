@@ -24,6 +24,7 @@ from interpretune.runners.distributed import (
     _check_devices,
     _meta_offloads,
     _packed_groups,
+    _partial_gradient_params,
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
@@ -367,6 +368,23 @@ class TestPlacementChecks:
             hf_tp_plan(self._tiny_llama(kv_heads=1), "model", 2)
         with pytest.raises(MisconfigurationException, match=r"num_attention_heads \(3\) is not divisible by the 2"):
             hf_tp_plan(self._tiny_llama(heads=3, kv_heads=3, hidden=48), "model", 2)
+        from transformers import Gemma3Config, Gemma3ForConditionalGeneration
+
+        # a multimodal model's heads are its text config's
+        text = {"num_hidden_layers": 1, "hidden_size": 24, "intermediate_size": 8, "head_dim": 4, "vocab_size": 16}
+        vision = {"num_hidden_layers": 1, "hidden_size": 8, "intermediate_size": 8, "num_attention_heads": 2}
+        for heads, match in ((2, None), (3, r"num_attention_heads \(3\)")):
+            config = Gemma3Config(
+                text_config={**text, "num_attention_heads": heads, "num_key_value_heads": 2}, vision_config=vision
+            )
+            with torch.device("meta"):
+                multimodal = Gemma3ForConditionalGeneration(config)
+            if match is None:
+                plan = hf_tp_plan(multimodal, "model", 2)  # the norms stay whole, so the plan does not name them
+                assert len(plan) == 7 and not any("norm" in key for key in plan)
+                continue
+            with pytest.raises(MisconfigurationException, match=match):
+                hf_tp_plan(multimodal, "model", 2)
         model = self._tiny_llama()
         model._tp_plan = {**model.tp_plan, "model.layers.*.mlp.experts": "local_colwise"}
         with pytest.raises(MisconfigurationException, match="experts the style 'local_colwise'"):
@@ -1109,6 +1127,18 @@ def test_two_rank_tp_splits_a_bridge_joint_qkv_and_keeps_its_views_aliased(tiny_
         assert "splits only some of the views of" in record["refused"]
 
 
+def _launch_tp_hf(checkpoint, out_dir: Path, *extra: str) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_HF_WORKER), "--checkpoint", str(checkpoint), "--out-dir", str(out_dir), *extra]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp hf run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
+
+
 @pytest.fixture(scope="module")
 def tiny_llama_checkpoint(tmp_path_factory):
     """A Llama checkpoint split over several safetensors files (with an index), whose rotary frequencies are a non-
@@ -1141,17 +1171,7 @@ def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_c
 
     The embedding and LM head stay whole.
     """
-    out_dir = tmp_path / "hf"
-    out_dir.mkdir()
-    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
-    env["CUDA_VISIBLE_DEVICES"] = ""
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
-    worker = [str(TP_HF_WORKER), "--checkpoint", str(tiny_llama_checkpoint), "--out-dir", str(out_dir)]
-    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
-    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
-    assert proc.returncode == 0, f"tp hf run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
-    for rank in range(2):
-        record = json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8"))
+    for record in _launch_tp_hf(tiny_llama_checkpoint, tmp_path / "hf"):
         assert record["split_params"] == sorted(
             f"model.model.layers.{i}.{proj}.weight"
             for i in range(2)
@@ -1167,6 +1187,90 @@ def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_c
         )
         assert record["forward_diff"] < 1e-5
         assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
+
+
+@pytest.fixture(scope="module")
+def tiny_gemma3_checkpoint(tmp_path_factory):
+    """A Gemma 3 checkpoint: its attention normalizes the queries and keys of each head."""
+    from transformers import Gemma3ForCausalLM, Gemma3TextConfig
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tiny_gemma3")
+    config = Gemma3TextConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        query_pre_attn_scalar=8,
+        vocab_size=128,
+        layer_types=["sliding_attention", "full_attention"],
+        sliding_window=4,
+    )
+    model = Gemma3ForCausalLM(config)
+    with torch.no_grad():  # the norms' own initial weights are zero
+        for name, param in model.named_parameters():
+            if "norm" in name:
+                param.uniform_(-0.5, 0.5)
+    model.save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_sums_the_gradients_of_query_and_key_norms(tiny_gemma3_checkpoint, tmp_path):
+    """A query or key norm stays whole and normalizes only the heads its rank computes, so its gradient is summed
+    across ranks: over two accumulated backward passes, for norms frozen when the model was placed, with the model's
+    own plan and with an explicit one.
+
+    The control, without the sum, gives gradients that are wrong and no error. A plan that leaves attention whole gives
+    every rank the whole gradient, which must not be summed.
+    """
+    attention = [("q_proj", "colwise"), ("k_proj", "colwise"), ("v_proj", "colwise"), ("o_proj", "rowwise")]
+    plans: dict[str, dict | None] = {
+        "default": None,
+        "explicit": {rf"model\.model\.layers\.\d+\.self_attn\.{m}": {"style": s} for m, s in attention},
+        "mlp_only": {
+            rf"model\.model\.layers\.\d+\.mlp\.{m}": {"style": s}
+            for m, s in (("gate_proj", "colwise"), ("up_proj", "colwise"), ("down_proj", "rowwise"))
+        },
+    }
+    n_split = {"default": 14, "explicit": 8, "mlp_only": 6}
+    for name, plan in plans.items():
+        extra = [] if plan is None else ["--tp-plan", json.dumps(plan)]
+        for record in _launch_tp_hf(tiny_gemma3_checkpoint, tmp_path / name, *extra):
+            assert len(record["split_params"]) == n_split[name]
+            assert record["frozen_stayed_frozen"]
+            assert record["forward_diff"] < 1e-5
+            assert len(record["norm_grad_diff"]) == 4 and max(record["norm_grad_diff"].values()) < 1e-4
+            assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
+    for record in _launch_tp_hf(tiny_gemma3_checkpoint, tmp_path / "control", "--no-gradient-sum"):
+        assert min(record["norm_grad_diff"].values()) > 1e-2
+
+
+def test_partial_gradients_are_found_under_a_transformer_lens_bridge(tiny_gemma3_checkpoint):
+    """A bridge wraps each component of its Hugging Face model in one of its own, so a declared name is matched
+    without the wrappers."""
+    from torch.distributed.tensor.parallel import ColwiseParallel
+    from transformer_lens.model_bridge import TransformerBridge
+    from transformers import AutoTokenizer, Gemma3ForCausalLM
+
+    tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")  # warmed for offline CI
+    hf_model = Gemma3ForCausalLM.from_pretrained(tiny_gemma3_checkpoint)
+    bridge = TransformerBridge.boot_transformers(
+        str(tiny_gemma3_checkpoint), hf_model=hf_model, tokenizer=tokenizer, device="cpu"
+    )
+    layer = "blocks.0._original_component"
+    attn = f"{layer}.self_attn._original_component"
+    split_q = {f"{attn}.q_proj._original_component": ColwiseParallel()}
+    assert _partial_gradient_params(bridge, split_q).keys() == {
+        f"model.layers.0._original_component.self_attn._original_component.{norm}._original_component.weight"
+        for norm in ("k_norm", "q_norm")
+    }
+    split_mlp = {f"{layer}.mlp._original_component.up_proj._original_component": ColwiseParallel()}
+    assert not _partial_gradient_params(bridge, split_mlp)
 
 
 @pytest.fixture(scope="module")
@@ -1405,17 +1509,26 @@ def _launch_tp_ct(out_dir: Path, *extra: str) -> list[dict]:
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
-@pytest.mark.parametrize("meta", [False, True], ids=["loaded", "meta_init"])
-def test_two_rank_tp_attributes_like_one_process(tmp_path, meta):
+@pytest.mark.parametrize(
+    ("extra", "layers"),
+    [
+        ((), "model.layers"),
+        (("--meta",), "model.layers"),
+        (("--arch", "gemma3"), "model.language_model.layers"),
+    ],
+    ids=["loaded", "meta_init", "gemma3"],
+)
+def test_two_rank_tp_attributes_like_one_process(tmp_path, extra, layers):
     """A circuit-tracer composition whose base model ``tp`` split by its declared plan gives the graph, and the
     feature interventions, of the whole model on every rank, with ``offload='cpu'`` and with live attention too.
 
     The calls that read inside a split layer or a split weight are refused before they start. A model built on the meta
-    device gives the same, which needs the unembedding circuit-tracer resolved at its build to be refreshed.
+    device gives the same, which needs the unembedding circuit-tracer resolved at its build to be refreshed. So does a
+    multimodal Gemma 3, whose query and key norms the plan leaves whole.
     """
-    for record in _launch_tp_ct(tmp_path / "placed", *(["--meta"] if meta else [])):
+    for record in _launch_tp_ct(tmp_path / "placed", *extra):
         assert record["split_params"] == sorted(
-            f"hf_model.model.layers.{i}.{proj}.weight"
+            f"hf_model.{layers}.{i}.{proj}.weight"
             for i in range(3)
             for proj in (
                 "self_attn.q_proj",

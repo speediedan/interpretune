@@ -468,6 +468,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- Placement `tp` takes the plan transformers declares for a model with query and key norms (Gemma 3, Gemma 4, Qwen3), which it used to refuse, and sums the gradients of those norms across ranks. They stay whole between split layers, so each rank's gradient covers only the heads it computes; with an explicit `tp_plan` the ranks' copies trained apart with no error. A multimodal model's heads are checked against the rank count in its text config ([#1234](https://github.com/interpretune/interpretune/issues/1234))
+
 - Text files interpretune owns (graphs, cached schemas and tags, injection sources and configurations, component manifests, model fallback state, op stubs and logs) are read and written as UTF-8 on every host, instead of in the platform's default encoding. On a Windows host outside UTF-8 mode, a file holding a character such as the tokenizer word marker `▁` read back as the wrong text or raised `UnicodeDecodeError` ([#429](https://github.com/interpretune/interpretune/issues/429)).
 
 - A phased schedule over a TransformerLens bridge thaws its biases under placements `fsdp2` and `tp`. A placement registers new tensors in place of the module's own, and the bridge kept each bias alias (`b_in`, `b_out`, ...) pointing at the old tensor, so its view lost the name and the biases stayed frozen, with nothing said. Once placed, a module now refreshes such references in a cooperative `refresh_tensor_references()`, which the TransformerLens composition implements ([#1200](https://github.com/interpretune/interpretune/issues/1200))

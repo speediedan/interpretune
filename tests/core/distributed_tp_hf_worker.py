@@ -3,7 +3,12 @@
 Each rank loads the same tiny Llama twice: one copy is placed under ``tp`` with no ``tp_plan``, so the plan transformers
 declares for the model is used (its decoder layers split the Megatron way: each rank computes its own attention heads
 and its own slice of the MLP), and the other stays whole as the reference. Rank 1's copy is perturbed first, so only
-the broadcast can make the ranks agree. Both take one SGD step on the same batch.
+the broadcast can make the ranks agree. Both take one SGD step on the same batch, from a gradient accumulated over two
+backward passes.
+
+A checkpoint whose model has query and key norms (Gemma 3) has them frozen when the model is placed and thawed before
+the step, as a schedule would. ``--tp-plan`` gives the plan explicitly, and ``--no-gradient-sum`` is the control that
+leaves each rank's gradient of those norms its own.
 
 Writes ``<out_dir>/rank<rank>.json`` with the split parameters and the forward's and the stepped forward's distance
 from the reference, or the placement's refusal.
@@ -40,18 +45,26 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--tp-plan", type=json.loads, default=None)
+    parser.add_argument("--no-gradient-sum", action="store_true")
     args = parser.parse_args()
 
-    from transformers import LlamaForCausalLM
+    from transformers import AutoModelForCausalLM
 
+    import interpretune.runners.distributed as distributed
     from interpretune.runners.distributed import init_process_group, place_module, resolve_placement
     from interpretune.utils import MisconfigurationException
 
     run = resolve_placement("tp")
     assert run is not None
     init_process_group(run)
-    placed = Holder(LlamaForCausalLM.from_pretrained(args.checkpoint))
-    reference = Holder(LlamaForCausalLM.from_pretrained(args.checkpoint))
+    if args.no_gradient_sum:
+        distributed._sum_partial_gradients = lambda *args: None
+    placed = Holder(AutoModelForCausalLM.from_pretrained(args.checkpoint))
+    reference = Holder(AutoModelForCausalLM.from_pretrained(args.checkpoint))
+    norms = [n for n, _ in placed.named_parameters() if ".q_norm." in n or ".k_norm." in n]
+    for name in norms:
+        placed.get_parameter(name).requires_grad_(False)
     if run.rank:
         with torch.no_grad():
             for param in placed.parameters():
@@ -59,7 +72,7 @@ def main() -> None:
     record: dict = {}
     out = Path(args.out_dir, f"rank{run.rank}.json")
     try:
-        place_module(placed, run)
+        place_module(placed, run, tp_plan=args.tp_plan)
     except MisconfigurationException as err:
         out.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
@@ -68,15 +81,23 @@ def main() -> None:
     with torch.no_grad():
         before = reference(input_ids)
         record["forward_diff"] = float((placed(input_ids) - before).abs().max())
-    stepped = {}
+    record["frozen_stayed_frozen"] = not any(placed.get_parameter(n).requires_grad for n in norms)
+    for norm in norms:
+        placed.get_parameter(norm).requires_grad_(True)
+    stepped, grads = {}, {}
     for name, model in (("placed", placed), ("reference", reference)):
         optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
         logits = model(input_ids)
-        loss = nn.functional.cross_entropy(logits[:, :-1].flatten(0, 1), input_ids[:, 1:].flatten())
-        loss.backward()
+        for batch in (logits, model(input_ids.flip(0, 1))):
+            nn.functional.cross_entropy(batch[:, :-1].flatten(0, 1), input_ids[:, 1:].flatten()).backward()
+        grads[name] = {norm: model.get_parameter(norm).grad for norm in norms}
         optimizer.step()
         with torch.no_grad():
             stepped[name] = model(input_ids)
+    record["norm_grad_diff"] = {
+        n: float((g - grads["reference"][n]).abs().max() / grads["reference"][n].abs().max())
+        for n, g in grads["placed"].items()
+    }
     record["step_diff"] = float((stepped["placed"] - stepped["reference"]).abs().max())
     record["step_effect"] = float((stepped["reference"] - before).abs().max())
     out.write_text(json.dumps(record), encoding="utf-8")

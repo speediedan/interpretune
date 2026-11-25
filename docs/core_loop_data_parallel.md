@@ -108,6 +108,12 @@ its layouts. Without one, the module's own default is used: a Hugging Face model
 paths (TransformerLens has none). A `tp_plan` under any other placement is refused, and so are `fsdp_plan` and
 `fsdp_default_kwargs` under `tp`.
 
+The embedding and the LM head stay whole, and so do query and key norms (Gemma 3, Qwen3): they sit between split layers
+and normalize only the heads their rank computes. Each rank's gradient of such a norm covers its own heads, so the
+placement sums it across ranks, whether the plan is the model's own or given, and whether the norm is trainable at
+placement or thawed later. It takes the modules from the model's own declaration
+(`replicated_with_grad_allreduce` in transformers), so a whole module of yours between split layers is not covered.
+
 A latent model spliced with `tuning.latents`, and an SAE that SAE Lens splices into a TransformerLens bridge
 (`add_saes_on_init`), read and rewrite a whole activation. To splice one inside a layer the plan splits, set
 `use_local_output: false` on that layer's entry, so that the activation reaches the splice split across ranks: the
