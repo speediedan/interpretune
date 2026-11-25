@@ -284,12 +284,38 @@ def undeclared_reason(module: nn.Module) -> str:
     )
 
 
+def check_books_of(view: Any, module: nn.Module) -> None:
+    """Give ``view`` the ``check_book`` member finetuning-scheduler asks for (``book -> None``, raising venngram's
+    ``PinMismatchError``), checking a schedule's pinned address books against the models ``module`` has loaded
+    (:func:`~interpretune.tuning.pins.check_book_pins`).
+
+    It is set on the instance, so it serves every view class a composition uses, venngram's own included. A view that
+    already defines the member keeps its own, and one that takes no new attribute is left without it, so a pinned book
+    stays refused through it.
+    """
+    if callable(getattr(view, "check_book", None)):
+        return
+
+    def check_book(book: Any) -> None:
+        from interpretune.tuning.pins import check_book_pins
+
+        check_book_pins(book, module)
+
+    try:
+        object.__setattr__(view, "check_book", check_book)
+    except AttributeError:  # `__slots__`
+        return
+
+
 def attach_tunable_view(module: nn.Module) -> Any | None:
     """Attach ``module``'s view as ``tunable_view``: the one its configuration names (:func:`configured_view`),
     else the one ``build_tunable_view()`` declares, or a :class:`RefusingView` when it declares none.
 
     Does nothing when venngram's view protocol is unavailable, or when a view is already attached (an explicit
     attachment, for example by a hub adapter's ``post_auto_model_init``, is never replaced).
+
+    The attached view checks the pins of a schedule's address books against the models ``module`` has loaded
+    (:func:`check_books_of`).
 
     Returns:
         The attached view, or ``None`` when nothing was attached.
@@ -302,5 +328,6 @@ def attach_tunable_view(module: nn.Module) -> Any | None:
         view = build() if callable(build) else None
     if view is None:
         view = RefusingView(module, undeclared_reason(module))
+    check_books_of(view, module)
     object.__setattr__(module, VIEW_ATTR, view)
     return view
