@@ -537,9 +537,9 @@ The repo carries the production pipeline and benchmark tooling for the Scalable 
   `scripts/dashboard_benchmark_suite_usage.md` — batch-shape sweeps via its `--config`/`--mode scaling`).
   Tests: `tests/core/test_neuronpedia_dashboard_pipeline.py`,
   `tests/core/test_dashboard_benchmark_artifacts.py`.
-- **Env vars**: always set the large-cache locations for pipeline/benchmark runs —
-  `IT_NP_CACHE=/mnt/cache_extended/$USER/.cache/huggingface/interpretune/neuronpedia`,
-  `HF_HOME`/`HF_DATASETS_CACHE`/`HF_HUB_CACHE` under `/mnt/cache_extended/$USER/.cache/huggingface`.
+- **Env vars**: put the caches on a large disk for pipeline/benchmark runs: `HF_HOME` (with
+  `HF_DATASETS_CACHE`/`HF_HUB_CACHE` under it) and `IT_NP_CACHE`, which defaults to
+  `$HF_HOME/interpretune/neuronpedia` and needs setting only to place the Neuronpedia cache elsewhere.
 - **Reproducibility policy**: commit all four repos (interpretune, SAEDashboard, SAELens, neuronpedia)
   before regenerating a packaged 3-way benchmark wave; add a benchmark-regeneration note to those commit
   messages; the package manifest records the `SD-*/SL-*/NP-*/IT-*` lineage and refuses dirty trees.
