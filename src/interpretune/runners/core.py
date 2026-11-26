@@ -22,7 +22,7 @@ from interpretune.runners.distributed import (
     resolve_placement,
     step_per_tensor,
 )
-from interpretune.utils import MisconfigurationException, rank_zero_only, rank_zero_warn
+from interpretune.utils import MisconfigurationException, NonFiniteLossError, rank_zero_only, rank_zero_warn
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
@@ -282,6 +282,7 @@ def core_train_loop(
     accumulate_grad_batches: int = 1,
     dist_run: DistributedRun | None = None,
     resume_from: str | Path | Mapping[str, Any] | None = None,
+    allow_nonfinite_loss: bool = False,
     **kwargs,
 ) -> CoreLoopContext:
     """Run the core (framework-free) training loop, with optional interleaved validation.
@@ -320,9 +321,19 @@ def core_train_loop(
             under a data-parallel ``dist_run`` it is the checkpoint's directory, saved and restored through
             ``torch.distributed.checkpoint``. It is loaded once every callback's ``on_train_start`` has run, and
             the loop continues at the epoch after the checkpoint's.
+        allow_nonfinite_loss: Train on past a non-finite training loss instead of stopping at it. By default the
+            loop raises :class:`~interpretune.utils.NonFiniteLossError` at the first NaN or infinite loss, before
+            that batch's ``backward()``, so the weights are those after the last finite step and the module can be
+            saved and inspected. A non-finite loss does not recover on its own: once it reaches the weights every
+            later step stays non-finite, and the run would otherwise end looking like a measurement. Set this only
+            when a step function or callback handles non-finite losses itself.
 
     Returns:
         The loop's final context.
+
+    Raises:
+        NonFiniteLossError: A training step returned a non-finite loss (unless ``allow_nonfinite_loss``). Under a
+            data-parallel ``dist_run`` the rank that sees it raises, and torchrun stops the run's other ranks.
     """
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
     train_dataloader = datamodule.train_dataloader()
@@ -376,6 +387,7 @@ def core_train_loop(
                         loss_scale=1.0 / accumulate_grad_batches,
                         zero_grad=accumulated == 1,
                         step_optimizer=boundary,
+                        check_finite_loss=not allow_nonfinite_loss,
                     )
                 if boundary:
                     accumulated = 0
@@ -735,6 +747,7 @@ def run_step(
     loss_scale: float = 1.0,
     zero_grad: bool = True,
     step_optimizer: bool = True,
+    check_finite_loss: bool = True,
 ):
     """Run one step: move the batch to device, dispatch the step function, optionally optimize.
 
@@ -746,6 +759,11 @@ def run_step(
     behavior: ``zero_grad`` only at a window's first batch, the loss scaled by ``loss_scale`` (the reciprocal of
     the window size) before ``backward()``, and ``optimizer.step()`` only at a window's last batch. The step
     output the hooks and the caller see is the unscaled loss.
+
+    ``check_finite_loss`` refuses a non-finite training loss with
+    :class:`~interpretune.utils.NonFiniteLossError` before the batch-end hook, ``backward()`` and the optimizer
+    step run, so nothing applies its gradients. The check reads the loss's value, which waits for the device to
+    finish the forward pass.
     """
     batch = module.batch_to_device(batch)
     step_func = getattr(module, step_fn)
@@ -776,6 +794,8 @@ def run_step(
     else:
         output = step_func(batch, batch_idx)
     if step_fn == "training_step" and optimizer is not None:
+        if check_finite_loss:
+            _refuse_nonfinite_loss(module, output, batch_idx)
         _call_itmodule_hook(
             module,
             hook_name="on_train_batch_end",
@@ -798,6 +818,20 @@ def run_step(
         return generator()  # Return a generator object
     else:
         return output
+
+
+def _refuse_nonfinite_loss(module: Any, loss: Any, batch_idx: int) -> None:
+    """Raise :class:`~interpretune.utils.NonFiniteLossError` if a training step's loss is NaN or infinite."""
+    if not isinstance(loss, torch.Tensor) or bool(torch.isfinite(loss.detach()).all()):
+        return
+    value = loss.detach().float().flatten()[:4].tolist()
+    shown = value[0] if loss.numel() == 1 else value
+    raise NonFiniteLossError(
+        f"The training loss is non-finite ({shown}) at epoch {getattr(module, 'current_epoch', '?')}, batch"
+        f" {batch_idx}, step {getattr(module, 'global_step', '?')}. Training stopped before this batch's backward(),"
+        " so the weights are those after the last finite step. Set `allow_nonfinite_loss=True` in the runner"
+        " configuration only if the step function or a callback handles non-finite losses itself."
+    )
 
 
 class SessionRunner:

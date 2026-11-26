@@ -109,6 +109,8 @@ FTS_CTX_WARNS = [
     # finetuning-scheduler 2.15 announces that Lightning will move to an extra. It warns once per process, on the first
     # `FinetuningScheduler` construction, so it lands in whichever FTS test runs first.
     "Lightning will become an optional dependency",
+    # likewise once per process, on the first schedule that names an address or a named set
+    "This schedule uses addresses",
 ]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS

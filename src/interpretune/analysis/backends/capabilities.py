@@ -286,7 +286,7 @@ class LatentModelSupport:
 
     ``batched_hooks`` says whether ``fwd_w_hooks_batched`` fuses its hook configs into one execution
     (nnsight's multi-invoke) or loops. It lives here rather than in :class:`Capability` because it
-    is a property of HOW a method in that group runs, not a surface of its own: every latent-models
+    is a property of HOW a method in that group runs, not a surface of its own: every latent models
     backend implements the method, and a sequential loop is a valid implementation.
     """
 

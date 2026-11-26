@@ -251,6 +251,7 @@ def export_book(
     basis: str | None = None,
     unit_sites: Collection[str] = (),
     sidecar_dir: str | Path | None = None,
+    pins: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an intervention payload as a venngram address book carrying it as the treatment ``name``.
 
@@ -265,6 +266,9 @@ def export_book(
             table rather than an operand.
         sidecar_dir: Where to write the sidecar of any operand above venngram's inline limit. The book must then be
             read from this directory.
+        pins: The models the book is pinned to, as its ``requires`` (:func:`~interpretune.tuning.pins.book_pins`), for
+            a payload whose sites are read through latent models. The base model they pin must be ``model_id`` at
+            ``revision``.
 
     Returns:
         The book's document (``yaml.safe_dump`` writes it), parsed by venngram before it is returned.
@@ -290,10 +294,11 @@ def export_book(
     if writer.operands:
         body["operands"] = writer.operand_documents(name, sidecar_dir)
     document = {
-        "schema_version": book_mod.SCHEMA_VERSION,
+        "schema_version": book_mod.PINS_SCHEMA if pins else book_mod.SCHEMA_VERSION,
         "name": name,
         "portability": "checkpoint",
         "applies_to": {"models": [{"id": model_id, "revision": revision}]},
+        **({"requires": dict(pins)} if pins else {}),
         "sets": writer.sets,
         "treatments": {name: body},
     }

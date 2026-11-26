@@ -41,7 +41,7 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import torch
 from torch import nn, Tensor
@@ -49,9 +49,11 @@ from torch import nn, Tensor
 from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder
 
+from interpretune.utils import MisconfigurationException
+
 if TYPE_CHECKING:
     from venngram.errors import Refusal
-    from venngram.resolve import Location
+    from venngram.resolve import Location, StructureProvider
     from venngram.tuning import TunableSupport
 
 #: The attribute each transcoder carries its low-rank corrections under.
@@ -261,6 +263,28 @@ def attribution_frozen(*modules: Any) -> Iterator[list[nn.Parameter]]:
             p.requires_grad_(True)
 
 
+def refuse_split_base(replacement_model: Any, call: str, reason: str) -> None:
+    """Refuse ``call`` on a replacement model whose base model placement 'tp' has split across ranks.
+
+    Attribution and feature interventions read activations only where the split layers hand them on whole. A call that
+    reads inside a split layer, or a split weight, would meet one rank's part of it.
+
+    Raises:
+        MisconfigurationException: Naming the call and the first split weight, when any parameter is split.
+    """
+    from interpretune.tuning.latents import _split
+
+    if not isinstance(replacement_model, nn.Module):  # a wrapper: its torch module, or the HF model it holds
+        replacement_model = getattr(replacement_model, "_module", getattr(replacement_model, "hf_model", None))
+    if not isinstance(replacement_model, nn.Module):
+        return
+    split = next((name for name, param in replacement_model.named_parameters() if _split(param.data)), None)
+    if split is not None:
+        raise MisconfigurationException(
+            f"{call} is not supported on a model placement 'tp' has split across ranks ({split}): {reason}."
+        )
+
+
 @contextmanager
 def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
     """Keep every parameter's identity through circuit-tracer's ``offload='disk'`` (#855).
@@ -284,33 +308,64 @@ def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
         torch.__future__.set_swap_module_params_on_conversion(prior)
 
 
-class _TranscoderStructure:
-    """Places each per-layer transcoder's tensors (its low-rank corrections included) at the layer it replaces the
-    MLP of, so ``role:artifact & layers:-4:`` names the top four layers' transcoders.
+class _CircuitTracerStructure:
+    """Places a circuit-tracer composition's tensors: the transcoders by the layer each replaces the MLP of, and
+    everything else through ``rest``.
 
-    A cross-layer transcoder holds every layer in each of its tensors, so its tensors, like every tensor outside the
-    transcoders, locate at no layer.
+    ``role:artifact & layers:-4:`` names the top four layers' per-layer transcoders (their low-rank corrections
+    included). A cross-layer transcoder holds every layer in each of its tensors, so its tensors locate at no layer.
+
+    Args:
+        transcoders: The transcoders' parameter names, each with its layer (``None`` for a cross-layer transcoder's).
+        depth: How many layers the transcoders cover, or ``None`` for a cross-layer transcoder.
+        rest: The structure of the tensors outside the transcoders: the base model's, under ``tune_base``, and those of
+            the modules attached beside it. ``None`` when the view holds none, and no such tensor locates anywhere.
     """
 
-    vocabulary = False
-
-    def __init__(self, layers: Mapping[str, int], depth: int | None) -> None:
-        self._layers = dict(layers)
+    def __init__(
+        self, transcoders: Mapping[str, int | None], depth: int | None, rest: StructureProvider | None = None
+    ) -> None:
+        self._transcoders = dict(transcoders)
         self._depth = depth
+        self._rest = rest
+        #: Whether components resolve: the base model's do where a component map describes it.
+        self.vocabulary = rest is not None and rest.vocabulary
+        #: Where the base model's component map is mounted under the root, when one describes it.
+        self.mount = getattr(rest, "mount", None)
 
     def locate(self, name: str) -> Location:
         from venngram.resolve import Location
 
-        return Location(layer=self._layers.get(name))
+        if name in self._transcoders:
+            return Location(layer=self._transcoders[name])
+        return Location() if self._rest is None else self._rest.locate(name)
 
     def depth(self, stack: str | None = None) -> int | Refusal:
         from venngram.errors import Refusal
 
+        if self._rest is not None and (stack is not None or self._depth is None):
+            return self._rest.depth(stack)
         if stack is not None:
             return Refusal(f"a circuit-tracer composition's transcoders form only the primary stack, not `{stack}`")
         if self._depth is None:
             return Refusal("a cross-layer transcoder spans every layer in each tensor, so it has no per-layer blocks")
         return self._depth
+
+    def unit_dim(self, name: str, ndim: int) -> int | Refusal:
+        """The dimension of ``name`` along its component's units, from the base model's map, or why it has none."""
+        from venngram.errors import Refusal
+
+        if name in self._transcoders:
+            return Refusal(f"`{name}` belongs to a transcoder, whose tensors no component map describes")
+        unit_dim = getattr(self._rest, "unit_dim", None)
+        if unit_dim is None:
+            return Refusal("no component map describes the base model, so its tensors have no unit axis")
+        return unit_dim(name, ndim)
+
+    def unit_block(self, name: str) -> int | None:
+        """The attention head block size the base model's map records for ``name``, or ``None``."""
+        unit_block = getattr(self._rest, "unit_block", None)
+        return None if unit_block is None or name in self._transcoders else unit_block(name)
 
 
 class CircuitTracerView:
@@ -389,16 +444,45 @@ class CircuitTracerView:
     def _view_names(self) -> set[str]:
         return set(self._names) | set(self._base_names) | set(self._coop_names)
 
-    def structure(self) -> _TranscoderStructure:
-        """Each per-layer transcoder's tensors at the layer whose MLP it replaces, so a ``promote`` source or a phase
-        can name a layer range: ``promote: {"role:artifact & layers:-4:": "latent:transcoder"}`` promotes the top four
-        layers' transcoders. A cross-layer transcoder and the tensors outside the transcoders locate at no layer."""
+    def structure(self) -> _CircuitTracerStructure:
+        """Each per-layer transcoder's tensors at the layer whose MLP it replaces, and every other tensor in the
+        view where the base model's structure places it, so a ``promote`` source or a phase can name a layer range.
+
+        ``promote: {"role:artifact & layers:-4:": "latent:transcoder"}`` promotes the top four layers' transcoders, and
+        ``role:base & layers:-4:`` names the same layers' base-model tensors (under ``tune_base``). The role says which:
+        the two share their layers, and a phase naming ``layers:-4:`` alone names the transcoders too, which are never
+        thawed before their promotion. A cross-layer transcoder's tensors locate at no layer.
+        """
         if isinstance(self.transcoders, CrossLayerTranscoder):
-            return _TranscoderStructure({}, None)
+            return _CircuitTracerStructure(dict.fromkeys(self._names), None, self._rest_structure())
         per_layer = list(self.transcoders.transcoders)  # pyright: ignore[reportArgumentType]
         layer_of = {id(p): i for i, tc in enumerate(per_layer) for p in tc.parameters()}
         layers = {n: layer_of[id(p)] for n, p in self.root.named_parameters() if id(p) in layer_of}
-        return _TranscoderStructure(layers, len(per_layer))
+        return _CircuitTracerStructure(layers, len(per_layer), self._rest_structure())
+
+    def _rest_structure(self) -> StructureProvider | None:
+        """The structure of the view's tensors outside the transcoders, or ``None`` when it holds none (so a view
+        of the transcoders alone reads no component map).
+
+        It is the one the other compositions' views use (:func:`~interpretune.tuning.views.default_view`): the base
+        model's published component map, and the attached modules at their sites. Where no map describes the model, it
+        is the model's block list, named because the transcoders are a block list too.
+        """
+        if not (self._base_names or self._coop_names):
+            return None
+        from venngram.physical import block_lists, PhysicalStructure
+        from venngram.resolve import strip_wrappers
+
+        from interpretune.tuning.views import default_view
+
+        placements = getattr(self.root, "tunable_placements", None)
+        attached = cast("Mapping[str, str]", placements()) if callable(placements) else None
+        structure = default_view(self.root, attached=attached).structure()
+        if structure.vocabulary:
+            return structure
+        names = [strip_wrappers(n) for n in self._names]
+        lists = [path for path, _ in block_lists(self.root) if not any(n.startswith(f"{path}.") for n in names)]
+        return PhysicalStructure(self.root, layers_pattern=lists[0] if len(lists) == 1 else None)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each name in the view maps to itself; a base-model name outside ``tune_base`` is refused, naming why."""

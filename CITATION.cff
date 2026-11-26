@@ -11,7 +11,7 @@ authors:
 url: "https://github.com/interpretune/interpretune"
 license: "Apache-2.0"
 abstract: |
-  Interpretune accelerates collaborative interpretability research and world-model tuning
+  Interpretune accelerates collaborative interpretability research and latent model tuning
   by providing a flexible framework for running, analyzing, and fine-tuning LLM experiments.
   Please cite this project when using it in published work.
 # identifiers:

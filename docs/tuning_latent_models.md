@@ -18,11 +18,11 @@ A *latent model* models a site's activations through latents. Examples:
   - `"replace"`: the output becomes the reconstruction, so the model runs on what the latents capture.
   - `"replace_with_error"`: the straight-through substitution. The output keeps its value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction. It is one of venngram's core ops, defined with the others on [Interpretune Intervention APIs](interpretune_intervention_apis.md).
   - `None`: no op. The latents are captured (`last_latents`) and the output is unchanged, a read rather than an intervention.
-- **`attach_latent_model(root, name, latent, site, frozen=False)`**: registers the latent model as `latent_models.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with forward hooks. `detach_latent_model(root, name)` removes it.
+- **`attach_latent_model(root, name, latent, site, frozen=False, release=None)`**: registers the latent model as `latent_models.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with forward hooks. `detach_latent_model(root, name)` removes it.
 - **Roles:** an attached latent model's tensors take venngram's role `latent:<name>`, so a schedule selects them with `role:latent:<name>`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` latent model is an `artifact`: loaded from its source, never thawed or checkpointed until a schedule promotes it.
 - **Placement:** an attached latent model also takes the layer and component of the module its site rewrites, although it is registered beside the model rather than inside it. An address then selects latent models by depth: `role:latent & layers:12:` thaws the ones spliced at layers 12 and above, and `role:latent & component:mlp` the transcoders that rewrite an MLP. Every interpretune module declares these placements in its cooperative `tunable_placements()`, which its view reads (venngram's `attached`, on every composition but circuit-tracer). A latent model whose site lies outside every module the component map places locates at no layer, with a warning, and so does every latent model of a model no map describes; either is still selected by name and role.
 
-On a circuit-tracer composition another latent model attaches beside the transcoders, at modules of the model circuit-tracer runs, with its role merged into the view's ([Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent-models-beside-the-transcoders)); the transcoders themselves are tuned by promoting them. The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
+On a circuit-tracer composition another latent model attaches beside the transcoders, at modules of the model circuit-tracer runs, with its role merged into the view's ([Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent models-beside-the-transcoders)); the transcoders themselves are tuned by promoting them. The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
 
 ## Attaching them
 
@@ -70,3 +70,26 @@ Splice a latent model the run will tune with `op="replace"`, so the model runs o
 `layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them.
 
 sae_lens's own splice (`add_saes_on_init`) keeps registering its SAEs as `attached_saes` with the `latent:sae` role, as [sae_lens](tuning_sae_lens.md) describes. The seam here is for backends without a native splice, and for latent models other than SAEs.
+
+## Pinning a book to the models it was written against
+
+An address book that names latent models (`module:latent_models.sae`, `role: latent:sae`, `features: sae`) selects the same tensors wherever it loads, but it means the same thing only on the base model and the dictionaries it was written against. A pinned book records them in its `requires` (venngram's book schema 8), and is refused on any others, naming each entry that differs.
+
+```python
+from interpretune.tuning.latents import LatentSite, attach_latent_model
+from interpretune.tuning.pins import check_book_pins, pinned_book
+
+attach_latent_model(
+    module, "sae", sae, LatentSite("point:hook_resid_post & layers:12"),
+    release={"sae_lens": "gemma-scope-2b-pt-res", "id": "layer_12/width_16k/average_l0_82"},
+)
+document = pinned_book(document, module)  # the book, with `requires.base_model` and `requires.latent_models`
+check_book_pins(book, module)             # venngram.PinMismatchError when a loaded model differs
+```
+
+- **The base model** is its id and the commit it was loaded from. A model built from a configuration or loaded from a local path has no commit, so a book cannot be pinned to it.
+- **Each latent model** is the `release` it was attached with. A module also reports its spliced SAE Lens SAEs (by their `attached_saes` key, from their configured release and id) and circuit-tracer's transcoders (as `transcoder`, where `transcoder_set` states a revision: `<repository>@<revision>`). `releases=` gives the release of one the module does not hold, such as a catalog's. A latent model with no stated release cannot be pinned and never satisfies a pin.
+- **Frames:** with `catalog=`, the version of each frame the catalog declares is pinned with its latent model.
+- **`latent_models=`** lists the latent models the book names. The default is every one loaded.
+
+`book_sets(book, module)`, a configured intervention's `book`, and `load_recipe(book, module=module)` check a pinned book when they read it, and refuse one when there is no module to check it against. `export_book(..., pins=book_pins(module))` writes the pins into an exported book. A schedule's `addresses` are read by finetuning-scheduler, which asks the module's view to check each pinned book (imports included) when the schedule compiles, under both interfaces: a book whose pins differ from what the module has loaded is refused with every entry that differs. Every view interpretune attaches checks them. A view passed to `TuningScheduler` directly checks them only if it defines `check_book(book)`; `interpretune.tuning.views.check_books_of(view, module)` gives it one.

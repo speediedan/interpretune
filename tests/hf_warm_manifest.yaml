@@ -16,7 +16,7 @@
 # exists to exercise? A resolution test that discovers a repository's real layout and a pinned-pull test
 # that verifies a fetch both fail that question, and warming either would leave a green test that checks
 # nothing. A tokenizer that a session fixture happens to load passes it easily.
-cache_version: 1
+cache_version: 2
 models:
   # Both spellings are used in the tree and cache under separate directories, so both are warmed.
   - repo_id: gpt2
@@ -54,6 +54,11 @@ models:
     allow_patterns: ["tokenizer*", "special_tokens_map.json", "added_tokens.json", "config.json", "chat_template*"]
   - repo_id: meta-llama/Llama-3.2-3B-Instruct
     allow_patterns: ["tokenizer*", "special_tokens_map.json", "added_tokens.json", "config.json", "chat_template*"]
+  # The oracle lens component's CPU tests (#1202): the tokenizer its injection marker is found on, and the config a
+  # tiny random model of the same architecture is built from. No weights. Pinned to the base the lens was trained on.
+  - repo_id: Qwen/Qwen3.6-27B
+    allow_patterns: ["tokenizer*", "vocab.json", "merges.txt", "config.json", "chat_template*"]
+    revision: 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
 datasets:
   - path: aps/super_glue
     config_name: rte
@@ -64,7 +69,7 @@ components:
   # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
-    revision: b1a920fc1400837a62bc7a2b155e39e5da206b86
+    revision: 4e58126454837a6572b13c9d53c1af15e0605478
   # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
   # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
   - repo_id: speediedan/prompt-configs

@@ -800,9 +800,10 @@ class CircuitTracerAnalysisBackend:
         """
         from circuit_tracer.attribution.head_loadings import head_loadings
 
-        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen, refuse_split_base
 
         model = module.replacement_model
+        refuse_split_base(model, "A head loading report", "it reads each head inside a split attention layer")
         report_layers = range(model.cfg.n_layers) if layers is None else [int(layer) for layer in layers]
         parts = []
         with attribution_frozen(model, module):
@@ -849,9 +850,10 @@ class CircuitTracerAnalysisBackend:
         """
         from circuit_tracer.attribution.head_conductance import head_conductance
 
-        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen, refuse_split_base
 
         model = module.replacement_model
+        refuse_split_base(model, "A head conductance report", "it recomposes heads inside split attention layers")
         # A backend with permanent replacement hooks supplies a context that suspends them. Trace-scoped hooks
         # are already inactive outside their trace, so the underlying causal LM needs no suspension there.
         real_model = getattr(model, "real_model", None)

@@ -29,7 +29,8 @@ rewrites that module's input or its output:
   its capture and intervention paths accept, and the seam rewrites the hook point's output;
 - on a core/HF or nnsight composition the point resolves through the architecture's component map
   (:class:`~interpretune.analysis.backends.hook_mapping.HookNameResolver`) to an HF module and the side of it that
-  holds the activation, under the HF model's path in the interpretune module.
+  holds the activation, under the HF model's path in the interpretune module. When PEFT wraps that model, the path is
+  the wrapped model's (``model.base_model.model``), where the tunable view mounts its component map.
 
 A point a composition cannot place is refused, naming the point and the composition; it is never mapped onto a nearby
 module. An address may reference a named set of an address book (``@steer_site``), so a shared book drives
@@ -43,7 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from torch import nn
 
@@ -71,35 +72,76 @@ def is_site_address(site: str) -> bool:
     return ":" in site or site.startswith("@")
 
 
-def book_sets(book: Any) -> dict[str, Any]:
+def book_sets(book: Any, root: nn.Module | None = None, *, catalog: Any = None) -> dict[str, Any]:
     """The named sets of an address book, for ``@<set>`` references in a site address.
 
     Args:
         book: A venngram ``AddressBook``, a book document (a mapping), a local path to one, or a venngram store
             reference to a published one.
+        root: The module the sets will be resolved on. Required for a book that pins the models it was written
+            against, which is checked against this module's
+            (:func:`~interpretune.tuning.pins.check_book_pins`).
+        catalog: The ``LatentCatalog`` whose frame versions a pinned book's are checked against.
 
     Returns:
         The book's sets by name (``AddressBook.sets()``).
+
+    Raises:
+        ValueError: ``book`` is a reference to another document, or it pins its models and no ``root`` was given.
+        PinMismatchError: ``root``'s models are not the ones the book pins.
     """
+    from interpretune.tuning.pins import check_book_pins
+
+    loaded = _load_book(book)
+    check_book_pins(loaded, root, catalog=catalog)
+    return loaded.sets()
+
+
+def _load_book(book: Any) -> Any:
     from pathlib import Path
 
     from venngram.book import AddressBook
     from venngram.store import is_reference, load
 
     if isinstance(book, AddressBook):
-        return book.sets()
+        return book
     if isinstance(book, Mapping):
-        return AddressBook.from_mapping(book).sets()
+        return AddressBook.from_mapping(book)
     if isinstance(book, str) and is_reference(book):
         loaded = load(book)
         if not isinstance(loaded, AddressBook):
             raise ValueError(f"{book!r} is a {type(loaded).__name__}, not an address book")
-        return loaded.sets()
-    return AddressBook.from_file(Path(book)).sets()
+        return loaded
+    return AddressBook.from_file(Path(book))
 
 
 def _path_of(root: nn.Module, target: Any) -> str | None:
     return next((n for n, m in root.named_modules() if m is target), None)
+
+
+def registered_path(root: nn.Module, path: str) -> str:
+    """``path`` as the name ``root`` holds its module under, for a path that reaches the module through a wrapper's
+    attribute forwarding: a ``PeftModel`` answers ``model.transformer.h.1`` for the block registered as
+    ``model.base_model.model.transformer.h.1``. A tunable view places modules by the registered name.
+
+    Raises:
+        AttributeError: ``path`` reaches no module under ``root``.
+    """
+    module = root
+    for atom in path.split(".") if path else ():
+        child = module._modules.get(atom)
+        if child is None:
+            return _path_of(root, root.get_submodule(path)) or path
+        module = child
+    return path
+
+
+def peft_base_model(model: Any) -> nn.Module | None:
+    """The model a PEFT wrapper carries, or ``None`` when ``model`` is not a PEFT model."""
+    get_base_model = getattr(model, "get_base_model", None)
+    if not callable(get_base_model) or type(model).__module__.split(".")[0] != "peft":
+        return None
+    return cast(nn.Module, get_base_model())
 
 
 def _tl_model(root: nn.Module) -> Any | None:
@@ -108,10 +150,13 @@ def _tl_model(root: nn.Module) -> Any | None:
 
 
 def _hf_model(root: nn.Module) -> tuple[str, nn.Module] | None:
-    """The HF model under ``root`` and its path: ``hf_model`` on an nnsight composition, else ``model``."""
+    """The HF model under ``root`` and its path: ``hf_model`` on an nnsight composition, else ``model``, or the
+    model PEFT wraps there."""
     for attr in ("hf_model", "model"):
         model = getattr(root, attr, None)
         if isinstance(model, nn.Module) and getattr(getattr(model, "config", None), "model_type", None) is not None:
+            if (base := peft_base_model(model)) is not None and (path := _path_of(root, base)) is not None:
+                return path, base
             return attr, model
     return None
 

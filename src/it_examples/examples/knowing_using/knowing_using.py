@@ -305,8 +305,7 @@ class KUGDataModule(ITDataModule):
                 "validation": datasets.Dataset.from_list(evaluation, features=_EVAL_FEATURES),
             }
         )
-        assert cfg.dataset_path is not None
-        dataset.save_to_disk(Path(cfg.dataset_path))
+        self.save_prepared_dataset(dataset)
 
     def _pad_id(self) -> int:
         pad_id = self.tokenizer.pad_token_id

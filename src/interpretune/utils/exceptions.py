@@ -18,6 +18,10 @@ class MisconfigurationException(Exception):
     """Exception used to inform users of misuse with interpretune."""
 
 
+class NonFiniteLossError(RuntimeError):
+    """A training step returned a non-finite loss, so the core loop stopped before applying its gradients."""
+
+
 def handle_exception_with_debug_dump(
     e: Exception,
     context_data: dict[str, Any] | Sequence[Any],

@@ -1,3 +1,4 @@
+import re
 from typing import List, Literal
 from copy import deepcopy
 from functools import reduce, partial
@@ -10,6 +11,7 @@ from transformer_lens.utilities.devices import get_device as tl_get_device
 from sae_lens.saes.sae import SAE, SAEMetadata
 from sae_lens.saes.transcoder import Transcoder, TranscoderConfig
 
+from interpretune.tuning.pins import book_pins
 from interpretune.utils import MisconfigurationException
 from interpretune.session import ITSession
 from interpretune.config import (
@@ -310,6 +312,16 @@ class TestClassSAELens:
         assert test_mod.attached_saes[key] is handle, "the registered SAE must be the spliced one, not a copy"
         assert f"attached_saes.{key}.W_enc" in test_mod.state_dict()
         assert test_mod.attached_sae_parameter(f"{hook_name}.W_enc") is handle.W_enc
+        releases = {
+            test_mod.attached_sae_key(cfg.sae_id): {"sae_lens": cfg.release, "id": cfg.sae_id}
+            for cfg in test_mod.it_cfg.sae_cfgs
+            if isinstance(cfg, SAELensFromPretrainedConfig)
+        }
+        assert test_mod.latent_model_releases() == (releases or {key: {}})  # a custom SAE states no source
+        if releases:  # a book written against this composition can pin its model and its SAEs (#875)
+            pins = book_pins(test_mod)
+            assert pins["latent_models"] == {name: {"release": release} for name, release in releases.items()}
+            assert pins["base_model"]["id"] == "gpt2" and re.fullmatch("[0-9a-f]{40}", pins["base_model"]["revision"])
         with pytest.raises(AttributeError):
             test_mod.attached_sae_parameter(f"{hook_name}.not_a_parameter")
         # One optimizer step over `optimizer_parameters` moves the spliced SAE.
@@ -904,7 +916,7 @@ class TestBridgeTranscoderSupport:
 
 
 class TestLatentModelHandleLifecycle:
-    """Latent-model handle lifecycle across backend splice paths.
+    """Latent model handle lifecycle across backend splice paths.
 
     Contract validated for every model backend: after any ``fwd_w_cache_and_latent_models``
     call, (a) the model produces baseline (unspliced) outputs again — no residual splice

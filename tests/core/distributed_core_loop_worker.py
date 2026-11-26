@@ -15,7 +15,7 @@ to the output of the block at that path (``tuning.interventions``), so its opera
 With ``--addressed``, the test model has a venngram component map, a latent model is spliced over the first block's
 feed-forward, and a three-phase schedule written only in venngram addresses tunes the last block's MLP by layer and
 component, then the latent model by role, then the first block's attention. ``--addressed promote`` attaches the latent
-model frozen (its tensors are ``artifact``) and promotes it in the second phase, which a sharded model refuses.
+model frozen (its tensors are ``artifact``) and promotes it in the second phase.
 ``--device-type cuda`` places each rank (and the reference) on its own GPU.
 ``--memprof-fsdp`` profiles every training iteration with the memory profiler's ``FSDP2MemTracker``.
 
@@ -145,12 +145,31 @@ class SaveCheckpoint:
             ctx.save_checkpoint(self.checkpoint_dir)
 
 
+def unit_settings(module: torch.nn.Module) -> dict[str, dict[str, str | bool]]:
+    """Each FSDP2 unit's mixed precision policy and whether composable activation checkpointing was applied to it,
+    read from the sharded module (torch exposes neither publicly)."""
+    from torch.distributed._composable.contract import _get_registry
+    from torch.distributed.fsdp import FSDPModule
+
+    settings = {}
+    for name, unit in module.named_modules():
+        if isinstance(unit, FSDPModule):
+            policy = unit._get_fsdp_state()._fsdp_param_group.fsdp_params[0].mp_policy
+            settings[name] = {
+                "param_dtype": str(policy.param_dtype),
+                "reduce_dtype": str(policy.reduce_dtype),
+                "act_ckpt": "checkpoint" in (_get_registry(unit) or {}),
+            }
+    return settings
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--placement", required=True)
     parser.add_argument("--world-size", type=int, default=2, help="the ranks the reference's global batch stands for")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--fsdp-plan", type=json.loads, default=None, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--fsdp-default-kwargs", type=json.loads, default=None, help="every unit's kwargs, as JSON")
     parser.add_argument("--tp-plan", type=json.loads, default=None, help="the tensor-parallel plan, as JSON")
     parser.add_argument("--phased", action="store_true", help="tune in two phases with FTSCoreCallback")
     parser.add_argument("--max-epochs", type=int, default=None, help="override the run's epoch count")
@@ -273,6 +292,7 @@ def main() -> None:
         callbacks=callbacks,
         placement=args.placement,
         fsdp_plan=args.fsdp_plan,
+        fsdp_default_kwargs=args.fsdp_default_kwargs,
         tp_plan=args.tp_plan,
         resume_from=args.resume_from,
     )
@@ -291,6 +311,7 @@ def main() -> None:
     latent_init = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()} if latent else None
     param_types = sorted({type(p).__name__ for p in module.parameters()})
     fsdp_units = [name for name, sub in module.named_modules() if isinstance(sub, FSDPModule)]
+    unit_policies = unit_settings(module) if args.fsdp_default_kwargs else {}
     probe_init = full_probe_params(module) if args.addressed else None
     split_params = sorted(n for n, p in module.named_parameters() if type(p).__name__ == "DTensor")
     if fts is not None and not args.addressed:
@@ -304,22 +325,14 @@ def main() -> None:
             0: {"params": first, "max_transition_epoch": 1},
             1: {"params": [n for n in trainable if n not in first]},
         }
-    if args.addressed == "promote" and args.placement != "single":
-        from finetuning_scheduler.core.exceptions import FTSConfigurationError
-
-        try:
-            runner.train()
-        except FTSConfigurationError as err:
-            out_path.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
-            return
-    else:
-        runner.train()
+    runner.train()
     record = {
         "losses": recorder.losses,
         "epoch_metrics": recorder.epoch_metrics,
         "devices": list(runner.dist_run.devices) if runner.dist_run else [],
         "param_types": param_types,
         "fsdp_units": fsdp_units,
+        "unit_settings": unit_policies,
         "split_params": split_params if args.placement == "tp" else [],
     }
     if args.device_type == "cuda":

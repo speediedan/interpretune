@@ -86,7 +86,7 @@ model_ablation:
         - {binds: latent_feature}
 
 latent_correct_acts:
-  description: Compute correct activations from the latent-model activation cache
+  description: Compute correct activations from the latent model activation cache
   implementation: interpretune.analysis.ops.bundled.sae.sae_ops.latent_correct_acts_impl
   required_ops: [get_alive_latents]
   aliases: []

@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, runtime_che
 import torch
 from torch import nn
 
-from interpretune.tuning.sites import is_site_address, resolve_site
+from interpretune.tuning.sites import is_site_address, registered_path, resolve_site
 
 if TYPE_CHECKING:
     from torch.distributed.tensor import DTensor
@@ -71,6 +71,8 @@ _HOOKS_ATTR = "_latent_model_hooks"
 _SITES_ATTR = "_latent_model_sites"
 # each attached latent model's resolved write module, by name: where its view places it (`latent_model_placements`)
 _PLACED_ATTR = "_latent_model_placed"
+# what each attached latent model was loaded from, by name, where it was stated (`latent_model_releases`)
+_RELEASES_ATTR = "_latent_model_releases"
 
 
 @runtime_checkable
@@ -210,7 +212,9 @@ def _resolved(
     if is_site_address(site.write_path):
         resolved = resolve_site(root, site.write_path, sets)
         write, write_io = resolved.path, resolved.io
-    return replace(site, read=read, write=write, read_from=read_from), write_io
+    if write is not None:
+        write = registered_path(root, write)
+    return replace(site, read=registered_path(root, read), write=write, read_from=read_from), write_io
 
 
 def _latent_models(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:
@@ -258,6 +262,7 @@ def attach_latent_model(
     *,
     frozen: bool = False,
     sets: Mapping[str, Any] | None = None,
+    release: Mapping[str, str] | None = None,
 ) -> nn.Module:
     """Register ``latent`` on ``root`` as ``latent_models.<name>`` and splice it in at ``site``.
 
@@ -275,6 +280,9 @@ def attach_latent_model(
             published or saved source, which is reloaded from it rather than checkpointed.
         sets: An address book's named sets (:func:`~interpretune.tuning.sites.book_sets`), when a site address
             references one (``@transcoder_in``).
+        release: What ``latent`` was loaded from, as an address book pins it: ``{"sae_lens": <release>, "id": <id>}``,
+            or ``{"hub": <repository>, "revision": <revision>}``. A book pinning its latent models is checked against
+            it (:mod:`interpretune.tuning.pins`).
 
     Returns:
         ``latent``.
@@ -309,6 +317,7 @@ def attach_latent_model(
     sites: dict[str, tuple[LatentSite, bool]] = root.__dict__.setdefault(_SITES_ATTR, {})
     hooks[name], sites[name] = handles, (site, frozen)
     root.__dict__.setdefault(_PLACED_ATTR, {})[name] = resolved.write_path
+    root.__dict__.setdefault(_RELEASES_ATTR, {})[name] = dict(release or {})
     return latent
 
 
@@ -328,6 +337,7 @@ def detach_latent_model(root: nn.Module, name: str) -> nn.Module:
         handle.remove()
     root.__dict__.get(_SITES_ATTR, {}).pop(name, None)
     root.__dict__.get(_PLACED_ATTR, {}).pop(name, None)
+    root.__dict__.get(_RELEASES_ATTR, {}).pop(name, None)
     latent = held[name]
     del held[name]
     return latent
@@ -336,6 +346,12 @@ def detach_latent_model(root: nn.Module, name: str) -> nn.Module:
 def latent_model_sites(root: nn.Module) -> Mapping[str, LatentSite]:
     """The site of each latent model attached to ``root``, by name."""
     return {name: site for name, (site, _) in root.__dict__.get(_SITES_ATTR, {}).items()}
+
+
+def latent_model_releases(root: nn.Module) -> dict[str, dict[str, str]]:
+    """What each latent model attached to ``root`` was loaded from, by name: the ``release`` it was attached with,
+    empty for one attached with none."""
+    return {name: dict(release) for name, release in root.__dict__.get(_RELEASES_ATTR, {}).items()}
 
 
 def latent_model_placements(root: nn.Module) -> dict[str, str]:

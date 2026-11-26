@@ -1,5 +1,6 @@
 """The core training loop's lr scheduler stepping, step budget, per-epoch metrics, callbacks, validation with
-gradients and checkpoint state (#761), and its precision and gradient accumulation (#836)."""
+gradients and checkpoint state (#761), its precision and gradient accumulation (#836), and how it stops at a NaN or
+infinite training loss."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from interpretune.runners.core import (
     load_checkpoint_state,
     step_lr_schedulers,
 )
-from interpretune.utils import MisconfigurationException
+from interpretune.utils import MisconfigurationException, NonFiniteLossError
 
 
 class TinyModule(nn.Module):
@@ -509,3 +510,67 @@ def test_session_runner_cfg_fields_reach_the_loop():
     ctx = core_train_loop(**cfg.__dict__)
     assert ctx.optimizer_step == 1 and recorder.events[0] == ("train_start",)
     assert set(module.val_grad_modes) == {(True, False)}
+
+
+class NonFiniteAt(TinyModule):
+    """A ``TinyModule`` whose training loss is ``value`` at the given batch indices (each epoch)."""
+
+    def __init__(self, at: tuple[int, ...], value: float = float("nan"), **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.at, self.value = at, value
+        self.batch_end_calls: list[int] = []
+        self.on_train_batch_end = lambda outputs, batch, batch_idx: self.batch_end_calls.append(batch_idx)
+
+    def training_step(self, batch, batch_idx):
+        loss = super().training_step(batch, batch_idx)
+        return loss * self.value if batch_idx in self.at else loss
+
+
+def _weights(module) -> list[torch.Tensor]:
+    return [p.detach().clone() for p in module.model.parameters()]
+
+
+class TestNonFiniteLoss:
+    """A non-finite training loss stops the loop before its gradients are applied, unless the run opts out."""
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+    def test_stops_at_the_first_non_finite_batch_with_the_last_finite_weights(self, value):
+        reference = TinyModule()  # same seed, trained on the two finite batches only
+        _train(reference, dm={"n_train": 2})
+        module = NonFiniteAt(at=(2,), value=value)
+        with pytest.raises(NonFiniteLossError, match=r"non-finite \((nan|inf|-inf)\) at epoch 0, batch 2, step 2"):
+            _train(module, dm={"n_train": 5})
+        assert len(module.weight_at_batch) == 3  # batches 0, 1 and the non-finite 2; nothing after it
+        assert module.batch_end_calls == [0, 1]  # the batch-end hook never sees the refused loss
+        for got, want in zip(_weights(module), _weights(reference)):
+            assert torch.equal(got, want)
+        assert all(torch.isfinite(p).all() for p in module.model.parameters())
+
+    def test_stops_mid_accumulation_window_without_stepping_its_partial_gradients(self):
+        reference = TinyModule()
+        _train(reference, dm={"n_train": 2}, accumulate_grad_batches=2)  # one optimizer step over batches 0 and 1
+        module = NonFiniteAt(at=(3,))
+        with pytest.raises(NonFiniteLossError, match="batch 3"):
+            _train(module, dm={"n_train": 6}, accumulate_grad_batches=2)
+        for got, want in zip(_weights(module), _weights(reference)):
+            assert torch.equal(got, want)
+
+    def test_allow_nonfinite_loss_trains_on(self):
+        module = NonFiniteAt(at=(1,))
+        ctx = _train(module, dm={"n_train": 3}, allow_nonfinite_loss=True)
+        assert ctx.optimizer_step == 3 and module.batch_end_calls == [0, 1, 2]
+        assert not all(torch.isfinite(p).all() for p in module.model.parameters())  # the opt-out is real
+
+    def test_runner_cfg_opt_out_reaches_the_loop(self):
+        cfg = SessionRunnerCfg(module=NonFiniteAt(at=(0,)), datamodule=_datamodule(), max_epochs=1)
+        assert cfg.allow_nonfinite_loss is False
+        with pytest.raises(NonFiniteLossError):
+            core_train_loop(**cfg.__dict__)
+        module = NonFiniteAt(at=(0,))
+        cfg = SessionRunnerCfg(module=module, datamodule=_datamodule(), max_epochs=1, allow_nonfinite_loss=True)
+        assert core_train_loop(**cfg.__dict__).optimizer_step == 2
+
+    def test_validation_loss_is_not_checked(self):
+        module = TinyModule()
+        module.validation_step = lambda batch, batch_idx: torch.tensor(float("nan"))
+        assert _train(module).optimizer_step == 2

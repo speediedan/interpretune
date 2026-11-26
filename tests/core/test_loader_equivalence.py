@@ -31,6 +31,20 @@ def _baseline_for(config_path):
     return BASELINE_SPECS[fixture_key(config_path)]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _knowing_using_published():
+    """Publish the in-tree ``knowing_using`` component locally, so its configurations' entrypoint classes resolve.
+
+    The ``kug_lrsd`` configurations name their classes by the entrypoint stem, which only a cached component declaring
+    it resolves. The component is in-tree rather than pinned on the Hub, so the warm step does not fetch it, and this
+    module must not rely on another test module having published it first.
+    """
+    from interpretune.hub.components import local_publish
+
+    kug_dir = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "knowing_using"
+    local_publish(kug_dir, "speediedan/knowing-using", entrypoint_src=kug_dir / "knowing_using.py")
+
+
 def test_all_cli_experiment_configs_discovered():
     """The harness must cover the full experiment-config surface; a moved/removed config shrinks it loudly."""
     assert len(CONFIGS) == 15, sorted(str(c) for c in CONFIGS)
@@ -46,7 +60,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 24, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 25, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -220,6 +234,12 @@ def test_materialized_defaults_present_and_declarative():
             # the fine-tuning variants set their own: no lr scheduler, so a phase's learning rate is what it declares
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
+            continue
+        if key.startswith("rte_latent."):
+            # the latent tuning recipe: no lr scheduler, and tokenized in chunks of one batch so that unshuffled batches
+            # are padded to their own longest prompt
+            assert not loaded.module_cfg.lr_scheduler_init, key
+            assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True, "batch_size": 2}, key
             continue
         if key.startswith("kug_lrsd."):
             # the paper's recipe: a constant learning rate, and a datamodule that tokenizes without a dataset map

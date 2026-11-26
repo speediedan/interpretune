@@ -88,7 +88,7 @@ TransformerBridge ↔ NNsight ↔ interp-engine is the backend parity contract.
 - differences come primarily from hook and tracing mechanisms rather than model semantics
 - tight tolerances are appropriate here
 
-This is the parity signal that protects the generalized latent-model analysis ops.
+This is the parity signal that protects the generalized latent model analysis ops.
 
 **Why a third member is worth more than more coverage.** A *pair* that agrees cannot distinguish "both correct" from "both wrong in the same way" — the two implementations share the HF forward, so a shared misreading of it is invisible to the comparison. A third independent implementation over that same forward converts agreement into **convergence**: three agreeing is evidence about the forward; two agreeing is evidence about the two. Adding members strengthens the *existing* contract rather than running a parallel one beside it.
 

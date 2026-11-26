@@ -24,7 +24,7 @@ SEED_REPO = "speediedan/rte"
 #: The republished self-contained revision (single-segment class paths): refs/main roulette across
 #: cached revisions resolves whatever revision was written last, so every seed resolution below pins
 #: this explicitly rather than inheriting whatever the cache holds.
-SEED_REVISION = "b1a920fc1400837a62bc7a2b155e39e5da206b86"
+SEED_REVISION = "4e58126454837a6572b13c9d53c1af15e0605478"
 SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",
@@ -286,12 +286,12 @@ class ConformanceInputs:
         dm_cfg.model_name_or_path = self.model_id
         dm_cfg.os_env_model_auth_key = None
         dm_cfg.tokenizer_kwargs = {
-            "model_input_names": ["input", "attention_mask"],
+            "model_input_names": ["input_ids", "attention_mask"],
             "padding_side": "left",
             "add_bos_token": True,
         }
         dm_cfg.tokenizer_id_overrides = {"pad_token_id": 50256}
-        dm_cfg.signature_columns = ["input", "attention_mask", "labels"]
+        dm_cfg.signature_columns = ["input_ids", "attention_mask", "labels"]
         dm_cfg.enable_datasets_cache = True
         dm_cfg.prepare_data_map_cfg = {"batched": True}
         # THROUGH THE CONSTRUCTOR, not set afterwards. Auto-composition runs in `__new__`, so a setting

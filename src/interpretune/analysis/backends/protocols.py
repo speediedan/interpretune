@@ -396,9 +396,9 @@ class ModelBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsLatentModels(Protocol):
-    """Methods gated by ``Capability.LATENT_MODELS``: execution with latent-model handles attached.
+    """Methods gated by ``Capability.LATENT_MODELS``: execution with latent model handles attached.
 
-    ``fwd_w_hooks_batched`` is part of this group: every latent-models backend implements it, and a
+    ``fwd_w_hooks_batched`` is part of this group: every latent models backend implements it, and a
     sequential loop is a valid implementation. Whether the backend FUSES the configs into one execution
     is a property of how the method runs, not of whether it exists, so it is declared on
     :attr:`latent_model_support` rather than as a capability. TL is the live example: it implements the

@@ -903,6 +903,9 @@ def render_summary_markdown(
     for path_key in PATH_KEYS:
         if path_key in lineages:
             lines.append(f"| {PATH_DISPLAY[path_key]} | `{lineages[path_key]}` | {dirty} |")
+    failed_legs = manifest.get("failed_legs")
+    if failed_legs:
+        lines += ["", f"**Incomplete: these legs failed and are absent below: {', '.join(failed_legs)}.**"]
     invocation = manifest.get("invocation")
     if invocation:
         sweep = manifest.get("monology_sweep")

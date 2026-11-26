@@ -1,4 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard, TYPE_CHECKING, cast
 from types import MappingProxyType
@@ -331,7 +332,7 @@ def schema_to_features(
 
         dtype = validate_declared_dtype(col_name, col_cfg.array_dtype or col_cfg.datasets_dtype)
 
-        # Handle per-latent-model hook fields first
+        # Handle per latent model hook fields first
         if col_cfg.per_latent_model_hook:
             # Check if names_filter is available
             if not _check_names_filter_available(module, col_name, col_cfg):
@@ -471,6 +472,27 @@ def analysis_store_from_batches(
     return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
 
 
+class _StreamCursor:
+    """A stream read forwards: the last position read and its row, undecoded, so each read decodes its own value."""
+
+    def __init__(self, stream: IterableDataset, rows: Iterator[Any]) -> None:
+        self.stream = stream
+        self.position = -1
+        self._rows = rows
+        self._row: Any = None
+
+    def read(self, position: int) -> Any:
+        if position < 0:
+            raise IndexError(f"a streamed store has no row {position}: a stream is read forwards from its first row")
+        while self.position < position:
+            try:
+                self._row = next(self._rows)
+            except StopIteration:
+                raise IndexError(f"a streamed store of {self.position + 1} rows has no row {position}") from None
+            self.position += 1
+        return self._row
+
+
 class AnalysisStore:
     """A schema-described dataset of analysis artifacts -- the framework's sharing abstraction.
 
@@ -522,6 +544,9 @@ class AnalysisStore:
         self._protocol_cls = protocol_cls
         self.stream = None
         self.dataset = None
+        # `batch_value`'s per-column readers, rebuilt when the rows they read are replaced
+        self._column_views: dict[str, tuple[Dataset, str, Dataset]] = {}
+        self._stream_cursors: dict[str, _StreamCursor] = {}
         # What produced this store's columns, stamped at WRITE time by `AnalysisCfg.apply`. Empty when there
         # is nothing to record (a store loaded from disk, or assembled outside the op path) -- deliberately
         # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted.
@@ -759,6 +784,45 @@ class AnalysisStore:
         assert self.dataset is not None, "Dataset should be loaded before accessing columns"
         return self.dataset[key]
 
+    def batch_value(self, column: str, batch_idx: int) -> Any:
+        """One row's value of one column, decoding nothing else of the store.
+
+        A row lookup on the dataset decodes every column of the row, and a column lookup every row. An op reads a few
+        fields of its batch's row, several times each, so it reads them here. The value is the decoded row's, as row
+        access gives it; the presentation of whole columns (``stack_batches``, one-dimensional tensors split into
+        scalars) does not apply to it.
+
+        A streamed store keeps its place in the stream and the last value read, per column, so batches read in order
+        cost one pass over the column. Reading an earlier batch starts the pass again.
+
+        Returns:
+            The value, or ``None`` when the store does not hold the column or the row holds no value.
+
+        Raises:
+            IndexError: If the store has no such row.
+        """
+        if self.stream is not None:
+            if column not in (self.stream.column_names or []):
+                return None
+            cursor = self._stream_cursors.get(column)
+            if cursor is None or cursor.stream is not self.stream or batch_idx < cursor.position:
+                cursor = _StreamCursor(self.stream, iter(self.stream.select_columns([column])))
+                self._stream_cursors[column] = cursor
+            return self._stream_formatter.format_row(cursor.read(batch_idx))[column]
+        if self.dataset is None or column not in self.dataset.column_names:
+            return None
+        # `set_format` edits a Dataset in place, so its fingerprint is compared as well as its identity
+        source, fingerprint, view = self._column_views.get(column, (None, None, None))
+        if view is None or source is not self.dataset or fingerprint != self.dataset._fingerprint:
+            view = self.dataset.select_columns([column])
+            self._column_views[column] = (self.dataset, self.dataset._fingerprint, view)
+        return view[batch_idx][column]
+
+    def __getstate__(self) -> dict[str, Any]:
+        """The store without ``batch_value``'s readers: an open stream cannot be copied or pickled, and neither
+        belongs in a fingerprint of the store."""
+        return {**self.__dict__, "_column_views": {}, "_stream_cursors": {}}
+
     def select_columns(self, column_names: list[str]) -> "AnalysisStore":
         """Select a subset of columns.
 
@@ -867,7 +931,7 @@ class AnalysisStore:
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
-        """Transform batch-oriented field values into per-latent-model lists of batch values.
+        """Transform batch-oriented field values into per latent model lists of batch values.
 
         Args:
             field_name: Name of the field to process (e.g. 'correct_activations', 'preds')
@@ -1049,7 +1113,7 @@ class AnalysisStore:
         cls = self.__class__
         result = cls.__new__(cls)
         memo[id(self)] = result
-        for k, v in self.__dict__.items():
+        for k, v in self.__getstate__().items():
             try:
                 if k == "op_output_dataset_path" and v:
                     # Append _<objectid> to the path string
@@ -1088,7 +1152,7 @@ def default_sae_hook_match_fn(
 
 @dataclass
 class LatentAnalysisTargets:
-    """Encapsulation of latent model FQNs and specific hooks involved in a latent-model-mediated analysis, along
+    """Encapsulation of latent model FQNs and specific hooks involved in a latent model-mediated analysis, along
     with helper functions for explicit or pattern based matching by name and/or layer."""
 
     latent_model_fqns: Sequence[LatentModelFqn] = field(default_factory=tuple)
@@ -1103,7 +1167,7 @@ class LatentAnalysisTargets:
         self.validate_latent_model_fqns()
 
     def validate_latent_model_fqns(self):
-        """Validate declared latent-model FQNs, or derive them from target SAE ids / layers.
+        """Validate declared latent model FQNs, or derive them from target SAE ids / layers.
 
         Called from ``__post_init__``, so a configuration is either coherent by the time it is
         constructed or fails there rather than at first use.

@@ -1,4 +1,4 @@
-"""Latent-model tuning of a model too large to load whole on one card: a two-rank FSDP2 recipe.
+"""Latent model tuning of a model too large to load whole on one card: a two-rank FSDP2 recipe.
 
 Every rank builds the model from its config on the meta device, applies per-layer activation checkpointing (and, with
 ``--tp``, transformers' tensor-parallel plan), shards one FSDP2 unit per decoder layer (each spliced transcoder its

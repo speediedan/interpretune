@@ -256,6 +256,89 @@ class TestPlacement:
         assert "latent_models.aside.enc.weight" in _selected(view, "role:latent:aside")
 
 
+def _llama() -> nn.Module:
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=D,
+        intermediate_size=2 * D,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=16,
+        architectures=["LlamaForCausalLM"],
+    )
+    return LlamaForCausalLM(config).eval()
+
+
+class TestPeftWrapped:
+    """PEFT keeps the model a map describes at ``base_model.model``, and its wrapper forwards other attributes, so
+    a path under the wrapper reached the wrong module or one the view could not place (#1250)."""
+
+    MODELS = [
+        pytest.param(_gpt2, "c_attn", "transformer.h.1", id="gpt2"),
+        pytest.param(_llama, "q_proj", "model.layers.1", id="llama"),
+    ]
+
+    @staticmethod
+    def _roots(model_fn, target: str) -> tuple[nn.Module, nn.Module]:
+        """The same model plain and under a LoRA adapter, whose B starts at zero, so the two compute alike."""
+        peft = pytest.importorskip("peft")
+        plain, wrapped = Core(), Core()
+        plain.model = model_fn()
+        wrapped.model = peft.get_peft_model(model_fn(), peft.LoraConfig(r=2, target_modules=[target])).eval()
+        return plain, wrapped
+
+    @pytest.mark.parametrize("model_fn, target, block", MODELS)
+    def test_a_site_address_resolves_to_the_wrapped_models_block(self, model_fn, target, block):
+        plain, wrapped = self._roots(model_fn, target)
+        for address, suffix in (("point:hook_resid_post & layers:1", ""), ("point:mlp.hook_out & layers:1", ".mlp")):
+            assert resolve_site(plain, address).path == f"model.{block}{suffix}"
+            assert resolve_site(wrapped, address).path == f"model.base_model.model.{block}{suffix}"
+            assert resolve_site(wrapped, address).path in dict(wrapped.named_modules())
+
+    @pytest.mark.parametrize("model_fn, target, block", MODELS)
+    def test_what_is_spliced_in_computes_as_on_the_plain_model(self, model_fn, target, block):
+        outs = []
+        for root in self._roots(model_fn, target):
+            with torch.no_grad():
+                untouched = root(IDS)
+                attach_latent_model(
+                    root, "sae", TinySAE(), LatentSite("point:hook_resid_post & layers:0", op="replace")
+                )
+                out = _steered(root, "point:hook_resid_post & layers:1")
+            assert not torch.allclose(out, untouched)
+            outs.append(out)
+        assert torch.equal(*outs)
+
+    @pytest.mark.parametrize("model_fn, target, block", MODELS)
+    def test_what_is_spliced_in_is_addressed_by_layer(self, model_fn, target, block):
+        _, root = self._roots(model_fn, target)
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("point:hook_resid_post & layers:0"))
+        attach_intervention(root, "steer", OpIntervention("add", D), "point:hook_resid_post & layers:1")
+        view = _view(root)
+        assert _selected(view, "role:latent & layers:0") == {
+            f"latent_models.sae.{n}" for n in ("enc.weight", "enc.bias", "dec.weight", "dec.bias")
+        }
+        assert _selected(view, "role:intervention & layers:1") == {"interventions.steer.operand.value"}
+        assert not _selected(view, "role:latent & layers:1") and not _selected(view, "role:intervention & layers:0")
+        lora = {n for n in view.root.state_dict() if ".lora_" in n and f".{block}." in n}
+        assert lora and _selected(view, "role:adapter & layers:1") == lora
+
+    def test_a_module_path_through_the_wrapper_is_placed_at_the_module_it_reaches(self):
+        """GPT-2's blocks answer at ``model.transformer.h.1`` through the wrapper's attribute forwarding."""
+        _, root = self._roots(_gpt2, "c_attn")
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.transformer.h.1"))
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.transformer.h.0.mlp")
+        prefix = "model.base_model.model.transformer.h"
+        assert latent_model_placements(root) == {"latent_models.sae": f"{prefix}.1"}
+        assert intervention_placements(root) == {"interventions.steer": f"{prefix}.0.mlp"}
+        assert latent_model_sites(root) == {"sae": LatentSite("model.transformer.h.1")}  # the site as it was given
+        with pytest.raises(AttributeError):
+            attach_intervention(root, "lost", OpIntervention("add", D), "model.transformer.h.7")
+
+
 BOOK = {
     "schema_version": 1,
     "name": "steering",

@@ -6,11 +6,13 @@
 :class: only-light
 ```
 
-**A flexible framework for collaborative AI world model analysis and tuning.**
+**A flexible framework for collaborative AI latent model analysis and tuning.**
 
-Interpretune is a (pre-MVP) AI world model analysis framework. It strives to provide composable, shareable latent-space analysis mutually intelligible to humans and agents.
+Interpretune is a (pre-MVP) AI latent model analysis framework. It strives to provide composable, shareable latent space analysis mutually intelligible to humans and agents.
 
-By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative, world model analysis and tuning with PyTorch.
+By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative latent model analysis and tuning with PyTorch.
+
+Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. Today it works with **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them. They are the route to world model analysis rather than the same thing.
 
 That composability and shareability serve one aim: to **broaden the shoulders of giants**. An analysis operation, an intervention op or a component that one researcher writes and registers (in a federated registry such as venngram's ops, or as a Hub collection) is one any other researcher, or agent, can compose, rerun and extend.
 
@@ -18,14 +20,14 @@ Both humans and agents can inspect and refine the mechanistic and causal faithfu
 
 - transparent, causally faithful reasoning
 - augmented model self-reflection
-- world-model-guided collaborative tuning
+- latent model guided collaborative tuning
 
 Interpretune composes adapters at multiple levels of abstraction over a shared
 session/protocol layer (see the
 {doc}`adapter development guide <usage/adapter_development_guide>`):
 
 - the *framework* level — core PyTorch, Lightning
-- the *interpretability latent-model* level — TransformerLens, NNsight
+- the *interpretability latent model* level — TransformerLens, NNsight
 - the *analysis* level — circuit-tracer, SAELens
 
 This composition pattern is what will allow users to collaborate across interpretability
@@ -43,10 +45,10 @@ Interpretune is **pre-MVP**: APIs are subject to change. The {doc}`roadmap <road
 the path to the initial alpha release.
 ```
 
-A note on terminology: throughout these docs, "world model" is used in the **epistemic/semantic**
-sense — the internal representations and beliefs a model encodes about the world — as studied in
+A note on terminology: when these docs say "world model" they mean it in the **epistemic/semantic**
+sense: the internal representations and beliefs a model encodes about the world, as studied in
 interpretability, rather than the (related but distinct) predictive **visual world models** of
-embodied-agent and model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal
+embodied-agent and model-based-RL research. It names where the project is heading. The initial MVP focuses on LLMs; fuller multimodal
 support is planned (see the {doc}`roadmap <roadmap>`).
 
 ## Quickstart

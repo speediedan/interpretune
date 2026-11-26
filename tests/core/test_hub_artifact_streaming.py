@@ -125,6 +125,115 @@ class TestStreamedStoreDecodesAsALoadedStore:
         assert streamed.column_names == list(_features())
 
 
+class TestBatchValue:
+    """``AnalysisStore.batch_value`` gives one row's value of one column, decoding nothing else."""
+
+    @pytest.mark.parametrize("stack_batches", [False, True])
+    @pytest.mark.parametrize("column", list(_features()))
+    def test_it_is_the_rows_value(self, parquet_store, column, stack_batches):
+        loaded, streamed = _stores(parquet_store)
+        loaded.stack_batches = streamed.stack_batches = stack_batches
+        for i in (0, 1, 1, 4, ROWS - 1, 2):  # repeated, skipping ahead, and an earlier row
+            row = loaded.dataset[i][column]
+            assert _same(row, loaded.batch_value(column, i)) and _same(row, streamed.batch_value(column, i))
+
+    def test_a_column_or_row_the_store_lacks(self, parquet_store):
+        for store in _stores(parquet_store):
+            assert store.batch_value("absent", 0) is None
+            with pytest.raises(IndexError):
+                store.batch_value("logit_diff", ROWS)
+            assert store.batch_value("logit_diff", ROWS - 1) is not None  # and the store still reads
+
+    def test_a_dataset_decodes_no_other_column(self, parquet_store, monkeypatch):
+        from interpretune.analysis.formatters import ITAnalysisFormatter
+
+        loaded, _ = _stores(parquet_store)
+        decoded, format_row = [], ITAnalysisFormatter.format_row
+
+        def recorded(self, pa_table):
+            decoded.append(pa_table.column_names)
+            return format_row(self, pa_table)
+
+        monkeypatch.setattr(ITAnalysisFormatter, "format_row", recorded)
+        loaded.batch_value("logit_diff", 3)
+        loaded.dataset[3]
+        assert decoded == [["logit_diff"], list(_features())]  # the second is the control: a row decodes them all
+
+    def test_batches_read_in_order_cost_one_pass_over_a_stream(self, parquet_store, monkeypatch):
+        from datasets import IterableDataset
+
+        _, streamed = _stores(parquet_store)
+        passes, iterate = [], IterableDataset.__iter__
+
+        def recorded(self):
+            passes.append(self.column_names)
+            return iterate(self)
+
+        monkeypatch.setattr(IterableDataset, "__iter__", recorded)
+        for i in range(ROWS):
+            for _ in range(3):
+                streamed.batch_value("input_tokens", i)
+        assert passes == [["input_tokens"]]
+        streamed.batch_value("input_tokens", 0)
+        assert len(passes) == 2
+
+    def test_each_read_is_its_own_value(self, parquet_store):
+        for store in _stores(parquet_store):
+            store.batch_value("input_tokens", 2).fill_(-1)
+            assert store.batch_value("input_tokens", 2).tolist() == [0, 1, 2]
+
+    def test_replaced_or_reformatted_rows_are_read_anew(self, parquet_store):
+        loaded, streamed = _stores(parquet_store)
+        for store in (loaded, streamed):
+            store.batch_value("input_string", 0)
+        loaded.dataset = loaded.dataset.select([5])
+        streamed._attach_stream(streamed.stream.skip(5))
+        for store in (loaded, streamed):
+            assert store.batch_value("input_string", 0) == "premise 5"
+        assert isinstance(loaded.batch_value("input_tokens", 0), torch.Tensor)
+        loaded.dataset.set_format(type="python")  # in place
+        assert loaded.batch_value("input_tokens", 0) == list(range(6))
+
+    @pytest.mark.parametrize("duplicate", ["copy", "deepcopy", "pickle"])
+    def test_a_copy_starts_without_the_readers(self, parquet_store, duplicate):
+        import copy
+        import pickle
+
+        duplicates = {
+            "copy": copy.copy,
+            "deepcopy": copy.deepcopy,
+            "pickle": lambda store: pickle.loads(pickle.dumps(store)),
+        }
+        for store in _stores(parquet_store):
+            store.batch_value("input_string", 3)
+            other = duplicates[duplicate](store)
+            assert not other._column_views and not other._stream_cursors
+            assert other.batch_value("input_string", 1) == "premise 1"
+            assert store._column_views or store._stream_cursors
+
+    def test_a_bound_batch_reads_its_fields_through_it(self, parquet_store, monkeypatch):
+        from types import SimpleNamespace
+
+        from interpretune.analysis import AnalysisBatch, AnalysisStore
+
+        loaded, streamed = _stores(parquet_store)
+        for store in (loaded, streamed):
+            reads: list = []
+            batch_value = AnalysisStore.batch_value
+            with monkeypatch.context() as patched:
+                patched.setattr(
+                    AnalysisStore,
+                    "batch_value",
+                    lambda self, column, i: reads.append((column, i)) or batch_value(self, column, i),
+                )
+                patched.setattr(AnalysisStore, "__getitem__", lambda self, key: pytest.fail(f"read {key!r} whole"))
+                module = SimpleNamespace(analysis_cfg=SimpleNamespace(input_store=store))
+                batch = AnalysisBatch().bind_resolution_context(module, batch_idx=4)
+                assert hasattr(batch, "input_tokens") and batch.input_tokens.tolist() == [0, 1, 2, 3, 4]
+                assert batch.get("input_string") == "premise 4"
+            assert set(reads) == {("input_tokens", 4), ("input_string", 4)}
+
+
 class TestStreamedStoreRefusals:
     @pytest.mark.parametrize("key", [0, slice(0, 2)])
     def test_positional_access_is_refused_by_name(self, parquet_store, key):
@@ -231,7 +340,7 @@ class TestStreamedReadCost:
         import fsspec
         from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
 
-        stats = {"requests": 0, "bytes": 0}
+        stats = {"requests": 0, "bytes": 0, "log": []}
 
         class _CountingFile(AbstractBufferedFile):
             def _fetch_range(self, start, end):
@@ -240,6 +349,7 @@ class TestStreamedReadCost:
                     data = handle.read(end - start)
                 stats["requests"] += 1
                 stats["bytes"] += len(data)
+                stats["log"].append((start, len(data)))
                 return data
 
         class _CountingFS(AbstractFileSystem):
@@ -348,16 +458,35 @@ class TestStreamedReadCost:
 
     @pytest.mark.parametrize("columns", [None, ["values"], ["label"]])
     def test_the_estimate_tracks_what_the_first_row_fetches(self, counting_fs, grouped_parquet, columns):
-        """Within a factor of two of the measured fetch, for the full read and both projections."""
+        """Within a factor of two of the measured fetch, for the full read and both projections.
+
+        The estimate is the data reaching the first row needs: the first row group and the one group the scan reads
+        ahead (the footer read is bounded separately, above). The scan's threads can fetch further groups before the
+        first row is returned, and how many depends on how they are scheduled (on a loaded host they reached every
+        group of this file), so only the requests that start in the first two groups are measured.
+        """
+        import pyarrow.parquet as pq
+
         from interpretune.hub.artifacts import STREAMING_BLOCK_SIZE, _stream_parquet, _streamed_first_row_bytes
 
+        metadata = pq.ParquetFile(grouped_parquet).metadata
+        assert metadata.num_row_groups > 2
+
+        def group_start(g: int) -> int:
+            chunks = [metadata.row_group(g).column(c) for c in range(metadata.row_group(g).num_columns)]
+            return min(c.dictionary_page_offset or c.data_page_offset for c in chunks)
+
+        data_start, ahead_start = group_start(0), group_start(2)
         url = f"itcountfs://{grouped_parquet.as_posix()}"
         options = {"itcountfs": {"block_size": STREAMING_BLOCK_SIZE}}
         estimate, _ = _streamed_first_row_bytes(url, columns, options)
         counting_fs.update(requests=0, bytes=0)
+        counting_fs["log"].clear()
         next(iter(_stream_parquet([url], "validation", columns=columns, storage_options=options, token=None)))
-        measured = counting_fs["bytes"]
-        # small projections are dominated by the footer and block rounding, so they get an absolute allowance too
+        first_groups = [size for start, size in counting_fs["log"] if data_start <= start < ahead_start]
+        assert first_groups, counting_fs["log"]  # the first row's own group was read
+        measured = sum(first_groups)
+        # small projections are dominated by block rounding, so they get an absolute allowance too
         assert measured / 2 - 4 * STREAMING_BLOCK_SIZE <= estimate <= 2 * measured + 4 * STREAMING_BLOCK_SIZE
 
     def test_one_row_group_costs_the_whole_file(self, counting_fs, tmp_path):

@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 from huggingface_hub.errors import EntryNotFoundError
 
+from interpretune.hub.artifacts import ARTIFACT_SCHEMA_VERSION, SUBJECT_REQUIRED_FROM_SCHEMA
 from interpretune.hub.cards import generate_artifact_card
 from interpretune.hub.discovery import (
     ANALYSIS_STORE_TAG,
@@ -173,5 +174,7 @@ class TestFindAnalysisStores:
             pytest.skip("IT_HF_TOKEN or HF_TOKEN required to read the private demo store")
         rows = {r.repo_id: r for r in find_analysis_stores(GEMMA, token=token)}
         demo = rows["speediedan/ct-concept-steering-demo"]
-        assert demo.schema == 2 and demo.subject is not None and demo.subject.model_id == GEMMA
+        # the store is re-uploaded by whatever code renders its notebook, so its schema moves within the readable window
+        assert SUBJECT_REQUIRED_FROM_SCHEMA <= demo.schema <= ARTIFACT_SCHEMA_VERSION
+        assert demo.subject is not None and demo.subject.model_id == GEMMA
         assert len(demo.revision) == 40

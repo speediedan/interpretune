@@ -620,7 +620,7 @@ def labels_to_ids(
 def latent_correct_acts(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Compute correct activations from the latent-model activation cache
+    """Compute correct activations from the latent model activation cache
 
     Input Schema:
         logit_diffs (float32)
