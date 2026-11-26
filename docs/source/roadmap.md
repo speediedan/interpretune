@@ -51,13 +51,15 @@ local dev stacks) — subject to the same upstream-ownership framing above.
 
 ### Standardized hub-based dashboard discovery
 
-Shipped ([#262](https://github.com/interpretune/interpretune/issues/262)): published corpora are discovered through
-Hub collections whose items are buckets, with each corpus's own `it_artifact.json` as the only description of what it
-holds. A client's trust list is the collections it reads (the project's own by default), and a publisher registers a
-corpus by adding its bucket to a collection, with no client release. Trust is per publisher for now, and the
-permission model is still evolving (a finer, sub-publisher posture may follow); AnalysisStore discovery and trust are
-tracked in [#1008](https://github.com/interpretune/interpretune/issues/1008). The pipeline guide's
-[dashboard-corpus collection](../neuronpedia_dashboard_pipeline.md#hub-dashboard-discovery) section has the API.
+Shipped ([#262](https://github.com/interpretune/interpretune/issues/262)): published corpora are discovered per
+trusted publisher, a Hub user or organization namespace, with each corpus's own `it_artifact.json` as the only
+description of what it holds. A client's trust list is the `publishers=` keyword, else `IT_TRUSTED_PUBLISHERS`, else
+the project's own namespace, and the same list governs AnalysisStore discovery
+([#1008](https://github.com/interpretune/interpretune/issues/1008)). A publisher makes a corpus discoverable by
+publishing it to a bucket in its namespace, with no client release. Trust is per publisher for now, and the permission
+model is still evolving (a finer, sub-publisher posture may follow). The pipeline guide's
+[trusted publishers](../neuronpedia_dashboard_pipeline.md#hub-dashboard-discovery) section has the API, and
+[Finding analysis stores](../finding_analysis_stores.md) describes the shared list.
 
 ## Research directions
 
