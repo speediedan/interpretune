@@ -268,6 +268,7 @@ git-deps = [
     # `artifact`, the old name read with a deprecation warning until 0.2), #56 (a reader passes over registry documents newer than it reads, so the
     # default view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner
     # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
+    # Per-call cache-only lookup lets a pulled hook map check for registry collisions locally.
     "venngram @ git+https://github.com/speediedan/venngram@2625825254671a46bc98c9eb9355fbbb6574f56a",
     # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
     # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
@@ -412,7 +413,6 @@ exclude = ["it_examples.tests*"]
 "interpretune.analysis.ops.bundled.concept" = ["*.yaml"]
 "interpretune.analysis.ops.bundled.circuit_tracer" = ["*.yaml"]
 "interpretune.testing.conformance" = ["*.yaml"]
-"interpretune.analysis.points" = ["data/*.yaml"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"

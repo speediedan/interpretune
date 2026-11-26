@@ -323,7 +323,7 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     from interpretune.analysis.points import component_map_for
     from interpretune.analysis.points.vocabulary import UnknownPointError, parse
 
-    cmap = component_map_for(resolver.architecture)
+    cmap = resolver.component_map or component_map_for(resolver.architecture)
 
     def key(name: str) -> tuple[int, int, int, str]:
         layer, base, _sub = resolver.parse_hook_name(name)
@@ -562,15 +562,17 @@ class NNsightModelBackend:
     def capture_support(self, model: Any) -> CaptureSupport:
         """What this backend can capture on ``model``: every vocabulary point the hook resolver maps to a module.
 
-        The resolver is derived from the architecture's component map, so a norm's derived tensors (`hook_normalized`,
-        `hook_scale`) are the standing gap: nnsight reads module boundaries and those are computed inside the norm.
-        The resolver's own refusal text is the reason the declaration carries.
+        The resolver is derived from the architecture's component map, bound to ``model`` first, so a norm's derived
+        tensors (`hook_normalized`, `hook_scale`) are the standing gap: nnsight reads module boundaries and those are
+        computed inside the norm. Each point is probed at the first layer it exists on (a hybrid stack's attention is
+        not on layer 0). The resolver's own refusal text is the reason the declaration carries.
         """
         from interpretune.analysis.points import component_map_for
         from interpretune.analysis.points.inventory import inventory, spelled_at
 
+        self._ensure_bound(model)
         architecture = self._resolver.architecture
-        cmap = component_map_for(architecture)
+        cmap = self._resolver.component_map or component_map_for(architecture)
         capturable: set[str] = set()
         uncapturable: dict[str, str] = {}
         for base in inventory(cmap):
@@ -594,6 +596,18 @@ class NNsightModelBackend:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _ensure_bound(self, model: Any) -> None:
+        """Bind the resolver's component map to THIS model, once.
+
+        A map that is wrong about its model is refused here, naming every row, rather than surfacing later as a
+        plausible module path that does not exist; an optional row (a hybrid stack's attention) takes the layers its
+        module was found on, so its points resolve. Idempotent per backend instance.
+        """
+        if getattr(self, "_bound", False):
+            return
+        self._resolver.bind(self._get_hf_model(model))
+        self._bound = True
+
     def _ensure_tuple_calibration(self, model: Any) -> None:
         """Calibrate the resolver's output tuple-ness against THIS model+transformers combo, once.
 
@@ -605,10 +619,9 @@ class NNsightModelBackend:
         if getattr(self, "_tuple_calibration_done", False):
             return
         hf_model = self._get_hf_model(model)
-        # The component map is checked against the model BEFORE the probe forward: a map that is wrong about
-        # its model is refused here, naming every row, rather than surfacing later as a plausible module path
-        # that does not exist. The check raises; the probe below may not.
-        self._resolver.validate_against_model(hf_model)
+        # The component map is bound to the model BEFORE the probe forward: the check that binding runs raises, the
+        # probe below may not, and the probe reads the bound map's layers.
+        self._ensure_bound(model)
         try:
             self._resolver.calibrate_tuple_outputs(hf_model)
         finally:

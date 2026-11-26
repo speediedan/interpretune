@@ -425,10 +425,10 @@ def generate_component_card(
         lines += [f"- `{rel}`" for rel in hookmap_files]
         lines += [
             "",
-            "One document per architecture, in the activation-point vocabulary's component-map schema. These are",
+            "One document per architecture, in venngram's component-map schema. These are",
             'DATA (no code executes): fetch and register with `interpretune.hub.pull_hookmaps("<org>/<repo>")`, or',
-            "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture interpretune already",
-            "bundles must agree with the bundled one, or be loaded with `replace=True` deliberately.",
+            "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture venngram's registry already",
+            "serves must agree with the served one, or be loaded with `replace=True` deliberately.",
         ]
     helper_modules = (manifest.get("helpers") or {}).get("modules") or {}
     if helper_modules:

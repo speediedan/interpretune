@@ -2,8 +2,8 @@
 
 Hook names are parsed once, at the boundary, by `interpretune.analysis.points.parse`, and everything downstream
 works with the parsed point rather than the string. This document is the caller-facing summary of that vocabulary
-as it applies to `names_filter` (capture) and intervention patterns; the protocol itself, with the component-map
-schema and the interp-engine reconciliation, is [`activation_point_vocabulary.md`](activation_point_vocabulary.md).
+as it applies to `names_filter` (capture) and intervention patterns; the protocol itself, with how component maps
+are read and bound and the interp-engine reconciliation, is [`activation_point_vocabulary.md`](activation_point_vocabulary.md).
 
 ## Two levels of name
 
@@ -14,8 +14,8 @@ schema and the interp-engine reconciliation, is [`activation_point_vocabulary.md
   TransformerLens fires them.
 - **Component points** say WHERE a tensor is, in the TransformerBridge grammar: `blocks.{i}.ln2.hook_out`,
   `blocks.{i}.attn.o.hook_in`, `unembed.hook_out` (the output distribution), `ln_final.hook_normalized`. They are
-  canonical by construction and resolve against a per-architecture component map
-  (`interpretune/analysis/points/data/*.yaml`) to a tensor position, or to an `Unresolvable` carrying the reason.
+  canonical by construction and resolve against a per-architecture component map (venngram's, read from its
+  registry) to a tensor position, or to an `Unresolvable` carrying the reason.
 
 Two semantic names parse with a **caution**: `hook_mlp_in` and `hook_attn_in` name the residual BEFORE the block
 norm (they are the same tensor as `hook_resid_mid` / `hook_resid_pre`), one norm away from the sublayer's actual
