@@ -362,6 +362,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- Interpretune describes itself as a framework for latent model analysis and tuning, which is what it does today, and names world model analysis as its aim; the README, the docs' index and concepts pages, `CITATION.cff` and the agent instruction files say so. "Latent model", "latent space" and "world model" are written unhyphenated, also as modifiers, in prose and docstrings ([#1263](https://github.com/interpretune/interpretune/issues/1263))
+
 - The `peft` floor of the `tune` extra rises from 0.18 to 0.22, which transformers 5.24's `load_adapter` requires ([#1216](https://github.com/interpretune/interpretune/issues/1216))
 - The finetuning-scheduler pin moves to its main with promotion on a sharded model: a schedule's `promote` acts under placements `ddp` and `fsdp2`, where it was refused. The venngram pin includes the default `promote`, which the circuit-tracer composition's view uses, acting on `DTensor` parameters ([#882](https://github.com/interpretune/interpretune/issues/882))
 
