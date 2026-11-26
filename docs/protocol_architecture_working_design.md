@@ -85,7 +85,7 @@ Relevant code:
 
 ### 5. Analysis op layer
 
-`AnalysisOp` and `CompositeAnalysisOp` provide the main composition model for latent-space analysis.
+`AnalysisOp` and `CompositeAnalysisOp` provide the main composition model for latent space analysis.
 
 An op:
 

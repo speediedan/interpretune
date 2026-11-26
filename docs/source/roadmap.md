@@ -32,13 +32,13 @@ The [MVP milestone](https://github.com/interpretune/interpretune/milestone/1) ce
 Interpretune's artifacts **shareable on the Hugging Face Hub** — most importantly:
 
 - **AnalysisStore hub upload/download**: analyses as exchangeable datasets (the paradigm described
-  in {doc}`concepts <concepts>`), enabling reproduction and composition of world-model analyses
+  in {doc}`concepts <concepts>`), enabling reproduction and composition of latent model analyses
   across researchers. This connects directly to the hub-based dashboard-availability pattern —
   one consistent hub-artifact story for dashboards, explanations, and analysis results.
 - **Adapter/session shareability**: uploadable session and adapter configurations so an analysis
   is runnable, not just readable.
 - **Cross-backend support hardening**: completing the dual-backend abstraction-layer validation
-  ([#201](https://github.com/interpretune/interpretune/issues/201) — latent-model handle lifecycle,
+  ([#201](https://github.com/interpretune/interpretune/issues/201) — latent model handle lifecycle,
   backend compatibility matrix) and broadening cross-backend demo/e2e coverage
   ([#224](https://github.com/interpretune/interpretune/issues/224)).
 
@@ -81,11 +81,11 @@ tracked in [#1008](https://github.com/interpretune/interpretune/issues/1008). Th
   Internal model-reflection heuristics offered by Interpretune could enduringly improve RL
   exploration efficiency (effectively better sample efficiency).
 - **Epistemic coherence**: coherence-oriented auxiliary objectives and evaluations treating
-  world-model consistency as a first-class tuning signal.
+  world model consistency as a first-class tuning signal.
 - **Reflective cognition for counterfactuals**: latent-state evaluation as a mechanism for models
   to assess counterfactuals via their own latent states.
 - **Meta-latent interfaces**: SAE meta-latents (and successors) as decomposition levels in a
-  human/machine world-model interface.
+  human/machine world model interface.
 - **Multimodal world models**: extending beyond the LLM-focused MVP.
 
 ## Considered (not MVP-blocking)

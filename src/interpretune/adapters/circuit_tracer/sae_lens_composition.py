@@ -41,7 +41,7 @@ class CircuitTracerNNsightSAELensModule(
 
     The circuit-tracer side owns model init (the NNSightReplacementModel wins by MRO, and the
     attach-don't-override seam in ``BaseCircuitTracerModule`` leaves an already-attached model
-    backend alone), while the sae_lens side contributes only what the latent-model cases need:
+    backend alone), while the sae_lens side contributes only what the latent model cases need:
     the ``sae_handles`` properties and ``instantiate_saes``. The SAE weights are model-independent,
     so they load after the replacement model without splicing anything into it.
     """
