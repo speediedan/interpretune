@@ -383,9 +383,12 @@ shipped:
 Leaving the vision layers out of the plan raises each card's peak to 8.28 GiB: they are then gathered with the root
 unit for the whole forward pass.
 
-FSDP2 memory tracking (`track_fsdp_mem` in `memprofiler_cfg`) does not yet work with this plan. PyTorch's tracker fails
-in the first backward pass on a unit whose forward never ran, such as the vision layers here
-([finetuning-scheduler#246](https://github.com/speediedan/finetuning-scheduler/issues/246)).
+With FSDP2 memory tracking on (`track_fsdp_mem` in `memprofiler_cfg`), each card's peak step holds 2.65 GiB of gathered
+parameters, as much again in the all-gather buffer, and about 1.3 GiB of activations; each rank's host holds its
+26.3 GiB of offloaded shards. Tracking a plan whose units do not all run, as the vision layers here do not, needs a
+Fine-Tuning Scheduler that includes
+[finetuning-scheduler#247](https://github.com/speediedan/finetuning-scheduler/pull/247): PyTorch's tracker fails in the
+first backward pass on such a unit without it.
 
 ## What the runner does
 
