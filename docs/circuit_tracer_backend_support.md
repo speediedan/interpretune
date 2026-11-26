@@ -76,10 +76,8 @@ An attribution graph holds attention patterns constant by default, so it credits
 looks, and an edge does not say which head carried it. Three things address that, and two compositions support them:
 the nnsight model-level adapter, `(core, nnsight, circuit_tracer)`, and the interp-engine composition, whose
 circuit-tracer backend is `interp_engine`. On the same weights the two give the same graphs, head loadings and head
-conductance in every regime. Support for the
-[TransformerLens adapter](https://github.com/interpretune/interpretune/issues/932) waits on circuit-tracer's
-TransformerLens backend importing under TransformerLens 4
-([interpretune#223](https://github.com/interpretune/interpretune/issues/223)).
+conductance in every regime. Circuit-tracer's TransformerLens backend now runs on a `TransformerBridge`, and porting
+these to it is [interpretune#932](https://github.com/interpretune/interpretune/issues/932).
 
 **A graph with live patterns.** `compute_attribution_graph` takes `freeze_attention` and `freeze_norms`, both `True` by
 default, from a call or from `CircuitTracerConfig`. With either set to `False`, an edge is no longer an exact direct
@@ -118,21 +116,22 @@ which selects eager attention and sets the transcoder and freeze hooks aside for
 | Backend | Status | Model Types |
 |---------|--------|-------------|
 | NNsight (`NNSightReplacementModel`) | Supported | Gemma-2, Gemma-3 |
-| TransformerLens (`TransformerLensReplacementModel`) | Unavailable under TransformerLens 4.0; refused (below) | Gemma-2 |
+| TransformerLens (`TransformerLensReplacementModel`) | Supported, on a `TransformerBridge` (below) | Gemma-2 |
 
 Backend selection is automatic based on the module's adapter context. Configurations with
 `(core, nnsight, circuit_tracer)` use NNsight; `(core, transformer_lens, circuit_tracer)` use TransformerLens.
 
-**TransformerBridge limitation (tracked)**: the TransformerLens circuit-tracer backend requires the
-legacy `HookedTransformer` path — upstream circuit-tracer's `TransformerLensReplacementModel`
-subclasses `HookedTransformer` directly. TransformerLens 4.0 REMOVED that class, so the backend cannot be
-imported at all and the CT TransformerLens registry entries are disabled pending an upstream port to
-`TransformerBridge`. `CircuitTracerConfig` refuses `backend: transformerlens` by name when `HookedTransformer` is
-absent, and `backend` defaults to `nnsight`, so use that for circuit-tracer compositions meanwhile. Tracked in
-[interpretune#223](https://github.com/interpretune/interpretune/issues/223) — revisit when upstream
-circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
-experimental variables fixed) is why the (now Hub-published) concept-direction experimentation
-standardized on the NNsight backend.
+**On a TransformerBridge.** TransformerLens 4.0 removed the `HookedTransformer` circuit-tracer's
+`TransformerLensReplacementModel` subclassed, so the circuit-tracer pin carries that model on a `TransformerBridge`
+instead: the TransformerLens adapter builds the bridge over the HF model from its own `tl_cfg`, and the circuit-tracer
+adapter gives it the replacement model's class with the transcoders spliced in. The bridge runs the HF weights
+unconverted, which is what the transcoders were trained on, so compatibility mode (LayerNorm folding and centering) is
+refused for this composition. Its hooks are the bridge's: the unembedding's are `unembed.hook_in`/`unembed.hook_out`.
+The attribution regimes and head reports above are not yet available on this backend (they run on the nnsight and
+interp-engine backends; see [interpretune#932](https://github.com/interpretune/interpretune/issues/932)).
+
+The bridge needs transformer-lens 4.1 or later: 4.0's bridge replaced transformers' Gemma 2 and Gemma 3 eager attention
+function for the whole process, which breaks the nnsight backend's attention hooks once any bridge has been built.
 
 ## Backend Compatibility Matrix
 
@@ -147,7 +146,7 @@ seven-method `ModelBackend` surface; the differences are in *how* and in edge-ca
 | `fwd_w_hooks_and_latent_models` (custom hooks + splice) | ✅ | ✅ | ✅ (edit-context interventions) |
 | `fwd_w_hooks_batched` (multi-config hook batching) | ⚠️ sequential fallback (one pass per config; `configs_per_pass` no-op) | ⚠️ sequential fallback | ✅ native batched invokes |
 | `fwd_w_grads_and_latent_models` (gradient capture + splice) | ✅ | ✅ | ✅ |
-| `fwd_w_intervention` (direction/feature interventions) | ✅ (legacy-alias gaps: e.g. `unembed.hook_in` needs the `ln_final.hook_normalized` fallback — see interpretune#223) | ✅ (same alias caveat) | ✅ |
+| `fwd_w_intervention` (direction/feature interventions) | ✅ (legacy-alias gaps: e.g. `unembed.hook_in` needs the `ln_final.hook_normalized` fallback) | ✅ (`unembed.hook_in` is a bridge hook) | ✅ |
 
 Lifecycle contract (validated by `tests/core/test_adapters_sae_lens.py::TestLatentModelHandleLifecycle`
 across all three substrates): splice paths leave **no residual state** — baseline outputs are

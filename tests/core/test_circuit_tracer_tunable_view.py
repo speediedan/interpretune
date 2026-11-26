@@ -785,6 +785,32 @@ class TestTranscoderFit:
         meter.update(x, y)
         assert all(fit.fvu == pytest.approx(0.0, abs=1e-10) for fit in meter.compute())
 
+    @pytest.mark.parametrize("silent", ["trailing", "all"])
+    def test_a_cross_layer_transcoders_silent_positions_are_measured(self, silent):
+        """A position where no feature fires is reconstructed as the decoder bias: it counts like any other, wherever
+        it falls (circuit-tracer 0.5.5; before it, trailing ones were dropped from the reconstruction)."""
+        from interpretune.adapters.circuit_tracer.drift import TranscoderFitMeter
+
+        torch.manual_seed(7)
+        clt = _uniform_(
+            CrossLayerTranscoder(3, D_TC, D_MODEL, lazy_decoder=False, lazy_encoder=False, dtype=torch.float32)
+        )
+        x, y = torch.randn(3, 12, D_MODEL), torch.randn(3, 12, D_MODEL)
+        quiet = slice(8, None) if silent == "trailing" else slice(None)
+        x[:, quiet] = 0.0
+        with torch.no_grad():
+            clt.b_enc.fill_(-1e-3)  # so that nothing fires on a zero input
+            acts = clt.encode(x)
+            full = clt.decode(acts, x)
+        assert (acts[:, quiet] == 0).all() and (silent == "all" or (acts[:, :8] != 0).any())
+        torch.testing.assert_close(full[:, quiet], clt.b_dec[:, None].expand_as(full)[:, quiet])
+        meter = TranscoderFitMeter(clt)
+        meter.update(x, y)
+        for fit in meter.compute():
+            layer = fit.layer
+            fvu = ((y[layer] - full[layer]) ** 2).sum() / ((y[layer] - y[layer].mean(0)) ** 2).sum()
+            assert fit.positions == 12 and fit.fvu == pytest.approx(float(fvu), rel=1e-5)
+
     def test_refuses_an_empty_meter_and_mismatched_shapes(self):
         from interpretune.adapters.circuit_tracer.drift import TranscoderFitMeter
 

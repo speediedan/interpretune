@@ -37,6 +37,20 @@ class TestInventory:
         assert spelled_at("ln2.hook_out", cmap, 5) == "blocks.5.ln2.hook_out"
         assert spelled_at("unembed.hook_in", cmap) == "unembed.hook_in"
 
+    def test_an_optional_row_is_in_the_inventory_and_spelled_only_against_a_model(self):
+        """The inventory is layer-free, so a hybrid stack's optional attention belongs to it bound or not; spelling
+        it at a layer needs the model, and the unbound map says so rather than spelling it at layer 0."""
+        from tests.core.mapped_architectures import bound_map
+
+        unbound = component_map_for("Qwen3_5ForConditionalGeneration")
+        bound = bound_map("Qwen3_5ForConditionalGeneration")
+        assert "attn.hook_out" in inventory(unbound) and inventory(unbound) == inventory(bound)
+        with pytest.raises(ValueError, match="resolves only against a model"):
+            spelled_at("attn.hook_out", unbound)
+        assert spelled_at("attn.hook_out", bound) == "blocks.3.attn.hook_out"
+        assert spelled_at("hook_attn_out", bound) == "blocks.3.hook_attn_out"
+        assert spelled_at("linear_attn.out.hook_in", bound) == "blocks.0.linear_attn.out.hook_in"
+
     def test_a_cross_attention_point_is_not_in_a_decoder_inventory(self):
         bases = inventory(component_map_for("GPT2LMHeadModel"))
         assert "hook_cross_attn_out" not in bases, (
@@ -77,7 +91,7 @@ class TestCaptureSupport:
         """The understating direction: a record that omits points would shrink its own denominator, so omission
         read as completeness ("captures 20 of 20") until this refusal existed."""
         bases = set(inventory(component_map_for("GPT2LMHeadModel")))
-        with pytest.raises(ValueError, match=r"decides 29 of 30 inventory points; undecided .*'unembed.hook_out'"):
+        with pytest.raises(ValueError, match=r"decides 31 of 32 inventory points; undecided .*'unembed.hook_out'"):
             CaptureSupport(
                 capturable=bases - {"unembed.hook_out"}, uncapturable={}, n_layers=12, architecture="GPT2LMHeadModel"
             )
@@ -109,4 +123,4 @@ class TestCaptureSupport:
 
     def test_describe_carries_the_fraction_and_the_gaps_by_name(self):
         text = _record().describe()
-        assert "captures 29 of 30 base points on GPT2LMHeadModel (12 blocks)" in text and "mlp.hook_out" in text
+        assert "captures 31 of 32 base points on GPT2LMHeadModel (12 blocks)" in text and "mlp.hook_out" in text

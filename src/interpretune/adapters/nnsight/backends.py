@@ -44,7 +44,7 @@ from interpretune.analysis.backends import (
 )
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
-from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
+from interpretune.analysis.backends.positions import install_mask_derived_positions
 from interpretune.analysis.backends.prefix_cache import carries_prefix_cache, prefix_cache_kwargs
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
@@ -323,7 +323,7 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     from interpretune.analysis.points import component_map_for
     from interpretune.analysis.points.vocabulary import UnknownPointError, parse
 
-    cmap = component_map_for(resolver.architecture)
+    cmap = resolver.component_map or component_map_for(resolver.architecture)
 
     def key(name: str) -> tuple[int, int, int, str]:
         layer, base, _sub = resolver.parse_hook_name(name)
@@ -417,34 +417,6 @@ def _iter_available_hook_names(
                     available.append(f"{candidate}.{suffix}")
 
     return available
-
-
-def _install_mask_derived_positions(hf_model: torch.nn.Module) -> None:
-    """Derive position ids from the attention mask on every padded forward, the convention every backend shares.
-
-    Installed on the wrapped model rather than passed per trace invocation, because nnsight concatenates the inputs
-    of every invocation in a trace into one batch while a per-invocation ``position_ids`` keeps its own row count.
-    It stands aside whenever the caller supplied positions, and whenever the mask does not match the input length,
-    which is the case for a cached decoding step (the mask spans the cached prefix as well).
-    """
-    if getattr(hf_model, "_it_mask_derived_positions", False) or not accepts_position_ids(hf_model.forward):
-        return
-
-    def pre_hook(_module: torch.nn.Module, args: tuple, kwargs: dict[str, Any]) -> tuple[tuple, dict[str, Any]]:
-        mask = kwargs.get("attention_mask")
-        tokens = kwargs.get("input_ids", args[0] if args else None)
-        if (
-            isinstance(mask, torch.Tensor)
-            and kwargs.get("position_ids") is None
-            and isinstance(tokens, torch.Tensor)
-            and mask.shape == tokens.shape
-            and not bool(mask.all())
-        ):
-            kwargs["position_ids"] = mask_derived_position_ids(mask)
-        return args, kwargs
-
-    hf_model.register_forward_pre_hook(pre_hook, with_kwargs=True)
-    setattr(hf_model, "_it_mask_derived_positions", True)
 
 
 def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
@@ -590,15 +562,17 @@ class NNsightModelBackend:
     def capture_support(self, model: Any) -> CaptureSupport:
         """What this backend can capture on ``model``: every vocabulary point the hook resolver maps to a module.
 
-        The resolver is derived from the architecture's component map, so a norm's derived tensors (`hook_normalized`,
-        `hook_scale`) are the standing gap: nnsight reads module boundaries and those are computed inside the norm.
-        The resolver's own refusal text is the reason the declaration carries.
+        The resolver is derived from the architecture's component map, bound to ``model`` first, so a norm's derived
+        tensors (`hook_normalized`, `hook_scale`) are the standing gap: nnsight reads module boundaries and those are
+        computed inside the norm. Each point is probed at the first layer it exists on (a hybrid stack's attention is
+        not on layer 0). The resolver's own refusal text is the reason the declaration carries.
         """
         from interpretune.analysis.points import component_map_for
         from interpretune.analysis.points.inventory import inventory, spelled_at
 
+        self._ensure_bound(model)
         architecture = self._resolver.architecture
-        cmap = component_map_for(architecture)
+        cmap = self._resolver.component_map or component_map_for(architecture)
         capturable: set[str] = set()
         uncapturable: dict[str, str] = {}
         for base in inventory(cmap):
@@ -622,6 +596,18 @@ class NNsightModelBackend:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _ensure_bound(self, model: Any) -> None:
+        """Bind the resolver's component map to THIS model, once.
+
+        A map that is wrong about its model is refused here, naming every row, rather than surfacing later as a
+        plausible module path that does not exist; an optional row (a hybrid stack's attention) takes the layers its
+        module was found on, so its points resolve. Idempotent per backend instance.
+        """
+        if getattr(self, "_bound", False):
+            return
+        self._resolver.bind(self._get_hf_model(model))
+        self._bound = True
+
     def _ensure_tuple_calibration(self, model: Any) -> None:
         """Calibrate the resolver's output tuple-ness against THIS model+transformers combo, once.
 
@@ -633,10 +619,9 @@ class NNsightModelBackend:
         if getattr(self, "_tuple_calibration_done", False):
             return
         hf_model = self._get_hf_model(model)
-        # The component map is checked against the model BEFORE the probe forward: a map that is wrong about
-        # its model is refused here, naming every row, rather than surfacing later as a plausible module path
-        # that does not exist. The check raises; the probe below may not.
-        self._resolver.validate_against_model(hf_model)
+        # The component map is bound to the model BEFORE the probe forward: the check that binding runs raises, the
+        # probe below may not, and the probe reads the bound map's layers.
+        self._ensure_bound(model)
         try:
             self._resolver.calibrate_tuple_outputs(hf_model)
         finally:
@@ -651,7 +636,7 @@ class NNsightModelBackend:
 
         .. note:: Position IDs
 
-            Installs ``_install_mask_derived_positions`` on the wrapped model, so padded batches get position ids
+            Installs ``install_mask_derived_positions`` on the wrapped model, so padded batches get position ids
             counted over their real tokens: TransformerLens 4.0's bridge derives them the same way, and a model
             given ``arange`` positions shifts every real token of a left-padded row.
 
@@ -659,7 +644,7 @@ class NNsightModelBackend:
             model: NNsight ``LanguageModel``.
         """
         self._ensure_tuple_calibration(model)
-        _install_mask_derived_positions(self._get_hf_model(model))
+        install_mask_derived_positions(self._get_hf_model(model))
 
     def _splice_sae(
         self,

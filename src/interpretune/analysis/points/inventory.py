@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from interpretune.analysis.points.component_map import ComponentMap
+from interpretune.analysis.points.resolution import _contribution_component
 from interpretune.analysis.points.vocabulary import Slot, declaration_key, parse, semantic_names
 
 #: Slots a norm component exposes beyond its input and output: the derived tensors the vocabulary names.
@@ -24,6 +25,10 @@ def inventory(cmap: ComponentMap, stack: str | None = None) -> tuple[str, ...]:
     the semantic names that survive an architecture change. A component of kind ``norm`` also contributes its two
     derived slots, which the reference cannot capture but a bridge can. Sorted, so a declaration built from it
     is stable across runs.
+
+    Layer-free by construction: a base belongs to the inventory when the map has a row for it, whichever layers that
+    row covers, so a hybrid stack's attention (restricted or optional) is in the inventory of an unbound map too, and
+    resolving it is where an unbound optional row is refused.
     """
     bases: set[str] = {"hook_in", "hook_out"}
     for component in cmap.block_components(stack):
@@ -31,7 +36,8 @@ def inventory(cmap: ComponentMap, stack: str | None = None) -> tuple[str, ...]:
             continue  # the block row itself: already `hook_in` / `hook_out`
         for slot in (Slot.IN, Slot.OUT):
             bases.add(f"{component}.hook_{slot.value}")
-        if cmap.kind_of(component, 0, stack) == "norm":
+        row = cmap.row(component, stack)
+        if row is not None and row.kind == "norm":
             for slot in _NORM_SLOTS:
                 bases.add(f"{component}.hook_{slot.value}")
     for name in semantic_names():
@@ -40,9 +46,7 @@ def inventory(cmap: ComponentMap, stack: str | None = None) -> tuple[str, ...]:
         # points no backend on this architecture could ever capture. Filed under the declaration key, so a semantic
         # name for the same tensor as a component spelling collapses into it and a contribution keeps its own.
         point = parse(f"blocks.0.{name}")
-        # a row restricted to other layers (a hybrid stack's attention) still backs the point where it applies
-        mapped = cmap.module_for(point.component, 0, stack) is not None
-        if mapped or point.component == "" or cmap.unmapped_reason(point.component, 0, stack) is not None:
+        if point.component == "" or cmap.row(point.component, stack) is not None:
             bases.add(declaration_key(f"blocks.0.{name}"))
     for component in cmap.global_components():
         for slot in (Slot.IN, Slot.OUT):
@@ -67,9 +71,27 @@ def named_inventory(cmap: ComponentMap, n_layers: int, stack: str | None = None)
     return tuple(names)
 
 
-def spelled_at(base: str, cmap: ComponentMap, layer: int = 0) -> str:
-    """A base as a full name at ``layer`` (or bare, for a global point), for probing a model with it."""
-    return base if is_global(base, cmap) else f"blocks.{layer}.{base}"
+def first_layer(base: str, cmap: ComponentMap) -> int:
+    """The lowest layer a block-relative base exists on: that of the row it resolves through (a contribution
+    through its post-norm where the block has one), ``0`` for a row that covers every layer.
+
+    Raises:
+        ValueError: If that row is optional and ``cmap`` is unbound, naming the reason.
+    """
+    point = parse(f"blocks.0.{base}")
+    component = _contribution_component(point, cmap) if point.contribution is not None else point.component
+    return cmap.first_layer(component)
+
+
+def spelled_at(base: str, cmap: ComponentMap, layer: int | None = None) -> str:
+    """A base as a full name at ``layer`` (or bare, for a global point), for probing a model with it.
+
+    Without ``layer``, a block-relative base is spelled at the first layer it exists on (:func:`first_layer`), never
+    at layer 0 by assumption: on a hybrid stack layer 0 may not have the module.
+    """
+    if is_global(base, cmap):
+        return base
+    return f"blocks.{first_layer(base, cmap) if layer is None else layer}.{base}"
 
 
 def bases_of(names: Iterable[str], cmap: ComponentMap) -> dict[str, str]:

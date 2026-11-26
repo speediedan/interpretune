@@ -44,8 +44,7 @@ GLOBAL = -1
 
 
 def _global_components() -> frozenset[str]:
-    """The components outside every block stack in the bundled and registered maps, which no block shares a name
-    with: the names that make a point global whatever model it is later resolved on."""
+    """The components outside every block stack across the known maps, excluding names used by a block."""
     maps = [component_map_for(name) for name in known_architectures()]
     stacked = {c for m in maps for stack in m.stack_names() for c in m.block_components(stack)}
     return frozenset(c for m in maps for c in m.global_components()) - stacked

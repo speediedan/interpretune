@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.analysis.backends import Capability, PositionScope
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
-from interpretune.testing.conformance.gates import conformance_case
 from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs, LatentModelSpec
 from interpretune.utils.import_utils import package_available
 from tests.runif import RunIf
@@ -165,40 +163,6 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
         # an SAE trained on the processing this target applies (center_writing_weights), not the raw-weight default
         latent_models=(LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),),
     )
-
-    # TransformerLens 4.0 returns non-finite gradients through a compatibility-mode bridge on a masked (padded)
-    # batch, at the pad positions and at real positions of the padded row, while the forward stays finite and
-    # 3.5.1 is finite throughout. The inherited cases are overridden rather than marked, because a mark on the
-    # shared method would reach every target. Strict, so the pass that follows an upstream fix fails loudly and
-    # these overrides get removed. Reported upstream as TransformerLensOrg/TransformerLens#1809.
-    _TL4_MASKED_GRADIENTS = (
-        "TransformerLens 4.0: non-finite gradients through a compatibility-mode bridge on a padded, masked batch "
-        "(TransformerLensOrg/TransformerLens#1809)"
-    )
-
-    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
-    @conformance_case(capability=Capability.GRADIENTS)
-    def test_gradient_op_stores_the_declared_schema(self, suite):
-        super().test_gradient_op_stores_the_declared_schema(suite)
-
-    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
-    @conformance_case(capability=Capability.GRADIENTS)
-    def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
-        super().test_gradient_predicts_a_small_perturbation_to_first_order(suite)
-
-    # Measured on this target: every element of the baseline gradient at the SAE's feature activations is non-finite
-    # on the suite's padded batch, before any edit is applied.
-    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
-    @conformance_case(
-        capability=Capability.LATENT_MODELS,
-        target="features",
-        provider="model_backend",
-        flow="grad",
-        scope=PositionScope.ALL_POSITIONS,
-        op="scale",
-    )
-    def test_a_gradient_edit_reaches_a_latent_sub_hook(self, suite):
-        super().test_a_gradient_edit_reaches_a_latent_sub_hook(suite)
 
     def test_the_family_label_is_true_of_the_model(self, suite):
         """Positive control on the label: this target's weights really are processed, not raw HF weights.

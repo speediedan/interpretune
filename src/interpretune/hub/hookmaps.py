@@ -1,10 +1,10 @@
 """The ``hookmaps`` component kind: per-architecture component maps published as hub DATA.
 
-A component map says where each bridge component of one architecture lives in its module tree (the
-schema is :mod:`interpretune.analysis.points.component_map`; the vocabulary it serves is
-``docs/activation_point_vocabulary.md``). Interpretune bundles maps for a handful of architectures; a
-``hookmaps`` component lets anyone publish one for an architecture it does not bundle, or republish a
-bundled one so a consumer can check the two agree.
+A component map says where each bridge component of one architecture lives in its module tree. The documents are
+venngram's (``venngram.maps.schema``), read through venngram's reader, so any schema venngram reads is accepted; the
+vocabulary they serve is ``docs/activation_point_vocabulary.md``. Interpretune bundles no map: it reads venngram's
+registry, and a ``hookmaps`` component is the override channel, registering its maps in process ahead of the
+registries, for an architecture the registry does not serve or to republish one so a consumer can check the two agree.
 
 Kind contract, mirroring ``datamodule`` rather than ``adapters``: the payload is YAML that parses into a
 frozen dataclass, nothing executes, so the trust gate is not consulted. The publisher parses every declared
@@ -53,36 +53,43 @@ def resolve_cached_hookmap_files(repo_id: str, cache_dir: Path | None = None) ->
     return paths, revision
 
 
-def load_hub_hookmaps(repo_id: str, cache_dir: Path | None = None, *, replace: bool = False) -> list:
-    """Parse and register every document of ONE cached ``hookmaps`` component; returns the ``ComponentMap``s.
+def _comparable(cmap) -> tuple:
+    """What two maps for one architecture must share to be the same map: per row its module, kind, ``optional`` and
+    layers, the properties, and the declared kinds and stacks (a kind's output rule and a stack's template decide how a
+    row resolves as much as the row does). A row's ``layout`` and the document's provenance are not compared."""
+    rows = {name: (e.module, e.kind, e.optional, e.layers) for name, e in cmap.components.items()}
+    return rows, dict(cmap.properties), dict(cmap.kinds), dict(cmap.stacks)
 
-    Registration goes through the vocabulary's own registry, so a hub map is indistinguishable from a
-    bundled one to every consumer (`component_map_for`, the point resolver, the derived hook mapping). The
-    collision rule: an architecture already registered must be mapped IDENTICALLY (same rows, same facts) or
-    the load is refused naming both sources; ``replace=True`` makes the shadowing deliberate. Silent
-    replacement is the one thing this kind must not do, since a map is what every activation-point address
-    for that architecture resolves through.
+
+def load_hub_hookmaps(repo_id: str, cache_dir: Path | None = None, *, replace: bool = False) -> list:
+    """Parse and register every document of ONE cached ``hookmaps`` component; returns the venngram maps.
+
+    Registration goes through venngram's in-process registry (``venngram.maps.register``), which every lookup reads
+    ahead of the registries, so a hub map is indistinguishable from a registry one to every consumer
+    (`component_map_for`, the point resolver, the derived hook mapping, a tunable view). The collision rule: an
+    architecture that already has a map (registered in process, or indexed by a registry) must be mapped IDENTICALLY
+    or the load is refused naming both sources; ``replace=True`` makes the shadowing deliberate. Silent replacement
+    is the one thing this kind must not do, since a map is what every activation-point address for that
+    architecture resolves through.
     """
-    from interpretune.analysis.points.component_map import (
-        _REGISTRY,
-        _load_bundled,
-        load_component_map_file,
-        register,
-    )
     from dataclasses import replace as _dc_replace
 
+    from venngram.maps import component_map_for, load_component_map, register
+
     paths, revision = resolve_cached_hookmap_files(repo_id, cache_dir=cache_dir)
-    _load_bundled()
     loaded = []
     for path in paths:
-        cmap = _dc_replace(load_component_map_file(path), source=f"{repo_id}@{revision[:12]}:{path.name}")
-        existing = _REGISTRY.get(cmap.architecture)
+        cmap = _dc_replace(load_component_map(path), source=f"{repo_id}@{revision[:12]}:{path.name}")
+        try:
+            existing = component_map_for(cmap.architecture, cache_only=True)
+        except KeyError:
+            existing = None
         if existing is not None and not replace:
-            if existing.components != cmap.components or existing.facts != cmap.facts:
+            if _comparable(existing) != _comparable(cmap):
                 raise HookMapComponentError(
-                    f"{cmap.source}: map for {cmap.architecture!r} disagrees with the one already registered from "
+                    f"{cmap.source}: map for {cmap.architecture!r} disagrees with the one already served from "
                     f"{existing.source!r}. Two sources for one architecture must agree; pass replace=True to shadow "
-                    "the registered map deliberately."
+                    "the served map deliberately."
                 )
             loaded.append(existing)
             continue
