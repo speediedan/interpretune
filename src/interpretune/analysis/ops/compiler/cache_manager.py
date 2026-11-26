@@ -96,7 +96,7 @@ class OpDef:
     protocol_cls: str | None = None
     uses_default_hooks: bool = False  # install the default activation-cache fwd/bwd hooks
     requires_grad: bool = False  # run the analysis loop with grad enabled
-    per_latent_preds: bool = False  # preds are per latent model and join across SAEs before scoring
+    per_latent_preds: bool = False  # preds are per-latent-model and join across SAEs before scoring
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for compatibility with existing code."""
