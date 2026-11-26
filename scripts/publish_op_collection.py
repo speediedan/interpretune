@@ -74,7 +74,7 @@ def main() -> int:
             collection_version=args.collection_version,
             requires=requires,
         )
-        generate_component_card(manifest, args.repo_id).save(args.build_dir / "README.md")
+        generate_component_card(manifest, args.repo_id, tree=args.build_dir).save(args.build_dir / "README.md")
         print(f"Built {args.repo_id} tree at {args.build_dir} (not uploaded):")
         for path in sorted(p for p in args.build_dir.rglob("*") if p.is_file()):
             print(f"  {path.relative_to(args.build_dir)} ({path.stat().st_size} bytes)")

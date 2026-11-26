@@ -11,6 +11,7 @@ at all, which made that discovery filter dead code; generation-at-publish fixes 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -316,6 +317,51 @@ def _check_adapter_manifest_coherence(manifest: dict, source: str) -> None:
             )
 
 
+_FENCE = re.compile(r"^(\s*)(```+|~~~+).*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
+_INLINE_CODE = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)", re.DOTALL)
+_LINK_TARGETS = (
+    re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)"),  # [text](target) and ![alt](target)
+    re.compile(r"^ {0,3}\[[^\]]+\]:\s*<?([^\s>]+)", re.MULTILINE),  # [label]: target
+    re.compile(r"\b(?:src|href)\s*=\s*[\"']([^\"']+)", re.IGNORECASE),  # raw HTML
+)
+_ABSOLUTE_TARGET = re.compile(r"(?:#|//|[A-Za-z][A-Za-z0-9+.\-]*:)")
+
+
+def _relative_links(text: str) -> list[str]:
+    """Link and image targets in Markdown ``text`` that are relative to the file, in order of appearance.
+
+    A relative target resolves against the source repository in one place and against the Hub repository in the other.
+    In-page anchors are the same in both, and code spans and fenced blocks are not links.
+    """
+    prose = _INLINE_CODE.sub("", _FENCE.sub("", text))
+    return [t for pattern in _LINK_TARGETS for t in pattern.findall(prose) if not _ABSOLUTE_TARGET.match(t)]
+
+
+def _declared_card_lines(manifest: dict, repo_id: str, tree: Path | None) -> list[str]:
+    """The text of the component's own ``card``, checked to mean the same on the Hub as it does in its
+    directory."""
+    rel = manifest["card"]
+    path = tree / rel if tree is not None else None
+    if path is None or not path.is_file():
+        raise ComponentCardError(
+            f"{repo_id}: the manifest declares `card: {rel}`, whose text is read from the staged tree, and "
+            + ("no tree was given." if path is None else f"{path} does not exist.")
+        )
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        raise ComponentCardError(
+            f"{repo_id}: `card: {rel}` starts with YAML front matter, which this card generates from the manifest. "
+            "A published card carries it too, so declare the component's own text, not a published one."
+        )
+    relative = _relative_links(text)
+    if relative:
+        raise ComponentCardError(
+            f"{repo_id}: `card: {rel}` has links relative to its own directory, which do not resolve the same on the "
+            f"Hub: {sorted(set(relative))}. Give each as a full URL."
+        )
+    return ["", text.strip()]
+
+
 def generate_component_card(
     manifest: dict,
     repo_id: str,
@@ -332,6 +378,9 @@ def generate_component_card(
     that is stale or red. ``source_revision`` is the revision of the component source being published, the key
     that guard compares against; ``None`` means the publisher could not determine it, and the report is then
     treated as absent rather than trusted.
+
+    A manifest that declares its own ``card`` has that file's text appended after the generated sections, read from
+    ``tree``. A card with front matter or a link relative to its directory is refused.
     """
     meta = component_card_metadata(manifest)
     task = (manifest.get("module") or {}).get("task") or {}
@@ -419,4 +468,6 @@ def generate_component_card(
         lines += _adapter_card_sections(
             manifest, repo_id, measured=measured_capabilities_lines(report, source_revision)
         )
+    if manifest.get("card"):
+        lines += _declared_card_lines(manifest, repo_id, tree)
     return ModelCard(f"---\n{meta.to_yaml()}\n---\n\n" + "\n".join(lines) + "\n")

@@ -479,3 +479,80 @@ class TestMeasurementRecord:
         (tmp_path / suite.MEASUREMENT_RECORD_NAME).write_text(body, encoding="utf-8")
 
         assert suite.read_measurement_record(tmp_path) is None
+
+
+class TestFailedLegs:
+    """A failed leg must not end in a package that reads as complete, nor in exit status 0."""
+
+    def _args(self, tmp_path: Path, *extra: str):
+        return suite.build_parser().parse_args(
+            ["--scenarios", "rte", "--mode", "threeway", "--jemalloc-path", str(tmp_path / "none"), *extra]
+        )
+
+    def _root(self, tmp_path: Path, failed: list[str]) -> Path:
+        suite.write_measurement_record(tmp_path, {"IT": "abc"}, [], "threeway")
+        suite.record_failed_legs(tmp_path, failed)
+        return tmp_path
+
+    def test_the_run_continues_and_returns_every_failed_leg(self, tmp_path: Path, monkeypatch):
+        names = [name for name, *_ in suite.legs_for_mode(self._args(tmp_path), "rte")]
+        ran: list[str] = []
+
+        def fake_run(command, **kwargs):
+            leg = Path(command[command.index("--session-root") + 1]).name
+            ran.append(leg)
+            return SimpleNamespace(returncode=1 if leg != names[1] else 0)
+
+        monkeypatch.setattr(suite.subprocess, "run", fake_run)
+        failed = suite.run_benchmark_legs(self._args(tmp_path), tmp_path, "tag")
+        assert ran == names  # one failure does not stop the others
+        assert failed == [names[0], names[2]]
+
+    def test_no_failed_leg_is_an_empty_list(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(suite.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+        assert suite.run_benchmark_legs(self._args(tmp_path), tmp_path, "tag") == []
+
+    def test_packaging_is_refused_and_names_the_legs(self, tmp_path: Path):
+        root = self._root(tmp_path, ["detached_legacy_rte"])
+        with pytest.raises(SystemExit, match="detached_legacy_rte"):
+            suite.build_package(self._args(tmp_path), root, tmp_path / "package")
+        assert not (tmp_path / "package").exists()
+
+    def test_a_record_with_no_failed_leg_is_packaged_without_the_flag(self, tmp_path: Path, monkeypatch):
+        root = self._root(tmp_path, [])
+        monkeypatch.setattr(suite, "capture_lineage", lambda roots: ({"SD": "a", "SL": "b", "NP": "c", "IT": "d"}, []))
+        with pytest.raises(SystemExit, match="No successful benchmark variants"):  # past the refusal
+            suite.build_package(self._args(tmp_path), root, tmp_path / "package")
+
+    @pytest.mark.parametrize("failed, status", [([], 0), (["legacy_rte"], 1)])
+    def test_the_exit_status_says_whether_a_leg_failed(self, tmp_path: Path, monkeypatch, failed, status):
+        monkeypatch.setattr(suite, "capture_lineage", lambda roots: ({"IT": "d"}, []))
+        monkeypatch.setattr(suite, "check_converters_load", lambda args: None)
+        monkeypatch.setattr(suite, "run_benchmark_legs", lambda *a: list(failed))
+        monkeypatch.setattr(suite, "build_package", lambda *a: tmp_path)
+        argv = ["suite", "--scenarios", "rte", "--session-root", str(tmp_path / "s"), "--allow-failed-legs"]
+        monkeypatch.setattr(sys, "argv", argv)
+        assert suite.main() == status
+
+    def test_the_summary_of_an_incomplete_package_names_the_missing_legs(self):
+        text = dba.render_summary_markdown([], {}, manifest={"failed_legs": ["legacy_rte"]})
+        assert "these legs failed and are absent below: legacy_rte" in text
+        assert "Incomplete" not in dba.render_summary_markdown([], {}, manifest={"failed_legs": []})
+
+
+class TestConverterPreflight:
+    def _run(self, monkeypatch, tmp_path: Path, body: str):
+        root = tmp_path / "utils"
+        package = root / "neuronpedia_utils"
+        package.mkdir(parents=True)
+        (package / "convert-saedashboard-to-neuronpedia-export.py").write_text(body, encoding="utf-8")
+        monkeypatch.setenv("NEURONPEDIA_UTILS_ROOT", str(root))
+        args = suite.build_parser().parse_args(["--scenarios", "rte", "--path-tags", "legacy"])
+        suite.check_converters_load(args)
+
+    def test_a_converter_that_loads_passes(self, monkeypatch, tmp_path: Path):
+        self._run(monkeypatch, tmp_path, "x = 1\n")
+
+    def test_a_missing_dependency_is_refused_before_any_leg(self, monkeypatch, tmp_path: Path):
+        with pytest.raises(SystemExit, match="No module named 'a_module_nobody_has'"):
+            self._run(monkeypatch, tmp_path, "import a_module_nobody_has\n")
