@@ -16,10 +16,22 @@ from tests.core.test_circuit_tracer_attention_attribution import _ct_module
 pytest.importorskip("finetuning_scheduler.core.tuning_scheduler")
 
 
+def _shipped(relative):
+    """A file of the pinned ``speediedan/rte`` revision, as the warmed components cache serves it."""
+    from interpretune.hub.components import resolve_component_manifest
+    from interpretune.testing.conformance.inputs import SEED_REPO, SEED_REVISION
+
+    _, snapshot, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
+    return snapshot / relative
+
+
 @pytest.fixture
-def sparse_module(request):
+def sparse_module(request, monkeypatch):
     from transformers import Gemma2ForCausalLM
     from tests.rte_component import rte_entrypoint_module
+
+    # The RTE entrypoint is Hub-resident: importing it runs the component's published code.
+    monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
 
     initial = tiny_gemma2_replacement_model(n_layers=2)
 
@@ -145,15 +157,13 @@ def _collector(factory=None):
 
 
 def test_shipping_column_pruning_preserves_validation_identity(sparse_module):
-    from pathlib import Path
-
     from datasets import Dataset
     import yaml
 
     from interpretune.base.datamodules import ITDataModule
     from it_examples.utils.rte_sparse_attribution import _validation_items
 
-    path = Path(__file__).resolve().parents[1] / "examples/rte/configs/rte_sparse.gemma3.core.yaml"
+    path = _shipped("configs/rte_sparse.gemma3.core.yaml")
     config = yaml.safe_load(path.read_text(encoding="utf-8"))["registered_cfg"]["datamodule_cfg"]
     data = SimpleNamespace(itdm_cfg=SimpleNamespace(remove_unused_columns=True, **config))
     dataset = Dataset.from_list(sparse_module.datamodule.dataset["validation"])
@@ -191,9 +201,10 @@ def test_full_validation_collection_checks_actual_weights_logits_and_source_part
     report = checkpoint_attribution_report(
         measurements.rows, checkpoint_sha256=proof.sha256, basis_id=measurements.basis_id,
         model_id=measurements.model_id, model_revision=measurements.model_revision,
-        target_token_ids=measurements.target_token_ids,
+        target_token_ids=measurements.target_token_ids, measurement_dtype=measurements.measurement_dtype,
     )  # fmt: skip
     assert report["items"] == 3 and report["complete_head_layers"]
+    assert measurements.measurement_dtype == "float32"
     assert module._sparse_saved is retained and module._sparse_mask is mask
     assert [child.training for child in module.modules()] == modes
     assert verify_attribution_checkpoint(proof.path, module.state_dict()) == proof
@@ -273,9 +284,10 @@ def test_production_factory_preserves_actual_enforcement_and_public_head_partiti
     report = checkpoint_attribution_report(
         measurements.rows, checkpoint_sha256=proof.sha256, basis_id=measurements.basis_id,
         model_id=measurements.model_id, model_revision=measurements.model_revision,
-        target_token_ids=measurements.target_token_ids,
+        target_token_ids=measurements.target_token_ids, measurement_dtype=measurements.measurement_dtype,
     )  # fmt: skip
     assert report["items"] == 3 and report["complete_head_layers"]
+    assert measurements.measurement_dtype == "float32"
     assert module.sparse_enforce is enforced
     if enforced:
         assert any(batch > 1 for batch, _length in checked_batches)
@@ -409,9 +421,9 @@ def test_terminal_callback_collects_and_persists_the_real_selected_sparse_run(
         },
     )
     # Hydrate the actual shipping callback configuration; only the tiny CPU artifact and output location differ.
-    shipped = Path(__file__).resolve().parents[1] / "examples/rte/runs/rte_sparse.gemma3.core.yaml"
+    shipped = _shipped("runs/rte_sparse.gemma3.core.yaml")
     callbacks = yaml.safe_load(shipped.read_text(encoding="utf-8"))["run_cfg"]["callbacks"]
-    model_config = shipped.parents[1] / "configs/rte_sparse.gemma3.core.yaml"
+    model_config = _shipped("configs/rte_sparse.gemma3.core.yaml")
     source_config = yaml.safe_load(model_config.read_text(encoding="utf-8"))
     loader = source_config["registered_cfg"]["module_cfg"]["init_args"]
     assert loader["hf_from_pretrained_cfg"]["init_args"]["pretrained_kwargs"]["revision"] == (
