@@ -426,6 +426,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - PEFT adapter roles come from venngram's overlay maps, one per PEFT tuner family (LoRA and DoRA, AdaLoRA, IA3, LoHa, LoKr, OFT, BOFT, VeRA, FourierFT), each tensor as `adapter:<name>`; `peft_adapter_roles()` is replaced by `adapter_roles()` ([#900](https://github.com/interpretune/interpretune/issues/900))
 
+- The core training loop stops at the first non-finite training loss: `run_step` raises `NonFiniteLossError` naming the epoch, batch, step and loss before the batch-end hook and `backward()` run, so the weights are those after the last finite step and the run no longer trains on NaN gradients to a result that looks like a measurement. `SessionRunnerCfg.allow_nonfinite_loss` (off by default) restores the old behavior for a step function or callback that handles non-finite losses itself ([#1268](https://github.com/interpretune/interpretune/issues/1268)).
+
 - venngram is a base dependency, so tunable views attach and the view conformance cases run whether or not Fine-Tuning Scheduler is installed: `TuningConformance` runs venngram's `ViewConformance` cases, extended by Fine-Tuning Scheduler's when it is installed. The `venngram` extra is removed, and the declared torch floor rises to 2.12.0, which venngram requires ([#874](https://github.com/interpretune/interpretune/issues/874))
 
 - venngram is pinned at `bdd879e2` (main with #53 and #51), and the test suite reads venngram's seed registry at a pinned generation (`venngram.registries` in `tests/hf_warm_manifest.yaml`), which the hosted CI warms into `~/.cache/venngram` beside the Hub cache ([#900](https://github.com/interpretune/interpretune/issues/900))
