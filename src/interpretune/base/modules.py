@@ -1,9 +1,11 @@
 from typing import Any
 
 import torch
+from transformers import PreTrainedModel
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
+from interpretune.base.components.mixins import configure_hf_position_ids
 from interpretune.tuning.interventions import (
     attach_configured_interventions,
     intervention_placements,
@@ -67,6 +69,8 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
             self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model
+        if isinstance(self.model, PreTrainedModel):
+            configure_hf_position_ids(self.model)
         # register modules the view must reach whichever init path ran, then attach the composition's
         # finetuning-scheduler view (never replacing one attached in `post_auto_model_init`); the attachment is a no-op
         # when the installed finetuning-scheduler predates views

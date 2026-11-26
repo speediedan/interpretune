@@ -44,7 +44,7 @@ from interpretune.analysis.backends import (
 )
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
-from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
+from interpretune.analysis.backends.positions import install_mask_derived_positions
 from interpretune.analysis.backends.prefix_cache import carries_prefix_cache, prefix_cache_kwargs
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
@@ -419,34 +419,6 @@ def _iter_available_hook_names(
     return available
 
 
-def _install_mask_derived_positions(hf_model: torch.nn.Module) -> None:
-    """Derive position ids from the attention mask on every padded forward, the convention every backend shares.
-
-    Installed on the wrapped model rather than passed per trace invocation, because nnsight concatenates the inputs
-    of every invocation in a trace into one batch while a per-invocation ``position_ids`` keeps its own row count.
-    It stands aside whenever the caller supplied positions, and whenever the mask does not match the input length,
-    which is the case for a cached decoding step (the mask spans the cached prefix as well).
-    """
-    if getattr(hf_model, "_it_mask_derived_positions", False) or not accepts_position_ids(hf_model.forward):
-        return
-
-    def pre_hook(_module: torch.nn.Module, args: tuple, kwargs: dict[str, Any]) -> tuple[tuple, dict[str, Any]]:
-        mask = kwargs.get("attention_mask")
-        tokens = kwargs.get("input_ids", args[0] if args else None)
-        if (
-            isinstance(mask, torch.Tensor)
-            and kwargs.get("position_ids") is None
-            and isinstance(tokens, torch.Tensor)
-            and mask.shape == tokens.shape
-            and not bool(mask.all())
-        ):
-            kwargs["position_ids"] = mask_derived_position_ids(mask)
-        return args, kwargs
-
-    hf_model.register_forward_pre_hook(pre_hook, with_kwargs=True)
-    setattr(hf_model, "_it_mask_derived_positions", True)
-
-
 def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     """Invoke an NNsight trace with only model-consumable batch fields.
 
@@ -651,7 +623,7 @@ class NNsightModelBackend:
 
         .. note:: Position IDs
 
-            Installs ``_install_mask_derived_positions`` on the wrapped model, so padded batches get position ids
+            Installs ``install_mask_derived_positions`` on the wrapped model, so padded batches get position ids
             counted over their real tokens: TransformerLens 4.0's bridge derives them the same way, and a model
             given ``arange`` positions shifts every real token of a left-padded row.
 
@@ -659,7 +631,7 @@ class NNsightModelBackend:
             model: NNsight ``LanguageModel``.
         """
         self._ensure_tuple_calibration(model)
-        _install_mask_derived_positions(self._get_hf_model(model))
+        install_mask_derived_positions(self._get_hf_model(model))
 
     def _splice_sae(
         self,

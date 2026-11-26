@@ -310,12 +310,10 @@ The discriminating power lives in the input, and an adopter-supplied session con
 
 ## Single-prompt backends
 
-Some engines take one prompt at a time and refuse a batch, deliberately. A loop over rows is **not** a
-transparent implementation of the batched contract: in a batched forward, left-padded rows keep their padded
-positions, so per-row unpadded forwards legitimately diverge from the batched reference. The contract therefore
-carries the limit rather than hiding it: a target declares `batch_size=1`, every case then runs unpadded at one
-row per batch, and one more case asserts that a batch above the declared limit is refused (never
-processed as row 0, never looped silently).
+Some engines take one prompt at a time. A target declares `batch_size=1`, and each case then runs
+with one unpadded row per batch. A separate case checks that the target refuses a batch above its declared limit.
+The position convention below allows numerical comparison to an unpadded row, while the batch-size check
+verifies the backend's supported input shapes.
 
 Four facts about composing into a real session, learned by the first hub adapter on first contact with
 `ITSession` (none of them reachable by a test that hosts the module class by hand):
@@ -337,9 +335,9 @@ Four facts about composing into a real session, learned by the first hub adapter
   two-row left-padded batch diverged from the masked HF forward by 80 in logits and 45 in a captured residual,
   while the unpadded row was correct either way. That is exactly why a single-row target cannot see it, and why
   the padded default is the stronger validation.
-- **The oracle is HF batched with the mask, never per row.** A padded row batched does not equal that row run
-  alone even with the mask (88 on gpt2), because absolute position embeddings shift under left padding. Every
-  HF-native backend shares that behaviour.
+- **Use mask-derived positions in the batched Hugging Face oracle.** A plain masked forward can still shift the
+  real tokens of a left-padded row on GPT-2. Derive positions from the mask when the model accepts them, then
+  compare the real tokens against the backend.
 - **Intervention specs may arrive as dicts through the store**, not only as `InterventionSpec` tuples; a
   backend must read both shapes (the bundled circuit-tracer backend does).
 - **Enumerate hook inventories in Interpretune's vocabulary.** Core resolves a `names_filter` list into a
@@ -395,13 +393,16 @@ rather than checking the record's type, so a record from a second load of the en
 
 ## Padding
 
-The bridge's activations on a left-padded batch match a plain HuggingFace forward given the attention mask
-and **no** invented position ids (measured on `gpt2`: last token 9e-5, all real positions 4.6e-4). Pad
-positions are undefined by contract and never compared. Value cases on padded dataset batches therefore use a
-stated looser tolerance (relative 1e-3 plus absolute 1e-3) on real positions, because the deepest points (the
-unembed input, the logits) accumulate platform-dependent drift: a Windows CPU runner exceeded 1e-3 absolute at
-those two points while every shallower point passed. The single-prompt calibration runs at the tight one.
-A failure reports the greatest absolute and relative differences so the next platform carries numbers.
+For a left-padded text batch, positions count from zero at the first real token in each row. Core Hugging
+Face models and nnsight apply this convention when the full attention mask matches the input tokens, as the
+TransformerLens bridge does. A caller's explicit position IDs take precedence. Cached forwards with a mask
+that spans the prefix keep the model's cache position handling. Composite models in the core Hugging Face
+backend retain their own position layout.
+
+Pad positions are undefined by contract. Value cases on padded dataset batches use relative and absolute
+tolerances of 0.001 on real positions to account for platform-dependent drift at the unembed input and logits.
+Single-prompt calibration uses a tighter tolerance. A failure reports the greatest absolute and relative
+differences.
 
 ## The report
 
