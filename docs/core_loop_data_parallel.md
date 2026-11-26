@@ -372,7 +372,20 @@ Sixteen steps show that the run works, not that the tuning helps.
 
 `runs/rte_latent.gemma3_27b.core.fsdp2.yaml` is the same run on gemma-3-27b-it, with transcoders at layers 31 and 40. It
 overrides the model, the layers and the transcoder repository, and keeps the plan and the schedule: neither names a
-layer. It is shaped for two 32 GB cards and has not been launched yet.
+layer. Launched on two 32 GB cards (ROCm), with eight steps and four validation batches in each stage and otherwise as
+shipped:
+
+- Each stage trained exactly what its entry selects, as at 4B, and both ranks reported the same validation metrics.
+- Each card peaked at 6.47 GiB allocated, in both stages, at about 5.8 seconds a step.
+- Host resident memory peaked at 51.8 GiB on rank 0 and 32.8 GiB on rank 1, and the 123 GiB host kept at least 55 GiB
+  available.
+
+Leaving the vision layers out of the plan raises each card's peak to 8.28 GiB: they are then gathered with the root
+unit for the whole forward pass.
+
+FSDP2 memory tracking (`track_fsdp_mem` in `memprofiler_cfg`) does not yet work with this plan. PyTorch's tracker fails
+in the first backward pass on a unit whose forward never ran, such as the vision layers here
+([finetuning-scheduler#246](https://github.com/speediedan/finetuning-scheduler/issues/246)).
 
 ## What the runner does
 
