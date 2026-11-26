@@ -1575,9 +1575,9 @@ Important detail:
 The relevant pieces are:
 
 1. dashboard generation creates Neuronpedia export bundles under:
-  - `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/<model>/<layer-source-set>`
+  - `$NEURONPEDIA_EXPORT_ROOT/<model>/<layer-source-set>`, else `$IT_NP_CACHE/exports/<model>/<layer-source-set>`
 2. each bundle includes `activations/batch-*.jsonl.gz`
-3. the localhost concept-direction notebook calls `prepare_local_explanation_backfill(...)` before `ensure_local_feature_explanations(...)`
+3. the experiment harness calls `prepare_local_explanation_backfill(...)` (its export root defaults to the one above) before `ensure_local_feature_explanations(...)`
 4. that helper searches the local export `activations/` batches for the exact feature index and writes a feature-specific Interpretune cache artifact under:
   - `IT_NP_CACHE/v1/<model>/<layer-source-set>/feature-activations/feature-<index>.jsonl.gz`
 5. the explanation-generation helper then reads those cached rows to build/import explanations into the local DB
