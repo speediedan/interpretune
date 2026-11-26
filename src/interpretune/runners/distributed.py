@@ -1309,7 +1309,33 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
         object.__delattr__(module, META_INIT_SOURCE)
 
 
-def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0) -> Any:
+class BatchShare:
+    """A batch sampler taking every ``shares``-th batch of ``batch_sampler``, from batch ``index`` on.
+
+    Every rank builds the same batch sequence (the same sampler, shuffled from the same seed), and each takes its own
+    batches of it, so each batch is the one a single process would form and no rank pads its share: the shares may
+    differ by one batch.
+    """
+
+    def __init__(self, batch_sampler: Any, index: int, shares: int) -> None:
+        self.batch_sampler, self.index, self.shares = batch_sampler, index, shares
+
+    def __iter__(self) -> Iterator[list[int]]:
+        for i, batch in enumerate(self.batch_sampler):
+            if i % self.shares == self.index:
+                yield batch
+
+    def __len__(self) -> int:
+        return len(range(self.index, len(self.batch_sampler), self.shares))
+
+    def set_epoch(self, epoch: int) -> None:
+        """Reshuffle the shared batch sequence for ``epoch``, alike on every rank."""
+        set_epoch = getattr(getattr(self.batch_sampler, "sampler", None), "set_epoch", None)
+        if set_epoch is not None:
+            set_epoch(epoch)
+
+
+def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0, share_batches: bool = False) -> Any:
     """``loader`` rebuilt over a ``DistributedSampler`` that gives this rank its share of the dataset.
 
     Under a placement that is not data parallel (``tp``), every rank takes the whole dataset in the same order instead:
@@ -1320,6 +1346,11 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0)
     original did (with ``seed``, the same on every rank; call ``sampler.set_epoch`` each epoch). Without ``drop_last``,
     ``DistributedSampler`` pads the last round with repeated samples so every rank takes the same number of batches,
     so a metric averaged over an uneven dataset counts those samples twice.
+
+    With ``share_batches`` (the analysis runner under a data-parallel placement), the share is taken in whole batches
+    instead (:class:`BatchShare`): every rank forms the single-process batch sequence and takes every
+    :attr:`DistributedRun.data_shares`-th batch of it, with no padding, so the rows each batch yields are the ones a
+    single process would yield for it.
 
     Raises:
         MisconfigurationException: If ``loader`` is not a ``DataLoader``, iterates an ``IterableDataset``, or uses a
@@ -1352,14 +1383,32 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0)
             " samples: use PyTorch's sequential or random sampler (without replacement), or shard the data by rank in"
             " the datamodule."
         )
+    by_batch = share_batches and run.data_shares > 1
     dist_sampler = DistributedSampler(
         loader.dataset,
-        num_replicas=run.data_shares,
-        rank=run.data_index,
+        num_replicas=1 if by_batch else run.data_shares,
+        rank=0 if by_batch else run.data_index,
         shuffle=type(sampler) is RandomSampler,
         seed=seed,
         drop_last=loader.drop_last,
     )
+    if by_batch:
+        assert loader.batch_size is not None  # a BatchSampler over the original sampler, checked above
+        shared = BatchShare(
+            BatchSampler(dist_sampler, loader.batch_size, loader.drop_last), run.data_index, run.data_shares
+        )
+        return DataLoader(
+            loader.dataset,
+            batch_sampler=shared,
+            num_workers=loader.num_workers,
+            collate_fn=loader.collate_fn,
+            pin_memory=loader.pin_memory,
+            timeout=loader.timeout,
+            worker_init_fn=loader.worker_init_fn,
+            multiprocessing_context=loader.multiprocessing_context,
+            prefetch_factor=loader.prefetch_factor if loader.num_workers > 0 else None,
+            persistent_workers=loader.persistent_workers,
+        )
     return DataLoader(
         loader.dataset,
         batch_size=loader.batch_size,
@@ -1403,6 +1452,27 @@ def reduce_metrics(metrics: Mapping[str, float], run: DistributedRun) -> dict[st
     values = torch.tensor([float(metrics[k]) for k in keys], dtype=torch.float64, device=device)
     dist.all_reduce(values)
     return {k: v / run.world_size for k, v in zip(keys, values.tolist())}
+
+
+@contextmanager
+def gradient_sync_off(module: torch.nn.Module) -> Iterator[None]:
+    """Turn off FSDP2's gradient reduction across ranks for every unit of ``module`` in the enclosed block.
+
+    Under FSDP2 replication (``ddp``) a backward pass otherwise reduces each parameter's gradient across the
+    replicas, a collective every rank must make in step. The analysis runner's ranks take their own batches, possibly
+    one more on some ranks than others, so a gradient an op computes stays its own rank's. Units are restored to
+    reducing on exit.
+    """
+    from torch.distributed.fsdp import FSDPModule
+
+    units = [unit for unit in module.modules() if isinstance(unit, FSDPModule)]
+    for unit in units:
+        unit.set_requires_gradient_sync(False, recurse=False)
+    try:
+        yield
+    finally:
+        for unit in units:
+            unit.set_requires_gradient_sync(True, recurse=False)
 
 
 @contextmanager
