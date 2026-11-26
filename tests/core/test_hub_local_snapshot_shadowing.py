@@ -19,9 +19,7 @@ from interpretune.hub.components import (
     local_publish,
     resolve_component_manifest,
 )
-from tests.rte_component import rte_entrypoint_src
-
-RTE = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
+from tests.rte_component import rte_component_source, rte_entrypoint_src
 
 
 def _hub_snapshot(cache: Path, repo_id: str, sha: str, *, make_main: bool) -> Path:
@@ -50,17 +48,17 @@ class TestLocalSnapshotResolution:
     def test_a_local_only_repo_resolves_silently(self, tmp_path):
         """The in-tree seeds: nothing is shadowed, so nothing is said."""
         cache = tmp_path / "cache"
-        local_publish(RTE, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         revision, shadow = _resolved_silently("speediedan/rte", cache)
         assert is_local_revision(revision) and not shadow
 
     def test_a_local_snapshot_over_a_hub_revision_is_named(self, tmp_path):
-        from tests.rte_component import rte_entrypoint_src
+        from tests.rte_component import rte_component_source, rte_entrypoint_src
 
         cache = tmp_path / "cache"
         _hub_snapshot(cache, "speediedan/rte", "a" * 40, make_main=True)
         local_publish(
-            RTE, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
+            rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache
         )  # refs/main now local
         with pytest.warns(
             LocalSnapshotWarning, match=r"shadows the cached Hub revision.*aaaaaaaaaaaa.*the Hub was not consulted"
@@ -70,7 +68,7 @@ class TestLocalSnapshotResolution:
 
     def test_a_hub_revision_resolves_silently_even_beside_local_snapshots(self, tmp_path):
         cache = tmp_path / "cache"
-        local_publish(RTE, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         _hub_snapshot(cache, "speediedan/rte", "b" * 40, make_main=True)  # a later pull moved refs/main to the Hub
         revision, shadow = _resolved_silently("speediedan/rte", cache)
         assert revision == "b" * 40 and not shadow
@@ -78,7 +76,7 @@ class TestLocalSnapshotResolution:
     def test_require_hub_refuses_a_local_snapshot_naming_the_fetch(self, tmp_path):
         cache = tmp_path / "cache"
         _hub_snapshot(cache, "speediedan/rte", "c" * 40, make_main=False)
-        local_publish(RTE, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         with pytest.raises(
             LocalSnapshotShadowsHubError, match=r"cccccccccccc.*interpretune.hub.pull\('speediedan/rte'\)"
         ):

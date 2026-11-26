@@ -767,10 +767,9 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
 
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
 
     notebook_path = NOTEBOOKS_DIR / "quickstart" / "cpu_quickstart.ipynb"
     output_dir = tmp_path / "notebook_outputs"
@@ -822,10 +821,9 @@ def test_gradient_readouts_notebook(tmp_path: Path):
 
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
@@ -867,10 +865,9 @@ def test_role_kinds_tuning_notebook(tmp_path: Path):
     """
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
@@ -916,10 +913,9 @@ def test_runner_flexibility_demo_notebook(tmp_path: Path):
 
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
 
     notebook_path = NOTEBOOKS_DIR / "runners" / "runner_flexibility_demo.ipynb"
     output_dir = tmp_path / "notebook_outputs"
@@ -1037,10 +1033,9 @@ def test_neuron_finder_notebook(tmp_path: Path):
 
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
@@ -1079,10 +1074,9 @@ def test_bsf_blocks_notebook(tmp_path: Path):
 
     from interpretune.hub.components import local_publish
 
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
-    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
-    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
