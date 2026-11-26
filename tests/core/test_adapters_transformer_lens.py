@@ -608,6 +608,96 @@ class TestTrailingPadTensorRefusal:
         assert {key: owner for key, owner in owners.items() if owner is not BaseITLensModule} == {}
 
 
+# Building a gemma2 or llama bridge replaces gemma's eager attention process-wide, which breaks every later
+# circuit-tracer attribution on a gemma model; the fixture hands the class's predecessors' state back afterwards.
+@pytest.mark.usefixtures("unpatched_gemma_eager_attention")
+class TestTransformerLensGenerationCache:
+    @pytest.mark.parametrize("architecture", ["gemma2", "llama"])
+    def test_default_generation_matches_full_sequence_logits(self, architecture):
+        from transformer_lens.config import TransformerBridgeConfig
+        from transformer_lens.model_bridge import TransformerBridge
+        from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
+        from transformer_lens.model_bridge.sources.transformers import map_default_transformer_lens_config
+        from transformers import Gemma2Config, Gemma2ForCausalLM, LlamaConfig, LlamaForCausalLM
+
+        from interpretune.adapters.transformer_lens.adapter import ITLensModule
+        from interpretune.adapters.transformer_lens.config import TLensGenerationConfig
+
+        config_class, model_class = {
+            "gemma2": (Gemma2Config, Gemma2ForCausalLM),
+            "llama": (LlamaConfig, LlamaForCausalLM),
+        }[architecture]
+        config = config_class(
+            hidden_size=32,
+            intermediate_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_hidden_layers=2,
+            vocab_size=32,
+            head_dim=8,
+            eos_token_id=None,
+            pad_token_id=0,
+            attn_implementation="eager",
+        )
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(0)
+            raw = model_class(config).eval()
+        tokens = torch.tensor([[4, 6, 8]])
+        # Wrapping the model replaces its components, so measure the independent HF reference first.
+        expected = raw.generate(
+            tokens, max_new_tokens=3, use_cache=False, do_sample=False, output_logits=True, return_dict_in_generate=True
+        )
+
+        bridge_config = TransformerBridgeConfig.from_dict(vars(map_default_transformer_lens_config(config)))
+        bridge_config.architecture = model_class.__name__
+        adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
+        module = ITLensModule.__new__(ITLensModule)
+        torch.nn.Module.__init__(module)
+        module.model = TransformerBridge(raw, adapter, tokenizer=None)
+        generation = TLensGenerationConfig(
+            max_new_tokens=3, do_sample=False, stop_at_eos=False, output_logits=True, verbose=False
+        )
+        actual = module.it_generate(tokens, **generation.generate_kwargs)
+
+        assert len(actual.logits) == len(expected.logits) == 3
+        torch.testing.assert_close(actual.sequences, expected.sequences)
+        torch.testing.assert_close(actual.logits, expected.logits)
+
+    @pytest.mark.parametrize(
+        ("transformers", "tl", "requested", "enabled"),
+        [
+            ("5.24.0", "4.0.0", None, False),
+            ("5.24.0", "4.4.1", None, False),
+            ("5.24.0", "4.0.0", False, False),
+            ("5.23.0", "4.0.0", None, True),
+            ("5.23.0", "4.0.0", True, True),
+            ("5.23.0", "4.0.0", False, False),
+        ],
+    )
+    def test_cache_default_and_opt_out(self, monkeypatch, transformers, tl, requested, enabled):
+        from interpretune.adapters.transformer_lens import adapter
+
+        monkeypatch.setattr(adapter, "transformers_version", transformers)
+        monkeypatch.setattr(adapter, "version", lambda _: tl)
+        called = {}
+        monkeypatch.setattr(adapter.BaseITModule, "it_generate", lambda self, batch, **kwargs: called.update(kwargs))
+        module = adapter.ITLensModule.__new__(adapter.ITLensModule)
+        torch.nn.Module.__init__(module)
+        kwargs = {} if requested is None else {"use_past_kv_cache": requested}
+        module.it_generate(torch.tensor([[4, 6, 8]]), **kwargs)
+        assert called == {"use_past_kv_cache": enabled}
+
+    def test_explicit_cache_request_names_the_affected_versions(self, monkeypatch):
+        from interpretune.adapters.transformer_lens import adapter
+
+        monkeypatch.setattr(adapter, "transformers_version", "5.24.0")
+        monkeypatch.setattr(adapter, "version", lambda _: "4.4.1")
+        module = adapter.ITLensModule.__new__(adapter.ITLensModule)
+        torch.nn.Module.__init__(module)
+        with pytest.raises(ValueError, match=r"use_past_kv_cache=True.*transformers 5\.24\.0.*TransformerLens 4\.4\.1"):
+            module.it_generate(torch.tensor([[4, 6, 8]]), use_past_kv_cache=True)
+
+
 # Every architecture the mapping tests cover; the gated models need bf16 CUDA and the gated-repo token.
 ARCH_MAPPING_CASES = [
     pytest.param("get_it_session__l_tl_bridge_gpt2__setup", GPT2_EXPECTATIONS, id="gpt2"),
