@@ -367,7 +367,24 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
     TransformerLens (``W_U``, stored ``(d, vocab)`` and transposed here). Raises when no unembed
     surface is found, because silently returning an embedding matrix would only be correct for
     tied-weight models and wrong without warning everywhere else.
+
+    A weight placement ``tp`` split across ranks is returned whole (gathered with
+    :func:`~interpretune.runners.distributed.whole_tensor`, once per analysis run), so every rank
+    reads what one process would.
     """
+    info = _resolve_unembed_and_norm_scale(module)
+    from interpretune.runners.distributed import whole_tensor
+
+    return UnembedNormInfo(
+        w_u=whole_tensor(info.w_u),
+        norm_scale=None if info.norm_scale is None else whole_tensor(info.norm_scale),
+        norm_kind=info.norm_kind,
+        norm_bias=None if info.norm_bias is None else whole_tensor(info.norm_bias),
+    )
+
+
+def _resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
+    """:func:`resolve_unembed_and_norm_scale` before any split weight is gathered."""
     for attr_name in ("model", "replacement_model"):
         model = getattr(module, attr_name, None)
         if model is None:
@@ -949,7 +966,17 @@ def jlens_direction_rows(
 
 
 def resolve_embedding_weight(module: Any) -> torch.Tensor:
-    """Resolve an embedding weight matrix from a generic module or its analysis backend."""
+    """Resolve an embedding weight matrix from a generic module or its analysis backend.
+
+    A weight placement ``tp`` split across ranks is returned whole, as in :func:`resolve_unembed_and_norm_scale`.
+    """
+    from interpretune.runners.distributed import whole_tensor
+
+    return whole_tensor(_resolve_embedding_weight(module))
+
+
+def _resolve_embedding_weight(module: Any) -> torch.Tensor:
+    """:func:`resolve_embedding_weight` before a split weight is gathered."""
     analysis_backend = get_analysis_backend(module)
     if analysis_backend is not None:
         try:
