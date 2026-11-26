@@ -173,3 +173,26 @@ def tiny_gemma2_backend_twins(n_layers: int = 2, seed: int = 933):
     }
     assert dtypes == {torch.float32}, dtypes
     return nnsight, interp_engine
+
+
+def tiny_gemma2_tl_twin(nnsight_model):
+    """Circuit-tracer's TransformerLens replacement model on the same weights and transcoders as ``nnsight_model``.
+
+    The bridge wraps its own copy of the causal LM, built from the nnsight model's config and loaded with every weight
+    of it, so the two backends answer one model.
+    """
+    import copy
+
+    from circuit_tracer.replacement_model.replacement_model_transformerlens import TransformerLensReplacementModel
+    from transformer_lens.model_bridge import TransformerBridge
+    from transformers import AutoModelForCausalLM
+
+    config = copy.deepcopy(nnsight_model._module.config)
+    config._attn_implementation = "eager"
+    hf_model = AutoModelForCausalLM.from_config(config).eval()
+    weights = {k: v for k, v in nnsight_model._module.state_dict().items() if not k.startswith("transcoders.")}
+    hf_model.load_state_dict(weights)  # strict: every causal-LM weight is copied
+    bridge = TransformerBridge.boot_transformers(
+        config._name_or_path, hf_model=hf_model, tokenizer=nnsight_model.tokenizer, device="cpu", dtype=torch.float32
+    )
+    return TransformerLensReplacementModel.from_bridge(bridge, copy.deepcopy(nnsight_model.transcoders._module))
