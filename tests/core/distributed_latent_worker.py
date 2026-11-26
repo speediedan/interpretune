@@ -1,4 +1,4 @@
-"""One rank of the two-rank latent-tuning checks: latent-space fine-tuning through the core loop under FSDP2 (#834)
+"""One rank of the two-rank latent-tuning checks: latent space fine-tuning through the core loop under FSDP2 (#834)
 and tensor parallelism (#853).
 
 A SAELens composition (the tiny custom TransformerLens model of ``CoreSLCust``) with SAEs spliced in, so the SAE

@@ -119,11 +119,17 @@ def _assert_close_padded(got: torch.Tensor, ref: torch.Tensor, *, what: str) -> 
     )
 
 
+#: Two adds in opposite orders, on every vendor. The orders differ only by float32 rounding at the intervened position,
+#: carried through the later layers, so the spread follows the inputs rather than the vendor: 1.07e-4 to 1.47e-4
+#: greatest absolute difference on ROCm (#794: gemma-3-1b-it under circuit-tracer over nnsight, three runs on one host),
+#: and 1.125e-4 on NVIDIA once the seed's left-padded rows carried their attention mask (within ``CONVERGENCE_ATOL``,
+#: 1e-4, before). About twice that spread, and far tighter than the padded tolerance above. A dropped or doubled add
+#: fails the summed-add comparison against the HF forward first.
+COMMUTE_ATOL = 3e-4
+
 #: ROCm tolerances, applied only to tensors on a ROCm device, each about twice the spread measured on the first
 #: dual-vendor parity runs (#794: gemma-3-1b-it under circuit-tracer over nnsight, three runs on one host):
 #:
-#: - ``ROCM_COMMUTE_ATOL``: two adds in opposite orders, measured at 1.07e-4 to 1.47e-4 greatest absolute difference
-#:   (``CONVERGENCE_ATOL`` is 1e-4; NVIDIA agrees within it).
 #: - ``ROCM_BATCHED_MISMATCH_FRACTION`` and ``ROCM_BATCHED_ATOL``: fused (batched) hook configs against sequential ones.
 #:   The two paths' SAE inputs differ by about one float32 ulp, and pre-activations within about 2e-4 of their JumpReLU
 #:   threshold land on different sides of it; each such latent switches on in one path only, a discrete jump that
@@ -135,7 +141,6 @@ def _assert_close_padded(got: torch.Tensor, ref: torch.Tensor, *, what: str) -> 
 #: - ``ROCM_EDGE_ATOL``: the circuit-tracer edge-prediction case's active-feature check (``atol`` 1e-3 elsewhere). On
 #:   speedieamd, two of the first AMD CI runs (#703) put one of 3,030 active features at 1.293e-3 and 1.295e-3 off its
 #:   edge prediction, the same feature and element both times; other runs, and NVIDIA, agree within 1e-3.
-ROCM_COMMUTE_ATOL = 3e-4
 ROCM_EDGE_ATOL = 2.6e-3
 ROCM_BATCHED_MISMATCH_FRACTION = 5e-3
 ROCM_BATCHED_ATOL = 1.5e-1
@@ -1329,9 +1334,9 @@ class ModelBackendConformance:
             ref = hf.steered_many(ids, [(point, add_fn(STEER_SCALE + half), "last_token")], attention_mask=mask)
             _assert_close_padded(first, ref["logits"][0, -1, :], what=f"batch {i}: summed-add logits")
             # the measured difference in the message, as `_assert_close_padded` reports it, so a platform failure
-            # reports a number (this is `torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL)`)
+            # reports a number (this is `torch.allclose(first, second, rtol=0, atol=COMMUTE_ATOL)`)
             diff = (first.to(torch.float32) - second.to(torch.float32)).abs().max().item()
-            atol = ROCM_COMMUTE_ATOL if _suite_on_rocm(suite) else CONVERGENCE_ATOL
+            atol = COMMUTE_ATOL
             assert diff <= atol, (
                 f"batch {i}: two adds in opposite orders disagreed: greatest absolute difference {diff:.3e}"
                 f" (atol={atol}, rtol=0)"

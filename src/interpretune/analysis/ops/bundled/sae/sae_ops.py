@@ -1,4 +1,4 @@
-"""Bundled SAE op family: latent-model caching forward passes, alive-latent extraction, and ablation.
+"""Bundled SAE op family: latent model caching forward passes, alive-latent extraction, and ablation.
 
 Self-contained modulo the sanctioned op-authoring surfaces (:mod:`interpretune.analysis.optools`,
 :mod:`interpretune.analysis.backends`); see the custom ops composition guide.
@@ -164,12 +164,12 @@ def model_ablation_impl(
 def latent_correct_acts_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Implementation for computing correct activations from latent-model activations.
+    """Implementation for computing correct activations from latent model activations.
 
-    Latent-model-agnostic despite living in the `sae` op family: it reads the activation `cache`,
+    Latent model-agnostic despite living in the `sae` op family: it reads the activation `cache`,
     `alive_latents`, `answer_indices` and `logit_diffs` off the batch and filters by
     `analysis_cfg.names_filter`. Nothing here is SAE-specific, which is why it was renamed from
-    `sae_correct_acts` (latent-model terminology normalization).
+    `sae_correct_acts` (latent model terminology normalization).
     """
     # Validate required inputs # TODO: refactor all required input checks to use shared AnalysisOp or Dispatcher logic
     required_inputs = ["logit_diffs", "answer_indices", "cache"]

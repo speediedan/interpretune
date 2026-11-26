@@ -370,7 +370,8 @@ class TLensGenerationConfig(CoreGenerationConfig):
     stop_at_eos: bool = True
     eos_token_id: int | None = None
     freq_penalty: float = 0.0
-    use_past_kv_cache: bool = True
+    # None lets the adapter select the cache default for the installed dependency pair.
+    use_past_kv_cache: bool | None = None
     prepend_bos: bool | None = None
     padding_side: Literal["left", "right"] | None = None
     return_type: str | None = "input"

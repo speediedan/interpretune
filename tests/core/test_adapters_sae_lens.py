@@ -916,7 +916,7 @@ class TestBridgeTranscoderSupport:
 
 
 class TestLatentModelHandleLifecycle:
-    """Latent-model handle lifecycle across backend splice paths.
+    """Latent model handle lifecycle across backend splice paths.
 
     Contract validated for every model backend: after any ``fwd_w_cache_and_latent_models``
     call, (a) the model produces baseline (unspliced) outputs again — no residual splice

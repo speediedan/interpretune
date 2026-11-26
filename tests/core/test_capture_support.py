@@ -1,7 +1,7 @@
 """The capture declaration: a support record for the one surface every model backend has.
 
 ``Capability.CAPTURE`` answers whether a backend captures at all; what varies between backends is WHICH vocabulary
-points they can capture on the model they wrap, and that is a typed record beside the intervention and latent-model
+points they can capture on the model they wrap, and that is a typed record beside the intervention and latent model
 records. These tests pin the record's semantics and the inventory it is a fraction of, without a
 session; the conformance suite is where a live backend's declaration is checked against what it captures.
 """
