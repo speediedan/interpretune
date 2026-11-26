@@ -28,23 +28,22 @@ pytest.importorskip(
 )
 pytest.importorskip("lightning")
 
-RTE_COMPONENT_DIR = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "rte"
 LIMITS = {"max_epochs": 6, "limit_train_batches": 2, "limit_val_batches": 2}
 # a large `min_delta` makes the second phase plateau within a CPU-sized run
 MIN_DELTA = 2.0
 
 
 def _publish_rte(monkeypatch) -> str:
-    """The revision of the in-tree ``rte`` component, published locally with the cached ``rte_boolq.py``.
+    """The revision of a local publish of the pinned ``rte`` component, with its ``rte_boolq.py``.
 
     Every reference the run makes names this revision: a cache warmed at a pinned Hub revision (as CI's is) resolves an
     unrevisioned reference to the pin, which need not carry ``rte_ft``.
     """
     from interpretune.hub.components import local_publish
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
-    return local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    return local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
 
 
 @pytest.fixture

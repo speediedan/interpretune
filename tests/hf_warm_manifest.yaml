@@ -16,7 +16,7 @@
 # exists to exercise? A resolution test that discovers a repository's real layout and a pinned-pull test
 # that verifies a fetch both fail that question, and warming either would leave a green test that checks
 # nothing. A tokenizer that a session fixture happens to load passes it easily.
-cache_version: 1
+cache_version: 2
 models:
   # Both spellings are used in the tree and cache under separate directories, so both are warmed.
   - repo_id: gpt2
@@ -69,7 +69,7 @@ components:
   # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
-    revision: b1a920fc1400837a62bc7a2b155e39e5da206b86
+    revision: 834a448741b2d092372d97f481d8aa10d609a615
   # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
   # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
   - repo_id: speediedan/prompt-configs

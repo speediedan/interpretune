@@ -11,7 +11,6 @@ phases. Recovery re-thaws in two steps with finetuning-scheduler's per-phase ``r
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import torch
@@ -24,18 +23,16 @@ pytest.importorskip("circuit_tracer", reason="the rte_sparse variant's transcode
 
 from tests.core.rte_sparse_stub import EnforcementProbe, PhaseStartParams, StageRecorder  # noqa: E402
 
-RTE_COMPONENT_DIR = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "rte"
-
 
 @pytest.fixture
 def rte_component(monkeypatch):
-    """The in-tree ``rte`` component, published locally with the warmed ``rte_boolq.py``."""
+    """The pinned ``rte`` component, published locally with its ``rte_boolq.py``."""
     from interpretune.hub.components import local_publish
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
-    return local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    return local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
 
 
 def test_the_chain_partition_holds_the_graph_items_out_of_training(rte_component):

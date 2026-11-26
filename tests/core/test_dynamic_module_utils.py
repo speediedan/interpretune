@@ -22,6 +22,13 @@ from interpretune.analysis.ops.dynamic_module_utils import (
 class TestGetCachedModuleFileIt:
     """Test suite for get_cached_module_file_it function."""
 
+    @pytest.fixture(autouse=True)
+    def _no_module_file_to_read(self):
+        """These tests resolve to paths that do not exist; the imports of real files are covered by the round
+        trip."""
+        with patch("interpretune.analysis.ops.dynamic_module_utils._sibling_imports", return_value=[]):
+            yield
+
     def setup_method(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
