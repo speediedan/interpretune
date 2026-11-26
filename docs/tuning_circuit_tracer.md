@@ -14,9 +14,17 @@ transcoders, whichever backend it runs over:
   `promote: {"role:artifact & layers:-4:": "latent:transcoder"}` promotes the top four layers' transcoders, and
   `role:latent:transcoder & layers:-4:` thaws them. A cross-layer transcoder holds every layer in each tensor, so its
   tensors locate at no layer and a layer range is refused; promote it whole, by role.
-- **The base model is refused.** The transcoders were trained on the base model's activations, so a schedule
-  naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
-  path ([interpretune#813](https://github.com/interpretune/interpretune/issues/813)).
+- **The base model is refused by default.** The transcoders were trained on the base model's activations, so a schedule
+  naming a base-model parameter is refused, saying why. `CircuitTracerConfig.tune_base` tunes it under the frozen
+  replacement instead ([interpretune#813](https://github.com/interpretune/interpretune/issues/813)): its tensors join
+  the view as `base`.
+- **Everything else in the view is located as on the other compositions.** Under `tune_base` the base model's tensors
+  take their layers and components from the model's published component map, as on the core/HF and nnsight
+  compositions, so one address selects the same tensors on each: `role:base & layers:-4:` the top four blocks,
+  `role:base & component:mlp.* & layers:-4:` their MLPs. An attached intervention or latent model takes the layer of its
+  site (`role:intervention & layers:12`). Where no map describes the model, its tensors locate by its block list. Name
+  the role in a phase over a layer range: the base model and the transcoders share their layers, so `layers:-4:` alone
+  also names the transcoders, which are refused until a promotion.
 - **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
   meta device and reloads it with `load_state_dict(assign=True)`, and by default both steps replace its parameter
   objects, which an optimizer built before an attribution would not see. The composition attributes under torch's

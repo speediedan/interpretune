@@ -220,3 +220,109 @@ class TestPublishedTreeMatchesStaged:
         assert publish_mod.publish_component(root, "org/coll") == "sha"
         assert calls["kwargs"]["match_staged"] is True and calls["kind"] == "component"
         assert calls["staged"] == ["README.md", "it_component.yaml", "ops.yaml", "tests/test_ops.py"]
+
+
+class TestDeclaredCard:
+    """A declared card text is published after the generated sections, and an undeclared one is not."""
+
+    TEXT = (
+        "## Evidence\n\nMeasured on [the paper](https://example.org/p), see [limits](#limits).\n\n## Limits\n\nFew.\n"
+    )
+
+    def _component(self, tmp_path: Path, text: str | None, card: str = "README.md") -> Path:
+        root = tmp_path / "component"
+        root.mkdir()
+        (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(card=card)), encoding="utf-8")
+        (root / "ops.yaml").write_text("ops: {}\n", encoding="utf-8")
+        if text is not None:
+            (root / "README.md").write_text(text, encoding="utf-8")
+        return root
+
+    def _card(self, root: Path, out: Path) -> str:
+        from interpretune.hub.cards import generate_component_card
+        from interpretune.hub.publish import build_component_tree
+
+        manifest = build_component_tree(root, out)
+        return str(generate_component_card(manifest, "org/coll", tree=out))
+
+    def test_shape_is_a_relative_markdown_path(self):
+        for bad in ("/etc/README.md", "../README.md", "README.txt", "C:\\x\\README.md", 3, ""):
+            with pytest.raises(ComponentManifestError, match="`card` must be a relative path"):
+                validate_component_manifest(_manifest(card=bad), source="t")
+        validate_component_manifest(_manifest(card="README.md"), source="t")
+
+    def test_the_declared_text_follows_the_generated_sections(self, tmp_path):
+        card = self._card(self._component(tmp_path, self.TEXT), tmp_path / "out")
+        assert card.index("## Operations") < card.index("## Evidence")
+        assert "[the paper](https://example.org/p)" in card
+        assert card.startswith("---\n") and "library_name: interpretune" in card
+
+    def test_an_undeclared_readme_does_not_reach_the_card(self, tmp_path):
+        from interpretune.hub.cards import generate_component_card
+        from interpretune.hub.publish import build_component_tree
+
+        root = self._component(tmp_path, self.TEXT)
+        (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest()), encoding="utf-8")
+        out = tmp_path / "out"
+        card = str(generate_component_card(build_component_tree(root, out), "org/coll", tree=out))
+        assert "Evidence" not in card and not (out / "README.md").exists()
+
+    def test_the_published_readme_is_the_whole_card(self, tmp_path):
+        from interpretune.hub.components import local_publish
+
+        revision = local_publish(self._component(tmp_path, self.TEXT), "org/coll", cache_dir=tmp_path / "cache")
+        published = tmp_path / "cache" / "models--org--coll" / "snapshots" / revision / "README.md"
+        text = published.read_text(encoding="utf-8")
+        assert "## Operations" in text and "## Evidence" in text
+
+    def test_a_missing_file_and_a_path_outside_are_refused(self, tmp_path):
+        from interpretune.hub.publish import build_component_tree
+
+        with pytest.raises(FileNotFoundError, match="declares card 'README.md'"):
+            build_component_tree(self._component(tmp_path, None), tmp_path / "out")
+        outside = tmp_path / "secret.md"
+        outside.write_text("outside\n", encoding="utf-8")
+        root = tmp_path / "component"
+        try:
+            (root / "README.md").symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks are not available")
+        with pytest.raises(ValueError, match="resolves outside"):
+            build_component_tree(root, tmp_path / "out2")
+
+    @pytest.mark.parametrize(
+        "line, target",
+        [
+            ("[map](docs/map.md)", "docs/map.md"),
+            ("![figure](./figure.png)", "./figure.png"),
+            ("[up](../README.md)", "../README.md"),
+            ("[root](/docs/x)", "/docs/x"),
+            ("[ref]: notes.md", "notes.md"),
+            ('<img src="figure.png">', "figure.png"),
+        ],
+    )
+    def test_a_relative_link_is_refused_and_named(self, tmp_path, line, target):
+        from interpretune.hub.cards import ComponentCardError
+
+        root = self._component(tmp_path, f"text\n\n{line}\n")
+        with pytest.raises(ComponentCardError, match="links relative to its own directory") as err:
+            self._card(root, tmp_path / "out")
+        assert repr(target) in str(err.value)
+
+    def test_code_is_not_a_link(self, tmp_path):
+        text = "Use `[a](b.md)`.\n\n```md\n[c](d.md)\n```\n\n<mail@example.org> [m](mailto:a@example.org)\n"
+        assert "[c](d.md)" in self._card(self._component(tmp_path, text), tmp_path / "out")
+
+    def test_a_published_card_is_not_accepted_as_the_text(self, tmp_path):
+        from interpretune.hub.cards import ComponentCardError
+
+        first = self._card(self._component(tmp_path, self.TEXT), tmp_path / "out")
+        (tmp_path / "component" / "README.md").write_text(first, encoding="utf-8")
+        with pytest.raises(ComponentCardError, match="front matter"):
+            self._card(tmp_path / "component", tmp_path / "out2")
+
+    def test_a_declared_card_needs_the_staged_tree(self):
+        from interpretune.hub.cards import ComponentCardError, generate_component_card
+
+        with pytest.raises(ComponentCardError, match="no tree was given"):
+            generate_component_card(_manifest(card="README.md"), "org/coll")

@@ -710,7 +710,7 @@ def local_publish(
     with tempfile.TemporaryDirectory() as tmp:
         build = Path(tmp) / "build"
         manifest = build_component_tree(Path(component_dir), build, entrypoint_src=entrypoint_src)
-        generate_component_card(manifest, repo_id).save(build / "README.md")
+        generate_component_card(manifest, repo_id, tree=build).save(build / "README.md")
         digest = hashlib.sha256()
         for f in sorted(p for p in build.rglob("*") if p.is_file()):
             digest.update(f.relative_to(build).as_posix().encode())
