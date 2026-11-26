@@ -2211,6 +2211,15 @@ def _resolve_columnar_tokenizer_name(config: NeuronpediaDashboardPipelineConfig)
         tokenizer_name = metadata.get("tokenizer_name")
         if isinstance(tokenizer_name, str) and tokenizer_name.strip():
             return tokenizer_name
+    return _resolve_hf_model_id(config)
+
+
+def _resolve_hf_model_id(config: NeuronpediaDashboardPipelineConfig) -> str:
+    """The Hub id (or local path) of the model the corpus was generated with.
+
+    ``model_name`` is the Neuronpedia model id, which is the Hub id only when it names a namespace. Otherwise the
+    namespace comes from a Hub release URL, and failing that the Neuronpedia id is all that is known.
+    """
     if config.hf_model_path:
         return config.hf_model_path
 
@@ -2449,12 +2458,9 @@ def ensure_source_ids_sidecar(config: NeuronpediaDashboardPipelineConfig, *, ove
     )
 
 
-DASHBOARD_MANIFEST_FILE = "dashboards.json"
-# 2: adds source_set.capture_hook_name. The bump matters because absence is otherwise ambiguous --
-# at schema 1 a missing field means "written before the field existed", at 2 it means "captured at the
-# hook the SAE declares". A consumer distinguishing a corrected corpus from a defective one needs to
-# tell those apart.
-DASHBOARD_MANIFEST_SCHEMA = 2
+#: A corpus describes itself in the ``it_artifact.json`` envelope every interpretune artifact shares, with kind
+#: ``dashboard-corpus``: one schema window, one validator and one discovery path for corpora and AnalysisStores alike.
+CORPUS_ENVELOPE_FILE = "it_artifact.json"
 
 #: Distributions whose versions determine what a corpus's bytes look like. ``sae-dashboard`` writes
 #: the parquet (page index included), ``pyarrow`` is the writer itself, and ``huggingface_hub``
@@ -2462,22 +2468,28 @@ DASHBOARD_MANIFEST_SCHEMA = 2
 _MANIFEST_TRACKED_DISTRIBUTIONS = ("interpretune", "sae-dashboard", "pyarrow", "huggingface_hub")
 
 
-def dashboard_manifest_path(run_root: Path) -> Path:
-    """Where a corpus records what it is (see :func:`read_dashboard_manifest`)."""
-    return Path(run_root) / DASHBOARD_MANIFEST_FILE
+def corpus_envelope_path(run_root: Path) -> Path:
+    """Where a corpus records what it is (see :func:`read_corpus_envelope`)."""
+    return Path(run_root) / CORPUS_ENVELOPE_FILE
 
 
-def read_dashboard_manifest(run_root: Path) -> dict[str, Any]:
-    """What a corpus says it is, or ``{}`` when it says nothing."""
-    path = dashboard_manifest_path(run_root)
+def read_corpus_envelope(run_root: Path) -> dict[str, Any] | None:
+    """What a corpus says it is, or ``None`` when it carries no envelope.
+
+    An envelope that is present but unreadable, of another kind, or outside this build's schema window raises
+    :class:`~interpretune.hub.artifacts.ArtifactEnvelopeError`: a corpus that misdescribes itself is not treated as
+    one that says nothing.
+    """
+    from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND, ArtifactEnvelopeError, validate_artifact_envelope
+
+    path = corpus_envelope_path(run_root)
     if not path.exists():
-        return {}
+        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        logging.getLogger(__name__).warning("unreadable %s (%s); ignoring", path, exc)
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        raise ArtifactEnvelopeError(f"{path}: unreadable corpus envelope ({exc})") from None
+    return validate_artifact_envelope(payload, source=str(path), kind=DASHBOARD_CORPUS_KIND)
 
 
 def _tracked_distribution_versions() -> dict[str, str]:
@@ -2492,16 +2504,30 @@ def _tracked_distribution_versions() -> dict[str, str]:
     return versions
 
 
-def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict[str, Any]:
+def _corpus_subject(config: NeuronpediaDashboardPipelineConfig) -> dict[str, Any]:
+    """The envelope's ``subject``: the model and dictionary the corpus's activations were computed with."""
+    from interpretune.hub.subject import StoreSubject
+
+    return StoreSubject(
+        model_id=_resolve_hf_model_id(config),
+        tokenizer_id=_resolve_columnar_tokenizer_name(config),
+        dictionaries=({"kind": "sae_lens", "release": config.sae_set, "sae_id": None},),
+        n_layers=config.model_layers,
+    ).to_dict()
+
+
+def build_corpus_envelope(config: NeuronpediaDashboardPipelineConfig) -> dict[str, Any]:
     """Describe a corpus in terms a consumer can act on without opening a single parquet file.
 
     Deliberately DESCRIPTIVE, not authoritative: ``source_ids.json`` remains the single source of
     truth for identity, and this file merely restates it alongside the provenance a reader needs to
     decide whether the corpus is the one they want. Nothing imports from here, so a stale or absent
-    manifest degrades discoverability and nothing else -- which is why it can be refreshed freely
+    envelope degrades discoverability and nothing else -- which is why it can be refreshed freely
     while the source-id sidecar cannot.
     """
     from datetime import datetime, timezone
+
+    from interpretune.hub.artifacts import ARTIFACT_SCHEMA_VERSION, DASHBOARD_CORPUS_KIND, validate_artifact_envelope
 
     run_root = config.run_directory
     requested = config.requested_layer_numbers()
@@ -2510,12 +2536,15 @@ def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict
         for p in run_root.glob("layer_*")
         if p.is_dir() and p.name.removeprefix("layer_").isdigit()
     )
-    return {
-        "schema": DASHBOARD_MANIFEST_SCHEMA,
+    envelope = {
+        "schema": ARTIFACT_SCHEMA_VERSION,
+        "artifact_kind": DASHBOARD_CORPUS_KIND,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "model": {"name": config.model_name, "n_layers": config.model_layers},
+        # The Neuronpedia ids the corpus imports under. `subject.model.id` is the Hub model the activations came
+        # from; Neuronpedia names the same model by its own id, which is what an import and a corpus config match.
+        "identity": {"model_id": config.model_name, "source_set_id": config.neuronpedia_source_set_id},
+        "subject": _corpus_subject(config),
         "source_set": {
-            "id": config.neuronpedia_source_set_id,
             "description": config.neuronpedia_source_set_description,
             "sae_set": config.sae_set,
             "hook_point": config.hook_point,
@@ -2524,7 +2553,7 @@ def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict
             # The two legitimately differ: Gemma Scope 2 transcoders are labelled `hook_mlp_in` and
             # captured at `blocks.{layer}.ln2.hook_out`. Without this field a corpus records nothing
             # about which tensor produced it, so a corrected corpus and one captured at the wrong hook
-            # are indistinguishable in the manifest. `None` means the SAE's declared hook was used.
+            # are indistinguishable in the envelope. `None` means the SAE's declared hook was used.
             "capture_hook_name": config.capture_hook_name,
             "release_id": config.release_id,
             "release_title": config.release_title,
@@ -2554,20 +2583,22 @@ def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict
         },
         "tool_versions": _tracked_distribution_versions(),
     }
+    # writer-side guard, as for stores: never write an envelope this build could not read back
+    return validate_artifact_envelope(envelope, source="<corpus writer>", kind=DASHBOARD_CORPUS_KIND)
 
 
-def ensure_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> Path | None:
-    """Write ``dashboards.json`` at the run root.
+def ensure_corpus_envelope(config: NeuronpediaDashboardPipelineConfig) -> Path | None:
+    """Write the corpus's ``it_artifact.json`` at the run root.
 
     Always overwrites, unlike :func:`ensure_source_ids_sidecar`. The asymmetry is the point: rewriting
     source ids under an already-imported corpus would silently re-key it, whereas this file carries no
-    identity, so a refresh can only make it more accurate.
+    identity of its own, so a refresh can only make it more accurate.
     """
     run_root = config.run_directory
     if not run_root.exists():
         return None
-    path = dashboard_manifest_path(run_root)
-    path.write_text(json.dumps(build_dashboard_manifest(config), indent=2) + "\n", encoding="utf-8")
+    path = corpus_envelope_path(run_root)
+    path.write_text(json.dumps(build_corpus_envelope(config), indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -2648,7 +2679,7 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     config.run_directory.mkdir(parents=True, exist_ok=True)
     # Declare identity up front so the corpus is self-describing even if the run is interrupted.
     ensure_source_ids_sidecar(config)
-    ensure_dashboard_manifest(config)
+    ensure_corpus_envelope(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
@@ -3078,7 +3109,7 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         import_executor.shutdown(wait=True)
     # Refresh now that the layers actually exist: the manifest written at start could only record an
     # empty `layers.generated`, which would misdescribe the very corpus about to be published.
-    ensure_dashboard_manifest(config)
+    ensure_corpus_envelope(config)
     if config.import_to_local_db:
         logger.info(summarize_imported_source_set(config))
     return results
@@ -3256,7 +3287,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-source-ids",
         action="store_true",
-        help="Write (or backfill) source_ids.json and dashboards.json for this run and exit. Makes an "
+        help="Write (or backfill) source_ids.json and the corpus it_artifact.json for this run and exit. Makes an "
         "already-generated corpus self-describing without regenerating it.",
     )
     parser.add_argument(
@@ -3436,7 +3467,7 @@ def main() -> int:
             written = ensure_source_ids_sidecar(config, overwrite=True)
             # Order matters: the manifest restates the source ids, so it must be written second to
             # pick up what the sidecar just resolved rather than the previous run's answer.
-            manifest = ensure_dashboard_manifest(config) if written else None
+            manifest = ensure_corpus_envelope(config) if written else None
             if not written:
                 print(f"run directory not found: {config.run_directory}")
                 return 1

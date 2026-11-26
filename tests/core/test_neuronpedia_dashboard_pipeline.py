@@ -4201,8 +4201,8 @@ def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
     )
 
 
-class TestDashboardManifest:
-    """``dashboards.json`` makes a corpus identifiable without opening a parquet file or a bucket name.
+class TestCorpusEnvelope:
+    """The corpus ``it_artifact.json`` makes a corpus identifiable without opening a parquet file or a bucket name.
 
     Purely descriptive: nothing imports from it, which is precisely why it may be refreshed freely
     where ``source_ids.json`` may not.
@@ -4241,12 +4241,17 @@ class TestDashboardManifest:
     def test_records_the_fields_a_consumer_identifies_a_corpus_by(self, tmp_path: Path) -> None:
         config = self._config(tmp_path)
         config.run_directory.mkdir(parents=True)
-        path = dashboard_pipeline.ensure_dashboard_manifest(config)
+        path = dashboard_pipeline.ensure_corpus_envelope(config)
 
-        assert path is not None and path.name == dashboard_pipeline.DASHBOARD_MANIFEST_FILE
+        assert path is not None and path.name == dashboard_pipeline.CORPUS_ENVELOPE_FILE == "it_artifact.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
-        assert payload["model"]["name"] == "gemma-3-1b-it"
-        assert payload["source_set"]["id"] == "gemmascope-2-transcoder-16k"
+        assert payload["artifact_kind"] == "dashboard-corpus"
+        assert payload["identity"] == {"model_id": "gemma-3-1b-it", "source_set_id": "gemmascope-2-transcoder-16k"}
+        # the subject names the Hub model the activations came from, which Neuronpedia's model id does not
+        assert payload["subject"]["model"] == {"id": "google/gemma-3-1b-it", "revision": None, "n_layers": 26}
+        assert payload["subject"]["dictionaries"] == [
+            {"kind": "sae_lens", "release": "gemma-scope-2-1b-it-transcoders-all", "sae_id": None}
+        ]
         assert payload["prompt_corpus"]["n_prompts"] == 24576
         assert payload["prompt_corpus"]["n_tokens_in_prompt"] == 128
         assert payload["layers"]["requested"] == [0, 1, 2]
@@ -4254,6 +4259,12 @@ class TestDashboardManifest:
         # corpora needs to see it without downloading one.
         assert payload["artifacts"]["page_index"] is True
         assert "interpretune" in payload["tool_versions"]
+        assert dashboard_pipeline.read_corpus_envelope(config.run_directory) == payload
+
+    def test_writes_the_shared_schema(self, tmp_path: Path) -> None:
+        from interpretune.hub.artifacts import ARTIFACT_SCHEMA_VERSION
+
+        assert dashboard_pipeline.build_corpus_envelope(self._config(tmp_path))["schema"] == ARTIFACT_SCHEMA_VERSION
 
     def test_generated_layers_reflect_disk_not_intent(self, tmp_path: Path) -> None:
         """A run interrupted at layer 1 must not claim the three layers it was asked for."""
@@ -4262,7 +4273,7 @@ class TestDashboardManifest:
         (config.run_directory / "layer_0").mkdir()
         (config.run_directory / "layer_1").mkdir()
 
-        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        payload = json.loads(dashboard_pipeline.ensure_corpus_envelope(config).read_text(encoding="utf-8"))
         assert payload["layers"]["requested"] == [0, 1, 2]
         assert payload["layers"]["generated"] == [0, 1]
 
@@ -4271,52 +4282,60 @@ class TestDashboardManifest:
         config.run_directory.mkdir(parents=True)
         dashboard_pipeline.ensure_source_ids_sidecar(config)
 
-        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        payload = json.loads(dashboard_pipeline.ensure_corpus_envelope(config).read_text(encoding="utf-8"))
         assert payload["source_ids"]["0"] == "0-gemmascope-2-transcoder-16k"
 
     def test_refresh_overwrites_where_the_source_id_sidecar_would_not(self, tmp_path: Path) -> None:
         """The asymmetry is deliberate: re-keying identity is destructive, restating provenance is not."""
         config = self._config(tmp_path)
         config.run_directory.mkdir(parents=True)
-        dashboard_pipeline.ensure_dashboard_manifest(config)
+        dashboard_pipeline.ensure_corpus_envelope(config)
 
         (config.run_directory / "layer_0").mkdir()
-        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        payload = json.loads(dashboard_pipeline.ensure_corpus_envelope(config).read_text(encoding="utf-8"))
         assert payload["layers"]["generated"] == [0]
 
     def test_absent_run_directory_yields_none_rather_than_creating_one(self, tmp_path: Path) -> None:
-        assert dashboard_pipeline.ensure_dashboard_manifest(self._config(tmp_path)) is None
+        assert dashboard_pipeline.ensure_corpus_envelope(self._config(tmp_path)) is None
 
-    def test_unreadable_manifest_degrades_rather_than_crashes(self, tmp_path: Path) -> None:
-        run = tmp_path / "run"
-        run.mkdir()
-        (run / dashboard_pipeline.DASHBOARD_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
-        assert dashboard_pipeline.read_dashboard_manifest(run) == {}
+    def test_a_corpus_without_an_envelope_reads_as_none(self, tmp_path: Path) -> None:
+        assert dashboard_pipeline.read_corpus_envelope(tmp_path) is None
+
+    def test_an_unreadable_envelope_is_refused(self, tmp_path: Path) -> None:
+        from interpretune.hub.artifacts import ArtifactEnvelopeError
+
+        (tmp_path / dashboard_pipeline.CORPUS_ENVELOPE_FILE).write_text("{not json", encoding="utf-8")
+        with pytest.raises(ArtifactEnvelopeError, match="unreadable corpus envelope"):
+            dashboard_pipeline.read_corpus_envelope(tmp_path)
+
+    def test_a_store_envelope_is_not_read_as_a_corpus(self, tmp_path: Path) -> None:
+        from interpretune.hub.artifacts import ArtifactEnvelopeError
+
+        envelope = dashboard_pipeline.build_corpus_envelope(self._config(tmp_path))
+        envelope["artifact_kind"] = "analysis-store"
+        (tmp_path / dashboard_pipeline.CORPUS_ENVELOPE_FILE).write_text(json.dumps(envelope), encoding="utf-8")
+        with pytest.raises(ArtifactEnvelopeError, match="not the 'dashboard-corpus'"):
+            dashboard_pipeline.read_corpus_envelope(tmp_path)
 
     def test_records_the_capture_hook_distinctly_from_the_source_label(self, tmp_path: Path) -> None:
         """`hook_point` is the Neuronpedia LABEL; `capture_hook_name` is the tensor read.
 
-        They legitimately differ, and before the manifest carried both, a corpus captured at the
+        They legitimately differ, and before the corpus description carried both, a corpus captured at the
         trained tensor and one captured at the hook the SAE declares were indistinguishable: the
         label reads the same either way, so only `generated_utc` separated them, which is
         circumstantial and does not survive a re-upload.
         """
         config = self._config(tmp_path, hook_point="hook_mlp_in", capture_hook_name="blocks.{layer}.ln2.hook_out")
-        source_set = dashboard_pipeline.build_dashboard_manifest(config)["source_set"]
+        source_set = dashboard_pipeline.build_corpus_envelope(config)["source_set"]
         assert source_set["capture_hook_name"] == "blocks.{layer}.ln2.hook_out"
         assert source_set["hook_point"] == "hook_mlp_in"
         assert source_set["capture_hook_name"] != source_set["hook_point"]
 
     def test_absent_capture_hook_is_recorded_as_none_rather_than_omitted(self, tmp_path: Path) -> None:
-        """An explicit `None` says "the SAE's declared hook was used"; an absent key says nothing.
-
-        The schema bump to 2 is what makes that readable: below it, a missing field means the manifest
-        predates the field, which is a different claim from the run having used the declared hook.
-        """
-        manifest = dashboard_pipeline.build_dashboard_manifest(self._config(tmp_path))
-        assert "capture_hook_name" in manifest["source_set"]
-        assert manifest["source_set"]["capture_hook_name"] is None
-        assert manifest["schema"] >= 2
+        """An explicit `None` says "the SAE's declared hook was used"; an absent key says nothing."""
+        envelope = dashboard_pipeline.build_corpus_envelope(self._config(tmp_path))
+        assert "capture_hook_name" in envelope["source_set"]
+        assert envelope["source_set"]["capture_hook_name"] is None
 
 
 class TestSourceIdResolution:

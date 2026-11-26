@@ -1,5 +1,10 @@
 """Artifact repos for AnalysisStores: the ``it_artifact.json`` envelope + push/pull/describe.
 
+The envelope is shared by every artifact interpretune publishes. An AnalysisStore writes kind ``analysis-store``
+(below); a Neuronpedia dashboard corpus writes kind ``dashboard-corpus`` from the dashboard pipeline
+(``interpretune.utils.neuronpedia_dashboard_pipeline.build_corpus_envelope``). Both share one schema window and one
+validator, which checks the blocks each kind requires.
+
 The data half of the hub design (§5): analysis results published as DATASET repos with a
 machine-written envelope, so a second user can obtain attribution-graph steering results without
 the compute. Local storage stays Arrow (R9) — parquet is strictly the interchange format on the
@@ -37,6 +42,13 @@ ARTIFACT_SCHEMA_VERSION = 3
 ARTIFACT_SCHEMA_MIN_READABLE = 1
 
 ANALYSIS_STORE_KIND = "analysis-store"
+
+#: The kind a Neuronpedia dashboard corpus writes. Corpora entered the envelope at schema 3, so a corpus envelope that
+#: claims an earlier schema was not written by interpretune and is refused.
+DASHBOARD_CORPUS_KIND = "dashboard-corpus"
+DASHBOARD_CORPUS_FROM_SCHEMA = 3
+
+ARTIFACT_KINDS = (ANALYSIS_STORE_KIND, DASHBOARD_CORPUS_KIND)
 
 #: The uncompressed byte target for a published store's Parquet row groups (``datasets`` sizes row groups from
 #: ``datasets.config.MAX_ROW_GROUP_SIZE``, 100MB by default, and ``push_to_hub`` takes no row-group argument). Measured
@@ -92,20 +104,27 @@ def _validate_schema_version(envelope: dict, source: str) -> None:
         )
 
 
-def validate_artifact_envelope(envelope: Any, source: str = "<envelope>") -> dict:
-    """Validate the coarse shape of a parsed artifact envelope, returning it on success.
+def validate_artifact_envelope(envelope: Any, source: str = "<envelope>", *, kind: str = ANALYSIS_STORE_KIND) -> dict:
+    """Validate the coarse shape of a parsed artifact envelope of ``kind``, returning it on success.
+
+    The caller names the kind it can use, so an envelope of another kind is refused rather than read as the wrong
+    thing: a dashboard corpus is not an AnalysisStore even though both carry an ``it_artifact.json``.
 
     Unknown top-level keys are deliberately tolerated: that tolerance is what lets additive
     envelope fields ship without a schema bump, so it is part of the contract rather than laxity.
     """
+    if kind not in ARTIFACT_KINDS:
+        raise ValueError(f"kind={kind!r} is not an artifact kind (supported: {', '.join(map(repr, ARTIFACT_KINDS))}).")
     if not isinstance(envelope, dict):
         raise ArtifactEnvelopeError(f"{source}: envelope must be a mapping, got {type(envelope).__name__}")
     _validate_schema_version(envelope, source)
-    if envelope.get("artifact_kind") != ANALYSIS_STORE_KIND:
+    if envelope.get("artifact_kind") != kind:
         raise ArtifactEnvelopeError(
-            f"{source}: unsupported artifact_kind {envelope.get('artifact_kind')!r} "
-            f"(supported: {ANALYSIS_STORE_KIND!r})."
+            f"{source}: artifact_kind {envelope.get('artifact_kind')!r} is not the {kind!r} this reader expects "
+            f"(kinds this build reads: {', '.join(map(repr, ARTIFACT_KINDS))})."
         )
+    if kind == DASHBOARD_CORPUS_KIND:
+        return _validate_corpus_envelope(envelope, source)
     identity = envelope.get("identity")
     if not isinstance(identity, dict) or not identity.get("store_id"):
         raise ArtifactEnvelopeError(f"{source}: `identity.store_id` is mandatory (and never rewritten).")
@@ -119,6 +138,32 @@ def validate_artifact_envelope(envelope: Any, source: str = "<envelope>") -> dic
         except StoreSubjectError as e:
             raise ArtifactEnvelopeError(str(e)) from None
     _validate_card_block(envelope.get("card"), source)
+    return envelope
+
+
+def _validate_corpus_envelope(envelope: dict, source: str) -> dict:
+    """The blocks a dashboard corpus envelope requires: its Neuronpedia identity, its subject and its layers."""
+    if envelope["schema"] < DASHBOARD_CORPUS_FROM_SCHEMA:
+        raise ArtifactEnvelopeError(
+            f"{source}: a {DASHBOARD_CORPUS_KIND!r} envelope at schema {envelope['schema']} predates the corpus kind "
+            f"(introduced at schema {DASHBOARD_CORPUS_FROM_SCHEMA}), so interpretune did not write it."
+        )
+    identity = envelope.get("identity")
+    if not isinstance(identity, dict) or not all(
+        isinstance(identity.get(key), str) and identity.get(key) for key in ("model_id", "source_set_id")
+    ):
+        raise ArtifactEnvelopeError(
+            f"{source}: a corpus `identity` must name its Neuronpedia `model_id` and `source_set_id`."
+        )
+    from interpretune.hub.subject import StoreSubject, StoreSubjectError
+
+    try:
+        StoreSubject.from_dict(envelope.get("subject"), source=source)
+    except StoreSubjectError as e:
+        raise ArtifactEnvelopeError(str(e)) from None
+    layers = envelope.get("layers")
+    if not isinstance(layers, dict) or not isinstance(layers.get("generated"), list):
+        raise ArtifactEnvelopeError(f"{source}: a corpus envelope must list its generated layers as `layers.generated`.")
     return envelope
 
 
