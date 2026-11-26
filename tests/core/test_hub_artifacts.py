@@ -664,13 +664,14 @@ class TestWriteTimeOpProvenance:
         from unittest.mock import patch
 
         from interpretune.analysis import AnalysisStore
+        from interpretune.analysis.core import stamp_op_provenance
         from interpretune.analysis.ops.dispatcher import DISPATCHER
         from interpretune.config.analysis import AnalysisCfg
 
         cfg = AnalysisCfg(target_op=DISPATCHER.get_op("labels_to_ids"))
         store = AnalysisStore()
         with patch.object(type(DISPATCHER), "op_provenance", side_effect=RuntimeError("boom")):
-            cfg._stamp_op_provenance(store)
+            stamp_op_provenance(store, cfg.op)
 
         assert store.op_provenance == ()
         assert any("Could not record op provenance" in str(w.message) for w in recwarn.list)
@@ -1041,6 +1042,105 @@ class TestPushPublishChecks:
         with pytest.raises(PublishedArtifactCheckError, match="was published"):
             push_analysis_store(small_store, "me/store")
         assert api.upload_file.call_count == 2  # envelope and card are already up: the artifact is live
+
+
+class TestGeneratedCard:
+    """The card a push writes says what the rows are: the subject, the provenance, and the publisher's own text."""
+
+    PARQUET = TestPushPublishChecks.PARQUET
+    hub = TestPushPublishChecks.hub
+    _uploaded_envelope = staticmethod(TestPushPublishChecks._uploaded_envelope)
+
+    @staticmethod
+    def _uploaded_card(api) -> str:
+        (call,) = [c for c in api.upload_file.call_args_list if c.kwargs["path_in_repo"] == "README.md"]
+        return call.kwargs["path_or_fileobj"].getvalue().decode("utf-8")
+
+    @staticmethod
+    def _serve_published(api, envelope: dict, tmp_path) -> None:
+        """Serve ``envelope`` as the repo's existing ``it_artifact.json``, as on a re-push."""
+        existing = tmp_path / "existing_it_artifact.json"
+        existing.write_text(json.dumps(envelope), encoding="utf-8")
+        api.hf_hub_download.side_effect = None
+        api.hf_hub_download.return_value = str(existing)
+        api.upload_file.reset_mock()
+
+    def test_the_card_names_the_subject_and_the_provenance(self, small_store, hub):
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        small_store.op_provenance = DISPATCHER.op_provenance(DISPATCHER.get_op("labels_to_ids"))
+        push_analysis_store(small_store, "me/store", provenance={"items": "48 prompts\nwe generated", "seed": 7})
+        card = self._uploaded_card(api)
+        subject = SMALL_STORE_SUBJECT
+        assert f"- model: `{subject.model_id}` at revision `{subject.model_revision}`" in card
+        assert f"- architecture: `{subject.architecture}`" in card
+        assert f"- tokenizer: `{subject.tokenizer_id}`" in card
+        assert "- component map: `Gemma2ForCausalLM` from `gemma2.yaml` (schema v1)" in card
+        assert "- dictionary (circuit_tracer): transcoder_set `gemma`" in card
+        assert "- op `labels_to_ids`: bundled" in card
+        prov = self._uploaded_envelope(api)["provenance"]
+        assert f"- content fingerprint: `{prov['content_fingerprint']}`" in card
+        # every field the publisher recorded, each on one list item
+        assert "- items: 48 prompts we generated" in card and "- seed: `7`" in card
+
+    def test_the_summary_is_recorded_and_rendered_under_the_title(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        summary = "Readouts on 48 prompts.\n\n## Data\n\nGenerated, then gated by the model's own answers."
+        push_analysis_store(small_store, "me/store", card_summary=summary)
+        assert self._uploaded_envelope(api)["card"] == {"summary": summary}
+        body = self._uploaded_card(api).split("---\n", 2)[2]
+        # under the title and the fixed description, and before the generated sections
+        assert body.startswith("\n# store\n\nAn [interpretune]")
+        assert body.index(summary) < body.index("## Subject")
+
+    def test_a_re_push_without_a_summary_keeps_the_published_one(self, small_store, hub, tmp_path):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        push_analysis_store(small_store, "me/store", card_summary="What the rows are.")
+        self._serve_published(api, self._uploaded_envelope(api), tmp_path)
+        push_analysis_store(small_store, "me/store")
+        assert self._uploaded_envelope(api)["card"] == {"summary": "What the rows are."}
+        assert "What the rows are." in self._uploaded_card(api)
+
+    def test_a_re_push_can_replace_or_drop_the_summary(self, small_store, hub, tmp_path):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        push_analysis_store(small_store, "me/store", card_summary="First.")
+        self._serve_published(api, self._uploaded_envelope(api), tmp_path)
+        push_analysis_store(small_store, "me/store", card_summary="Second.")
+        assert self._uploaded_envelope(api)["card"] == {"summary": "Second."}
+        self._serve_published(api, self._uploaded_envelope(api), tmp_path)
+        push_analysis_store(small_store, "me/store", card_summary="")
+        assert "card" not in self._uploaded_envelope(api)
+        assert "Second." not in self._uploaded_card(api)
+
+    def test_a_summary_that_is_not_text_is_refused_before_any_network_call(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, _, _ = hub
+        with pytest.raises(TypeError, match="card_summary must be Markdown text"):
+            push_analysis_store(small_store, "me/store", card_summary={"summary": "x"})  # type: ignore[arg-type]
+        api.create_repo.assert_not_called()
+
+    @pytest.mark.parametrize("card", [{"summary": 3}, {}, "text"])
+    def test_a_malformed_card_block_is_refused_by_name(self, small_store, card):
+        envelope = build_analysis_store_envelope(small_store)
+        envelope["card"] = card
+        with pytest.raises(ArtifactEnvelopeError, match="`card` block must be a mapping"):
+            validate_artifact_envelope(envelope, source="<test>")
+
+    def test_a_frozen_envelope_renders_without_a_card_block(self):
+        from interpretune.hub.cards import generate_artifact_card
+
+        card = str(generate_artifact_card(_fixture(ARTIFACT_SCHEMA_VERSION), "ns/store"))
+        assert "## Subject" in card and "## Provenance" in card
+        assert "artifact repo (kind: analysis-store; envelope schema v3)." in card
 
 
 class TestPublishedRowGroups:
