@@ -365,7 +365,7 @@ class ColCfg:
     dyn_dim_ceil: DIM_VAR | None = None  # helper for dynamic dimension handling in some contexts
     non_tensor: bool = False
     per_latent: bool = False
-    per_latent_model_hook: bool = False  # For fields that have per-latent-model hook subfields
+    per_latent_model_hook: bool = False  # For fields that have per latent model hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
     # NOTE [Two Requirement Axes, Deliberately Separate]
     # `ColCfg.connected_obj` and `OpDef.required_capabilities` are the only two requirement axes on the
@@ -890,7 +890,7 @@ class AnalysisOp:
     def _check_storable_column(col_name: str, col_cfg: ColCfg, value: Any) -> None:
         """Refuse a value the column's declaration cannot hold without changing it.
 
-        A latent-model hook column takes its dtype from the latent model, not from this declaration, so it is not
+        A latent model hook column takes its dtype from the latent model, not from this declaration, so it is not
         checked against it. Neither is a non-tensor column of numbers, which is not cast. A text column is checked
         whether or not it is marked non-tensor, at the depth ``schema_to_features`` gives it; an intermediate-only
         column is never stored, and its declared dtype (``object``, compiled to ``string``) says nothing about it.

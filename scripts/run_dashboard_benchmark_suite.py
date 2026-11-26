@@ -224,6 +224,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Permit packaging with dirty repo trees (diagnostic runs only; reviewer packages must be clean).",
     )
+    parser.add_argument(
+        "--allow-failed-legs",
+        action="store_true",
+        help="Package the legs that succeeded when some failed. The summary names the failed ones and the exit status "
+        "is still 1 (default: refuse to package).",
+    )
     parser.add_argument("--skip-notebook", action="store_true", help="Skip papermill notebook execution/export.")
     parser.add_argument(
         "--coordination-pr-url",
@@ -343,6 +349,54 @@ def read_measurement_record(session_root: Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return record if isinstance(record, dict) and "repo_heads" in record else None
+
+
+def record_failed_legs(session_root: Path, failed: list[str]) -> None:
+    """Keep the failed legs beside the ones that ran, so a later re-stamp of the session root knows of them too."""
+
+    path = session_root / MEASUREMENT_RECORD_NAME
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["failed_legs"] = failed
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+_LOAD_CONVERTER = (
+    "import sys; from pathlib import Path; "
+    "from interpretune.utils.neuronpedia_dashboard_pipeline import _load_converter_module; "
+    "_load_converter_module(Path(sys.argv[1]))"
+)
+
+
+def check_converters_load(args: argparse.Namespace) -> None:
+    """Refuse the run before its first leg when a converter its legs import does not load.
+
+    Each leg converts only after generating, so a dependency missing from the environment would otherwise cost every
+    legacy leg its generation first.
+    """
+    from profile_neuronpedia_dashboard_generation import DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT
+
+    from interpretune.utils.neuronpedia_dashboard_pipeline import _default_repo_root
+
+    tags = {tag for scenario in args.scenarios for _, _, tag, _ in legs_for_mode(args, scenario)}
+    roots = []
+    if "legacy" in tags:
+        roots.append(_default_repo_root("NEURONPEDIA_UTILS_ROOT", "repos", "neuronpedia", "utils", "neuronpedia-utils"))
+    if "det" in tags:
+        roots.append(DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT)
+    problems = []
+    for root in roots:
+        probe = subprocess.run(
+            [args.python_executable, "-c", _LOAD_CONVERTER, str(root)],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            reason = probe.stderr.strip().splitlines()[-1:] or ["no output"]
+            problems.append(f"{root}: {reason[0]}")
+    if problems:
+        raise SystemExit("The converter of these Neuronpedia checkouts does not load:\n  " + "\n  ".join(problems))
 
 
 def build_leg_command(
@@ -503,9 +557,13 @@ def resolve_pretokenization_record(args: argparse.Namespace | None = None) -> di
     return None
 
 
-def run_benchmark_legs(args: argparse.Namespace, session_root: Path, run_tag: str) -> None:
-    """Run all requested benchmark legs sequentially (parallel runs OOM the single benchmark GPU)."""
+def run_benchmark_legs(args: argparse.Namespace, session_root: Path, run_tag: str) -> list[str]:
+    """Run all requested benchmark legs sequentially (parallel runs OOM the single benchmark GPU).
 
+    Returns the legs that failed: one failure does not stop the others.
+    """
+
+    failed: list[str] = []
     env = os.environ.copy()
     if args.jemalloc_path.exists():
         env["LD_PRELOAD"] = str(args.jemalloc_path)
@@ -534,6 +592,7 @@ def run_benchmark_legs(args: argparse.Namespace, session_root: Path, run_tag: st
             completed = subprocess.run(command, cwd=str(PROJECT_ROOT), env=env, check=False)
             if completed.returncode != 0:
                 print(f"WARNING: leg {leg_variant_dir} exited with code {completed.returncode}", flush=True)
+                failed.append(leg_variant_dir)
 
     if prompt_sweep_enabled(args) and "monology" in args.scenarios:
         sweep_preset = MONOLOGY_SWEEP_PRESETS["pretok"]["columnar-monology-pretokenized-reduced"]
@@ -559,9 +618,17 @@ def run_benchmark_legs(args: argparse.Namespace, session_root: Path, run_tag: st
             completed = subprocess.run(command, cwd=str(PROJECT_ROOT), env=env, check=False)
             if completed.returncode != 0:
                 print(f"WARNING: leg {leg_variant_dir} exited with code {completed.returncode}", flush=True)
+                failed.append(leg_variant_dir)
+    return failed
 
 
 def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path) -> Path:
+    failed_legs = (read_measurement_record(source_root) or {}).get("failed_legs", [])
+    if failed_legs and not args.allow_failed_legs:
+        raise SystemExit(
+            f"Refusing to package {source_root}: these legs failed: {', '.join(failed_legs)}. "
+            "Fix the cause and re-run, or pass --allow-failed-legs to package the legs that succeeded."
+        )
     package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "tables").mkdir(exist_ok=True)
     (package_dir / "raw").mkdir(exist_ok=True)
@@ -651,6 +718,7 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
         "repo_heads": shas,
         "dirty_repos": dirty,
         "lineages": lineages,
+        "failed_legs": failed_legs,
         **restamp,
         "variants": [
             {"variant_dir": v.variant_dir, "label": v.label, "scenario": v.scenario, "path": v.path_key}
@@ -740,11 +808,15 @@ def main() -> int:
         # the numbers is unambiguously the current one.
         measured_shas, measured_dirty = capture_lineage(DEFAULT_REPO_ROOTS)
         write_measurement_record(source_root, measured_shas, measured_dirty, args.mode)
-        run_benchmark_legs(args, source_root, run_tag)
+        check_converters_load(args)
+        record_failed_legs(source_root, run_benchmark_legs(args, source_root, run_tag))
 
     package_dir = args.package_root or DEFAULT_PACKAGE_PARENT / source_root.name
     build_package(args, source_root, package_dir)
-    return 0
+    failed_legs = (read_measurement_record(source_root) or {}).get("failed_legs", [])
+    if failed_legs:
+        print(f"FAILED legs: {', '.join(failed_legs)}", flush=True)
+    return 1 if failed_legs else 0
 
 
 if __name__ == "__main__":

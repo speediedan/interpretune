@@ -232,6 +232,10 @@ class SessionRunnerCfg:
     # reciprocal); a partial window at an epoch's end still steps. `max_steps` and step-interval lr schedulers
     # count optimizer steps, not batches
     accumulate_grad_batches: int = 1
+    # train on past a non-finite training loss instead of stopping at it with `NonFiniteLossError` (the default stops
+    # before that batch's backward(), leaving the weights of the last finite step); only for a step function or
+    # callback that handles non-finite losses itself
+    allow_nonfinite_loss: bool = False
 
     def __post_init__(self):
         from interpretune.hub.entrypoints import instantiate_hub_aware_class

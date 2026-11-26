@@ -15,7 +15,7 @@ An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngra
 
 Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: the analysis ops apply them during a pass.
 
-**On a circuit-tracer composition** an intervention's role is merged with the transcoders' (only a conflicting declaration is refused), its site must be a module of the model circuit-tracer runs, and attribution sees it in the forward pass but never reaches its gradient: [Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent-models-beside-the-transcoders). circuit-tracer's own interventions (`feature_intervention_forward`, and `model_fwd_intervention` on concept directions; [circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they need no role.
+**On a circuit-tracer composition** an intervention's role is merged with the transcoders' (only a conflicting declaration is refused), its site must be a module of the model circuit-tracer runs, and attribution sees it in the forward pass but never reaches its gradient: [Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent models-beside-the-transcoders). circuit-tracer's own interventions (`feature_intervention_forward`, and `model_fwd_intervention` on concept directions; [circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they need no role.
 
 ## From a configuration
 

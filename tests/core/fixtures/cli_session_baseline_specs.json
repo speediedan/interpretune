@@ -3722,7 +3722,7 @@
             "temperature": 1.0,
             "top_k": 50,
             "top_p": 1.0,
-            "use_past_kv_cache": true,
+            "use_past_kv_cache": null,
             "verbose": true
           },
           "max_new_tokens": 1,
@@ -3735,7 +3735,7 @@
           "stop_at_eos": true,
           "eos_token_id": null,
           "freq_penalty": 0.0,
-          "use_past_kv_cache": true,
+          "use_past_kv_cache": null,
           "prepend_bos": null,
           "padding_side": null,
           "return_type": "input",

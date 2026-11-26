@@ -2,9 +2,9 @@
 
 <img src="docs/source/_static/images/logos/logo_interpretune.svg" alt="Interpretune" width="420"/>
 
-**A flexible framework for collaborative AI world model analysis and tuning.**
+**A flexible framework for collaborative AI latent model analysis and tuning.**
 
-*Composable, shareable latent-space analysis mutually intelligible to humans and agents.*
+*Composable, shareable latent space analysis mutually intelligible to humans and agents.*
 
 [![CI](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/interpretune/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.org/en/latest/)
@@ -21,9 +21,11 @@
 
 ## What is interpretune?
 
-Interpretune is a (pre-MVP) AI world model analysis framework. It strives to provide composable, shareable latent-space analysis mutually intelligible to humans and agents.
+Interpretune is a (pre-MVP) AI latent model analysis framework. It strives to provide composable, shareable latent space analysis mutually intelligible to humans and agents.
 
-By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative, world model analysis and tuning with PyTorch.
+By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative latent model analysis and tuning with PyTorch.
+
+Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. Today it works with **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them. They are the route to world model analysis rather than the same thing.
 
 That composability and shareability serve one aim: to **broaden the shoulders of giants**. An analysis operation, an intervention op or a component that one researcher writes and registers (in a federated registry such as venngram's ops, or as a Hub collection) is one any other researcher, or agent, can compose, rerun and extend.
 
@@ -31,12 +33,12 @@ Both humans and agents can inspect and refine the mechanistic and causal faithfu
 
 - transparent, causally faithful reasoning
 - augmented model self-reflection
-- world-model-guided collaborative tuning
+- latent model guided collaborative tuning
 
 Interpretune composes adapters at multiple levels of abstraction over a shared session/protocol layer:
 
 - the *framework* level (core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning))
-- the *interpretability latent-model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
+- the *interpretability latent model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
 [NNsight](https://github.com/ndif-team/nnsight))
 - the *analysis* level ([circuit-tracer](https://github.com/safety-research/circuit-tracer),
 [SAELens](https://github.com/decoderesearch/SAELens))
@@ -46,10 +48,10 @@ analysis operations (e.g. `extract_top_features`, `gradient_attribution`, `ablat
 `feature_intervention`, `graph_prune`, `concept_direction`, `compute_attribution_graph`) are
 **written once and executed across backends**, with results captured as shareable datasets.
 
-A note on terminology: we use "world model" in the **epistemic/semantic** sense — the internal
-representations, concepts, and beliefs a model encodes about the world, as studied in AI
-interpretability — related to but distinct from the predictive *visual world models* of
-embodied-agent/model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal support
+A note on terminology: when we say "world model" we mean it in the **epistemic/semantic** sense: the
+internal representations, concepts, and beliefs a model encodes about the world, as studied in AI
+interpretability, which is related to but distinct from the predictive *visual world models* of
+embodied-agent/model-based-RL research. It names where the project is heading. The initial MVP focuses on LLMs; fuller multimodal support
 is planned.
 
 ## Core constructs (60-second tour)
@@ -58,9 +60,9 @@ is planned.
 | --- | --- |
 | **`ITSession`** | Composes a datamodule + module with an ordered **adapter context** (e.g. `(core, transformer_lens, circuit_tracer)` or `(core, nnsight, circuit_tracer)`); the result is an "interpretunable" module whose capabilities are the composition of the selected adapters. |
 | **Protocols** | Structural contracts (`interpretune.protocol`) that make the same analysis code executable across adapter compositions. |
-| **Latent-model abstractions** | Analysis targets are **latent models** at an appropriate abstraction level — SAEs/transcoders today, but the protocol language (`LatentAnalysisTargets`, latent-model handles, ops like `model_fwd_w_cache_latent_models`) deliberately generalizes beyond SAEs. |
+| **Latent model abstractions** | Analysis targets are **latent models** at an appropriate abstraction level — SAEs/transcoders today, but the protocol language (`LatentAnalysisTargets`, latent model handles, ops like `model_fwd_w_cache_latent_models`) deliberately generalizes beyond SAEs. |
 | **Analysis ops** | Composable, schema-declared operations (`it.concept_direction`, `it.compute_attribution_graph`, `it.intervention_from_concept`, …) compiled into execution plans and dispatched over the active backends. |
-| **`AnalysisStore`** | The key sharing abstraction: serialized, schema-described datasets capturing analysis artifacts (activations, attributions, graphs, intervention results) — making world-model analyses **exchangeable datasets** rather than one-off notebook state. |
+| **`AnalysisStore`** | The key sharing abstraction: serialized, schema-described datasets capturing analysis artifacts (activations, attributions, graphs, intervention results) — making latent model analyses **exchangeable datasets** rather than one-off notebook state. |
 | **Extensions** | Cross-cutting capabilities: memory profiling, debug generation, Neuronpedia dashboard/explanation integration. |
 
 A minimal flavor of the composition pattern (see the
@@ -184,8 +186,8 @@ Jacobian-space (J-lens) analysis support
 ([#225](https://github.com/interpretune/interpretune/issues/225)), **self-interpretability**
 (interpretability that accelerates model advancement via self-reflection, including internal
 reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
-reflective cognition for counterfactuals via latent-state evaluation, meta-latent world-model
-interfaces, and multimodal world-model support — see the
+reflective cognition for counterfactuals via latent-state evaluation, meta-latent world model
+interfaces, and multimodal world model support — see the
 [roadmap docs](https://interpretune.org/en/latest/roadmap.html).
 
 ## Documentation

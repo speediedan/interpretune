@@ -22,7 +22,7 @@ A schedule can name parameters, as Fine-Tuning Scheduler always has, or say **wh
 
 To enable this model addressing abstraction, Fine-Tuning Scheduler and Interpretune use the
 [venngram](https://github.com/speediedan/venngram) protocol. Its addresses can share and compose references to any
-subset of a model: from groups of layers to intersecting sets of individual neurons, and from latent-space features to
+subset of a model: from groups of layers to intersecting sets of individual neurons, and from latent space features to
 activation sites and attribution graphs. Schedules use the part of it that selects tensors to tune. Addressing by
 role means:
 
