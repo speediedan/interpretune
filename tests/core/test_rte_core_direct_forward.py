@@ -4,8 +4,8 @@ Only the backend forward path (the analysis ops) resolves batch input keys throu
 the TransformerLens bridge's `input` key for a module whose forward goes straight to an HF model passes every analysis
 test and fails the first train, test or predict loop with HF's "You have to specify either input_ids or
 inputs_embeds". Parity train/predict coverage uses only the cust test modules, whose forwards handle their own keys, so
-this file covers the hub config a reader actually ships with: `rte_demo.gpt2.core`, built from the in-tree rte tree via
-a local-publish revision (offline, no hub push).
+this file covers the hub config a reader actually ships with: `rte_demo.gpt2.core`, built from the pinned rte component
+via a local-publish revision (offline, no hub push).
 """
 
 from __future__ import annotations
@@ -17,13 +17,11 @@ import torch
 
 import interpretune as it
 from interpretune.hub.components import local_publish
-from tests.rte_component import rte_entrypoint_src
-
-RTE_DIR = Path(__file__).parents[2] / "src" / "it_examples" / "examples" / "rte"
+from tests.rte_component import rte_component_source, rte_entrypoint_src
 
 
 def _core_session(adapters: tuple, dataset_dir: Path) -> it.ITSession:
-    rev = local_publish(RTE_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gpt2.core", revision=rev)
     # A per-test dataset directory: `prepare_data` rewrites the saved dataset, and on Windows a dataset another
     # session still has memory-mapped cannot be overwritten (OSError 22 on the arrow file).
@@ -44,7 +42,7 @@ def test_a_batch_keyed_for_another_forward_is_refused_by_name_at_the_forward(tmp
     """
     from interpretune.utils import MisconfigurationException
 
-    rev = local_publish(RTE_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    rev = local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gpt2.core", revision=rev)
     dm_cfg.dataset_path = tmp_path / "rte_dataset"
     dm_cfg.tokenizer_kwargs["model_input_names"] = ["input", "attention_mask"]

@@ -9,13 +9,11 @@ wholesale, and nothing ever merges across the two paths.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
 from interpretune.hub.manifest import ComponentManifestError, validate_component_manifest
-
-RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
+from tests.rte_component import rte_component_source, rte_entrypoint_src
 
 
 def _manifest(**overrides):
@@ -28,10 +26,9 @@ def _manifest(**overrides):
 def rte_cache(tmp_path):
     """The RTE component (which declares the datamodule kind) local-published into a tmp cache."""
     from interpretune.hub.components import local_publish
-    from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
-    local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+    local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
@@ -48,7 +45,7 @@ class TestDataModuleKindManifest:
         import yaml
 
         manifest = validate_component_manifest(
-            yaml.safe_load((RTE_COMPONENT_DIR / "it_component.yaml").read_text(encoding="utf-8")),
+            yaml.safe_load((rte_component_source() / "it_component.yaml").read_text(encoding="utf-8")),
             source="rte",
         )
         assert "datamodule" in manifest["kinds"] and "rte_boolq" in manifest["datamodules"]
@@ -70,13 +67,12 @@ class TestStandaloneResolutionAndHydration:
         from interpretune.hub.components import local_publish, resolve_datamodule_config
 
         tainted = tmp_path / "component"
-        shutil.copytree(RTE_COMPONENT_DIR, tainted)
+        shutil.copytree(rte_component_source(), tainted)
         payload_path = tainted / "configs" / "datamodule.rte_boolq.yaml"
         payload = yaml.safe_load(payload_path.read_text(encoding="utf-8"))
         payload["module_cfg"] = {"task_name": "smuggled"}
         payload_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         cache = tmp_path / "cache"
-        from tests.rte_component import rte_entrypoint_src
 
         local_publish(tainted, "someorg/tainted", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         with pytest.raises(ComponentManifestError, match="must not carry module configuration"):

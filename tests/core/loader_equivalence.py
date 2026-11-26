@@ -179,13 +179,18 @@ EXAMPLES_DIR = REPO_ROOT / "src" / "it_examples" / "examples"
 
 
 def example_configuration_files() -> list[Path]:
-    """Every examples/ configuration indexed by a component manifest (the hub-side harness leg)."""
+    """Every configuration a component manifest indexes: those under ``examples/`` and the pinned rte snapshot's.
+
+    The rte source is in interpretune/examples, so its configurations come from the warmed ``speediedan/rte`` revision.
+    """
     from interpretune.hub.manifest import iter_component_manifests
+    from tests.rte_component import rte_component_source
 
     files = []
-    for component_dir, manifest in iter_component_manifests(EXAMPLES_DIR):
-        for rel in (manifest.get("module", {}).get("configs") or {}).values():
-            files.append(component_dir / rel)
+    for root in (EXAMPLES_DIR, rte_component_source().parent):
+        for component_dir, manifest in iter_component_manifests(root):
+            for rel in (manifest.get("module", {}).get("configs") or {}).values():
+                files.append(component_dir / rel)
     return sorted(files)
 
 
