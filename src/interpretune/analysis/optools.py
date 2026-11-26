@@ -1170,7 +1170,7 @@ def recipe_weight_equivalence(
     backend = require_model_backend(module)
     require_backend_capability(backend, Capability.INTERVENTION, op_name)
     if not hasattr(recipe, "stages"):
-        recipe = load_recipe(recipe).recipe
+        recipe = load_recipe(recipe, module=module).recipe
     try:
         widths = weight_form_site_widths(module, recipe)
     except ValueError as err:

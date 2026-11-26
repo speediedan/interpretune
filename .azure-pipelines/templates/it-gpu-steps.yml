@@ -49,6 +49,12 @@ steps:
     env:
       IT_GPU_MODE: ${{ parameters.mode }}
       IT_GPU_EXTENDED_PARAM: ${{ parameters.extended }}
+  # Before the collection below, which imports and parametrizes tests from the pinned Hub components: the agent's cache
+  # keeps earlier builds' revisions only, so a change that moves a pin would otherwise fail to collect.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh warm'
+    displayName: 'Warm Hub components from manifest'
+    env:
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
   # Each phase's manifest, collected on the CPU before any GPU work (python -m gpu_epsilon.phase_evidence): the node
   # ids its paths collect and the ones its selection keeps, a selected run's narrowing included. The phase reports
   # below count the phases' recorded outcomes against these, so a node a phase never ran fails it rather than going
@@ -56,10 +62,6 @@ steps:
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh collect'
     displayName: 'Collect phase manifests'
     condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh warm'
-    displayName: 'Warm Hub components from manifest'
-    env:
-      HF_TOKEN: $(HF_MCP_TOKEN_RW)
   # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
   # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
   # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it); the whole-server

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -18,12 +17,11 @@ def prompt_component_dir():
 @pytest.fixture()
 def seeded_cache(tmp_path):
     from interpretune.hub.components import local_publish
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
     cache = tmp_path / "components"
     publish_prompt_configs(cache)
-    rte_dir = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
-    local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+    local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 

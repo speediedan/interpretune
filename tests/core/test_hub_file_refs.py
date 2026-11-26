@@ -16,18 +16,17 @@ from interpretune.base.components.cli import ITSessionMixin
 from interpretune.hub import components
 from interpretune.utils import MisconfigurationException
 
-RTE_COMPONENT_DIR = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "rte"
 SCHEDULE_REF = "hub://speediedan/rte/ft_schedules/rte_ft.gpt2.yaml"
 
 
 @pytest.fixture
 def rte_cache(tmp_path, monkeypatch) -> Path:
-    from tests.rte_component import rte_entrypoint_src
+    from tests.rte_component import rte_component_source, rte_entrypoint_src
 
     entrypoint = rte_entrypoint_src()  # from the warmed default cache, before it is swapped out
     cache = tmp_path / "components"
     monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", cache)
-    components.local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=entrypoint, cache_dir=cache)
+    components.local_publish(rte_component_source(), "speediedan/rte", entrypoint_src=entrypoint, cache_dir=cache)
     return cache
 
 

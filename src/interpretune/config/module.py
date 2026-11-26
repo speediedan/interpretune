@@ -213,6 +213,7 @@ class ITState:
     _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
     _extensions: dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False
+    _model_revision: str | None = None  # the commit an automatically initialized model was loaded from
     _init_hparams: dict[str, Any] = field(default_factory=dict)
     # TODO: should we leave initialization of the below to the relevant property dispatch functions?
     _current_epoch: int = 0

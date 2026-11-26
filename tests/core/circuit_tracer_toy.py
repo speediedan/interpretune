@@ -1,5 +1,5 @@
-"""A tiny Gemma 2 circuit-tracer replacement model with random transcoders, for CPU tests of graph and intervention
-semantics that need a real model but not a trained one."""
+"""Tiny Gemma 2 and Gemma 3 circuit-tracer replacement models with random transcoders, for CPU tests of graph and
+intervention semantics that need a real model but not a trained one."""
 
 from __future__ import annotations
 
@@ -26,10 +26,6 @@ class BaseModelBackendStandIn:
 
 def tiny_gemma2_replacement_model(n_layers: int = 3, seed: int = 670):
     """An ``n_layers``-deep, 8-wide Gemma 2 replacement model; builds and runs on CPU in seconds."""
-    from circuit_tracer import ReplacementModel
-    from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
-    from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
-    from circuit_tracer.transcoder.activation_functions import JumpReLU
     from transformers import Gemma2Config
 
     cfg = Gemma2Config(
@@ -45,11 +41,57 @@ def tiny_gemma2_replacement_model(n_layers: int = 3, seed: int = 670):
         final_logit_softcapping=None,
         torch_dtype="float32",
     )
+    return _tiny_replacement_model(cfg, n_layers, seed)
+
+
+def tiny_gemma3_replacement_model(n_layers: int = 3, seed: int = 670):
+    """The same toy as a multimodal Gemma 3, the class of the checkpoints from 4B up: its language model sits under
+    a composite config, beside a vision tower, and its attention normalizes queries and keys."""
+    from transformers import Gemma3Config
+
+    cfg = Gemma3Config(
+        architectures=["Gemma3ForConditionalGeneration"],
+        text_config={
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": n_layers,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 2,
+            "head_dim": 4,
+            "vocab_size": 16,
+            "query_pre_attn_scalar": 4,
+            "final_logit_softcapping": None,
+            "layer_types": ["sliding_attention" if i % 2 == 0 else "full_attention" for i in range(n_layers)],
+            "sliding_window": 4,
+        },
+        vision_config={
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "image_size": 28,
+            "patch_size": 14,
+        },
+        mm_tokens_per_image=4,
+        image_token_index=15,
+        boi_token_index=14,
+        eoi_token_index=13,
+        torch_dtype="float32",
+    )
+    return _tiny_replacement_model(cfg, n_layers, seed)
+
+
+def _tiny_replacement_model(cfg, n_layers: int, seed: int):
+    """An 8-wide nnsight replacement model of ``cfg`` with random weights and random transcoders."""
+    from circuit_tracer import ReplacementModel
+    from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
+    from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
+    from circuit_tracer.transcoder.activation_functions import JumpReLU
+
     cfg._name_or_path = "openai-community/gpt2"  # the tokenizer from_config loads; warmed for offline CI
     torch.manual_seed(seed)
     transcoders = {
-        layer: SingleLayerTranscoder(cfg.hidden_size, cfg.hidden_size * 4, JumpReLU(torch.tensor(0.0), 0.1), layer)
-        for layer in range(n_layers)
+        layer: SingleLayerTranscoder(8, 32, JumpReLU(torch.tensor(0.0), 0.1), layer) for layer in range(n_layers)
     }
     for transcoder in transcoders.values():
         for param in transcoder.parameters():

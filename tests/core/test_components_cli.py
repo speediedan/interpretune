@@ -83,7 +83,7 @@ def test_compose_config_absolute_exception(clean_cli_env, cli_test_configs):
 
 @pytest.mark.parametrize("glob_search", [True, False], ids=["glob_search", "no_glob_search"])
 @pytest.mark.parametrize("fnf_error", [True, False], ids=["fnf_error", "no_fnf_error"])
-def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glob_search):
+def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glob_search, tmp_path):
     cli_cfg, test_alias = collect_base_config()
     cfg_files = cli_test_configs[(CLI_EXP, test_alias, cli_cfg.debug_mode)]
     with patch("interpretune.base.components.cli.IT_CONFIG_BASE", os.environ.get("IT_CONFIG_BASE")):
@@ -111,12 +111,15 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
                     cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args
                 )
             elif glob_search:  # we always warn with glob_search
-                # NOTE: the bare basename must name a file shipped under IT_BASE for the
-                # glob fallback to find; the benchmark configs moved to tests/benchmarks/configs/,
-                # so this names a stable examples-tree config instead of the relocated base_debug.yaml.
-                file_name_only_path = "datamodule.rte_boolq.yaml"
-                cfg_files = cfg_files[:-1] + (file_name_only_path,)
-                with pytest.warns(UserWarning, match="Glob search within"):
+                # the fallback searches IT_BASE for the bare file name, so the test supplies that tree itself
+                # rather than naming a file the examples happen to ship today
+                (tmp_path / "nested").mkdir()
+                shutil.copy2(cfg_files[-1], tmp_path / "nested" / "glob_found.yaml")
+                cfg_files = cfg_files[:-1] + ("glob_found.yaml",)
+                with (
+                    patch("interpretune.base.components.cli.IT_BASE", tmp_path),
+                    pytest.warns(UserWarning, match="Glob search within"),
+                ):
                     cli_main, *_ = gen_cli_args(
                         cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args
                     )

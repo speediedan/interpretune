@@ -85,12 +85,28 @@ PARITY_FTS_CONFIGS = (
 EXPECTED_PARITY_FTS = {cfg.alias: cfg.expected for cfg in PARITY_FTS_CONFIGS}
 
 
+def split_expected(test_alias: str) -> tuple[dict, dict]:
+    """The parity results and the callback results expected of ``test_alias``.
+
+    ``EXPECTED_PARITY_FTS`` is left as it is, so a rerun asserts what the first attempt did.
+    """
+    expected = dict(EXPECTED_PARITY_FTS[test_alias] or {})
+    return expected, expected.pop("callback_results", {})
+
+
+@pytest.mark.parametrize("test_alias", [cfg.alias for cfg in PARITY_FTS_CONFIGS])
+def test_a_rerun_reads_the_expectations_of_the_first_attempt(test_alias):
+    first = split_expected(test_alias)
+    assert first[1], "this alias has no callback expectations, so it would not show a lost one"
+    assert split_expected(test_alias) == first
+
+
 @pytest.mark.usefixtures("make_deterministic")
 @RunIf(lightning=True, finetuning_scheduler=True)
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_FTS_CONFIGS, unpack=False))
 def test_parity_fts(recwarn, tmp_path, test_alias, test_cfg, request):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
-    expected_results = EXPECTED_PARITY_FTS[test_alias] or {}
+    expected_results, expected_callbacks = split_expected(test_alias)
     expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS
     expected_warnings = copy(expected_warnings) + FTS_CTX_WARNS
     if test_cfg.fts_schedule_key:
@@ -99,7 +115,7 @@ def test_parity_fts(recwarn, tmp_path, test_alias, test_cfg, request):
         fixture_name = f"get_ft_schedule__{fixture_key}__setup"
         schedules = request.getfixturevalue(fixture_name)
         test_cfg.callback_cfgs[TestFTS]["ft_schedule"] = schedules[schedule_type]
-        test_cfg.callback_cfgs[TestFTS]["expected_exact"] = expected_results.pop("callback_results", {})
+        test_cfg.callback_cfgs[TestFTS]["expected_exact"] = expected_callbacks
         test_cfg.callback_cfgs[TestFTS]["state_log_dir"] = tmp_path if state_log_mode else None
         test_cfg.callback_cfgs[TestFTS]["test_alias"] = test_alias
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)

@@ -116,8 +116,10 @@ def warm_datasets(entries: list[dict[str, Any]], dry_run: bool) -> None:
 def warm_components(entries: list[dict[str, Any]], dry_run: bool) -> None:
     """Pull Hub-resident experiment components into the components cache (offline tests resolve them).
 
-    Fetch-only: manifest, wholesale payloads (entrypoints, datamodule configs), and every module
-    configuration file, all pinned to ``revision``. Nothing hydrates here — hydrating would execute
+    Fetch-only: manifest, wholesale payloads (entrypoints, datamodule configs), the declared ``extra_files``
+    (fine-tuning schedules, CLI run configurations), and every module configuration file, all pinned to
+    ``revision``. Without the extra files, a test that publishes or runs from the warmed snapshot finds its
+    manifest naming files it does not hold. Nothing hydrates here — hydrating would execute
     component entrypoints behind the trust gate, and the warm step runs untrusted by design, so a
     fetch verb that instantiates classes would fail the warm before any test runs.
     """
@@ -132,12 +134,14 @@ def warm_components(entries: list[dict[str, Any]], dry_run: bool) -> None:
         def _pull() -> None:
             from interpretune.hub.components import (
                 pull_component_config,
+                pull_component_extra_files,
                 pull_component_manifest,
                 pull_component_payloads,
             )
 
             manifest, commit = pull_component_manifest(repo_id, revision=revision)
             pull_component_payloads(repo_id, manifest, commit)
+            pull_component_extra_files(repo_id, manifest, commit)
             wanted = list(keys) if keys else sorted(((manifest.get("module") or {}).get("configs") or {}))
             for key in wanted:
                 pull_component_config(repo_id, key, revision=revision)
