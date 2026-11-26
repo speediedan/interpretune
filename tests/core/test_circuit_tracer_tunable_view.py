@@ -226,6 +226,10 @@ def _base_names(module: nn.Module) -> list[str]:
     return [n for n, _ in module.named_parameters() if ".transcoders." not in n]
 
 
+def _names_under(module: nn.Module, part: str) -> list[str]:
+    return [n for n, _ in module.named_parameters() if part in n]
+
+
 class TestBaseTuning:
     """``tune_base``: the base model's parameters as ``base``, beside transcoders that stay ``artifact``."""
 
@@ -302,6 +306,110 @@ class TestBaseTuning:
         support = as_view(module.build_tunable_view()).support()
         assert not support.trainable and support.reason == BASE_UNREACHABLE_REASON
         assert "hf_model" not in module._modules
+
+
+def _selected(view, address: str) -> set[str]:
+    """The physical tensors a one-phase schedule of ``address`` thaws on ``view``."""
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    return set(compile_schedule({0: {"params": [address]}}, view).physical_for(0))
+
+
+class TestBaseStructure:
+    """Everything in the view outside the transcoders is located as the other compositions locate it (#1238), so a
+    phase over the base model or an attached module is written by address."""
+
+    def test_base_tensors_locate_at_their_layers_and_components(self):
+        module = _toy_module(tune_base=True)
+        view = as_view(module.build_tunable_view())
+        base = set(_base_names(module))
+        top = {n for n in base if ".model.layers.1." in n or ".model.layers.2." in n}
+        assert top and _selected(view, "role:base & layers:-2:") == top
+        mlp = _selected(view, "role:base & component:mlp.* & layers:-1:")
+        assert mlp and mlp == {n for n in base if ".model.layers.2.mlp." in n}
+        outside = {n for n in base if ".model.layers." not in n}
+        assert _selected(view, "role:base") - _selected(view, "role:base & layers:0:") == outside
+
+    def test_the_transcoders_keep_their_layers_beside_the_base(self):
+        from finetuning_scheduler.core.compile import compile_schedule
+        from finetuning_scheduler.core.exceptions import FTSConfigurationError
+
+        module = _toy_module(tune_base=True)
+        view = as_view(module.build_tunable_view())
+        structure = view.structure()
+        for name in _names_under(module, ".transcoders.1."):
+            assert structure.locate(name).layer == 1 and structure.locate(name).component is None
+        # the two share their layers, so a range without a role names the transcoders too, which are never thawed
+        with pytest.raises(FTSConfigurationError, match="never thawed"):
+            compile_schedule({0: {"params": ["layers:-1:"]}}, view)
+        schedule = {
+            0: {"params": ["role:base & layers:-1:"]},
+            1: {
+                "params": ["role:latent:transcoder"],
+                "promote": {"role:artifact & layers:-1:": "latent:transcoder"},
+            },
+        }
+        compiled = compile_schedule(schedule, view)
+        assert set(compiled.physical_for(0)) == {n for n in _base_names(module) if ".model.layers.2." in n}
+        assert set(compiled.physical_for(1)) == set(_names_under(module, ".transcoders.2."))
+
+    def test_an_address_selects_the_core_compositions_tensors(self):
+        """One address over the base model selects the same tensors here as on the core/HF composition of it."""
+        from interpretune.testing.conformance.tuning import assert_same_selection
+        from interpretune.tuning.views import default_view
+
+        module = _toy_module(tune_base=True)
+        holder = nn.Module()
+        holder.model = module.hf_model
+        views = {"core": default_view(holder), "circuit_tracer": as_view(module.build_tunable_view())}
+        addresses = ["role:base & layers:-2:", "role:base & component:attn.* & layers:0", "component:ln_final"]
+        assert_same_selection(views, addresses)
+
+    def test_an_attached_intervention_locates_at_its_site(self):
+        view = as_view(_steered_module().build_tunable_view())
+        steer = TestCooperativeRoles.STEER
+        assert view.structure().locate(steer).layer == 1
+        assert _selected(view, "role:intervention & layers:1") == {steer}
+
+    def test_the_transcoders_alone_read_no_map(self, monkeypatch):
+        """Without ``tune_base`` and with nothing attached, the structure is the transcoders' and no component map
+        is looked up."""
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("a view of the transcoders alone looked up the base model's view")
+
+        monkeypatch.setattr("interpretune.tuning.views.default_view", refuse)
+        module = _toy_module()
+        structure = as_view(module.build_tunable_view()).structure()
+        assert not structure.vocabulary and structure.depth() == 3
+        base = next(n for n in _base_names(module) if ".layers.1." in n)
+        assert structure.locate(base).layer is None
+        with pytest.raises(AssertionError, match="looked up"):
+            as_view(_toy_module(tune_base=True).build_tunable_view()).structure()
+
+    def test_without_a_map_the_base_locates_by_its_block_list(self, monkeypatch):
+        """The transcoders are a block list too, so the base model's is named rather than found to be ambiguous."""
+        from interpretune.tuning.views import identity_view
+
+        monkeypatch.setattr("interpretune.tuning.views.default_view", lambda root, **kwargs: identity_view(root))
+        module = _toy_module(tune_base=True)
+        view = as_view(module.build_tunable_view())
+        assert not view.structure().vocabulary
+        assert _selected(view, "role:base & layers:-1:") == {n for n in _base_names(module) if ".model.layers.2." in n}
+
+    def test_a_cross_layer_transcoder_beside_the_base(self, tmp_path):
+        """The base model locates at its layers beside a cross-layer transcoder, whose own tensors locate at
+        none."""
+        _, lazy = _eager_and_lazy_clt(str(tmp_path / "clt"))
+        root = nn.Module()
+        root.hf_model = tiny_gemma2_replacement_model()._module
+        del root.hf_model._modules["transcoders"]
+        root.transcoders = lazy
+        view = CircuitTracerView(root, lazy, tune_base=True)
+        structure = view.structure()
+        assert structure.depth() == 3
+        assert {structure.locate(n).layer for n, _ in lazy.named_parameters(prefix="transcoders")} == {None}
+        assert structure.locate("hf_model.model.layers.2.mlp.up_proj.weight").layer == 2
 
 
 class TestTranscoderRelease:
