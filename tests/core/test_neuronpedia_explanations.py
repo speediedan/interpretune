@@ -41,7 +41,6 @@ derive_np_max_act_logits_inputs = utils.derive_np_max_act_logits_inputs
 generate_explanation_artifact = utils.generate_explanation_artifact
 parse_feature_url = utils.parse_feature_url
 public_activation_batch_url = utils.public_activation_batch_url
-resolve_local_neuronpedia_db_url = utils.resolve_local_neuronpedia_db_url
 check_local_explanation_coverage = utils.check_local_explanation_coverage
 invoke_explanation_cli_with_retries = utils.invoke_explanation_cli_with_retries
 
@@ -476,17 +475,6 @@ def test_insert_explanation_record_local_db_keeps_type_name_null_and_records_req
     insert_params = executed[-1][1]
     assert insert_params[8] is None
     assert '"requested_type_name": "np_moe-max-act-logits"' in insert_params[7]
-
-
-def test_resolve_local_neuronpedia_db_url_rewrites_container_host_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POSTGRES_HOST_PORT", "5433")
-
-    resolved = resolve_local_neuronpedia_db_url(
-        "postgresql://np_user:secret@postgres:5432/postgres",
-        env={"POSTGRES_HOST_PORT": "5433"},
-    )
-
-    assert resolved == "postgresql://np_user:secret@127.0.0.1:5433/postgres"
 
 
 def test_resolve_explanation_cli_spec_honors_executable_override(monkeypatch: pytest.MonkeyPatch) -> None:

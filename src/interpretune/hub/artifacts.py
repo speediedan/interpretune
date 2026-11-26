@@ -163,7 +163,9 @@ def _validate_corpus_envelope(envelope: dict, source: str) -> dict:
         raise ArtifactEnvelopeError(str(e)) from None
     layers = envelope.get("layers")
     if not isinstance(layers, dict) or not isinstance(layers.get("generated"), list):
-        raise ArtifactEnvelopeError(f"{source}: a corpus envelope must list its generated layers as `layers.generated`.")
+        raise ArtifactEnvelopeError(
+            f"{source}: a corpus envelope must list its generated layers as `layers.generated`."
+        )
     return envelope
 
 

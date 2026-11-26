@@ -168,3 +168,31 @@ def test_cleanup_local_graph_artifacts_dry_run_keeps_files(tmp_path: Path) -> No
     assert summary.deleted_slugs == ()
     assert summary.deleted_remote_slugs == ()
     assert graph_path.exists()
+
+
+def test_cleanup_resolves_the_database_like_every_other_local_caller(monkeypatch, tmp_path: Path) -> None:
+    """Cleanup reads the same variables as the shared resolver, so a URL set in any of them reaches it."""
+    import pytest
+
+    from interpretune.utils.neuronpedia_db_utils import DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS, NeuronpediaDBError
+
+    _write_graph(tmp_path / "graph_artifacts" / "embed" / "one.json", slug="keep-one")
+    for name in DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(NeuronpediaDBError, match="Could not resolve a local Neuronpedia DB URL"):
+        local_graph_cleanup.cleanup_local_graph_artifacts(tmp_path)
+
+    connected: list[str] = []
+
+    class _Stop(Exception):
+        pass
+
+    def _connect(url, *args, **kwargs):
+        connected.append(url)
+        raise _Stop
+
+    monkeypatch.setattr(local_graph_cleanup.psycopg, "connect", _connect)
+    monkeypatch.setenv("POSTGRES_URL_NON_POOLING", "postgresql://np:pw@127.0.0.1:5432/second")
+    with pytest.raises(_Stop):
+        local_graph_cleanup.cleanup_local_graph_artifacts(tmp_path)
+    assert connected == ["postgresql://np:pw@127.0.0.1:5432/second"]

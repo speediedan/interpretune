@@ -1375,11 +1375,12 @@ Reading one feature cheaply from a published corpus is what the row-group layout
 half. Buckets are not indexed by content and bucket names are free text, so guessing one from a naming convention
 would download a corpus that imports **successfully** into the requested source set while containing something else.
 
-So corpora are discovered per trusted publisher, and each bucket's own `dashboards.json` says what it holds:
+So corpora are discovered per trusted publisher, and each bucket's own `it_artifact.json` says what it holds:
 
 - `find_dashboard_corpora(model_id, source_set_id)` (in `interpretune.utils.neuronpedia_hub_fetch`) lists each trusted
-  publisher's buckets and reads the `dashboards.json` of each bucket that carries one (about 3 KB). A bucket without
-  one is not a corpus, whatever it is named. Each result carries what a caller chooses by before any GiB moves: the
+  publisher's buckets and reads the `it_artifact.json` of each bucket that carries one (about 3 KB). A bucket without
+  one is not a corpus, whatever it is named, and a bucket whose envelope this build cannot read is left out of the
+  listing with a warning saying why. Each result carries what a caller chooses by before any GiB moves: the
   prompt corpus (`<hf_dataset_path>` or `<hf_dataset_path>:<config>`), layers, prompt and token counts, and whether the
   Parquet carries a page index.
 - `resolve_bucket_for(model_id, source_set_id)` selects from those results. No match is refused with what the
@@ -1390,9 +1391,10 @@ So corpora are discovered per trusted publisher, and each bucket's own `dashboar
   else the project's own namespace, `speediedan`. Trusting a publisher trusts every corpus and store it publishes. A
   finer, per-collection posture may follow if a use for it appears. See
   [Finding and using AnalysisStores](finding_analysis_stores.md).
-- Buckets and manifests are read with `token=`, so a token can reach a publisher's private corpora.
+- Buckets and envelopes are read with `token=`, so a token can reach a publisher's private corpora.
 - **Publishing a corpus makes it discoverable.** A bucket in a trusted publisher's namespace that carries a
-  `dashboards.json` is listed as soon as it lands, so there is no registration step. Publish checks run before and
+  corpus `it_artifact.json` is listed as soon as it lands, so there is no registration step. The bucket store uploads
+  that file last, after the checks on the published copy pass. Publish checks run before and
   after the upload, and a corpus whose read-back fails raises `PublishedArtifactCheckError`: delete or fix that bucket,
   since it is already visible.
 
@@ -1465,7 +1467,8 @@ If you want to validate an already-converted bundle directly, use the Python hel
 
 The helper is now a handoff boundary rather than the owner of Neuronpedia table mechanics. Interpretune requires
 `neuronpedia_utils.local_db_import` for local dashboard import and import-mode benchmark functionality, then adds only
-Interpretune-local URL resolution for localhost Docker Postgres URLs. The current Interpretune environment has been
+URL resolution: `--local-db-url`, else the first of `LOCAL_NEURONPEDIA_DB_URL`, `POSTGRES_URL_NON_POOLING` and
+`DATABASE_URL` that is set, used exactly as given. The current Interpretune environment has been
 validated with an editable no-deps install of the local Neuronpedia utility package.
 
 ```bash
@@ -1721,7 +1724,7 @@ regenerated. Generate with `runner_columnar_write_page_index: true` (the default
 > `data_page_size` to 64 KiB while keeping one row group changed it by 0.3%.
 >
 > `runner_columnar_parquet_row_group_size` defaults to SAEDashboard's
-> `DEFAULT_PARQUET_ROW_GROUP_SIZE` (4096) and is recorded in `dashboards.json` under
+> `DEFAULT_PARQUET_ROW_GROUP_SIZE` (4096) and is recorded in the corpus `it_artifact.json` under
 > `artifacts.parquet_row_group_size`, so a published corpus says how it is laid out. The optimum
 > moves only as √(features per file), so the default holds across batch sizes; set it explicitly
 > only if you have measured a reason to. Like the page index, it is **fixed at write time**. The
@@ -1760,14 +1763,16 @@ Two sidecars at the run root travel with a published corpus:
 | File | Role | Refreshable |
 | --- | --- | --- |
 | `source_ids.json` | **Identity** — the Neuronpedia source id per layer | No: rewriting it under an already-imported corpus silently re-keys it |
-| `dashboards.json` | **Provenance** — model, source set, prompt corpus, layers, artifact properties, tool versions | Yes: nothing imports from it |
+| `it_artifact.json` | **Provenance**: the shared artifact envelope, kind `dashboard-corpus`, with the Neuronpedia ids, the Hub model, source set, prompt corpus, layers, artifact properties and tool versions | Yes: nothing imports from it |
 
-`dashboards.json` is what lets a consumer tell two corpora apart without downloading either or
-trusting a bucket name:
+The envelope is what lets a consumer tell two corpora apart without downloading either or trusting a bucket name. It
+uses the schema window and validator every interpretune artifact shares (see
+[the envelope's versioning](analysis_store_serialization.md)), so a reader refuses an envelope it cannot vouch for
+instead of guessing:
 
 ```console
 $ python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
-corpus manifest: gemma-3-1b-it / gemmascope-2-transcoder-16k-rte / 2490 prompts x 319 tokens / 26 layers
+corpus envelope: gemma-3-1b-it / gemmascope-2-transcoder-16k-rte / 2490 prompts x 319 tokens / 26 layers
 ```
 
 Both are written at generation start and refreshed at completion. Backfill a corpus generated before

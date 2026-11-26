@@ -228,6 +228,65 @@ class TestSchemaVersionPolicy:
             validate_artifact_envelope(envelope, source="me/store")
 
 
+class TestDashboardCorpusKind:
+    """A dashboard corpus shares the envelope, and each reader names the kind it can use (#235).
+
+    The fixture was produced by the pipeline's writer (``build_corpus_envelope``), with its timestamp and tool
+    versions fixed, so it cannot drift with the writer either.
+    """
+
+    @staticmethod
+    def _corpus() -> dict:
+        return json.loads((Path(__file__).parent / "fixtures" / "it_artifact_corpus_schema3.json").read_text("utf-8"))
+
+    def test_the_frozen_corpus_envelope_reads_as_a_corpus(self):
+        from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND
+
+        envelope = validate_artifact_envelope(self._corpus(), source="corpus", kind=DASHBOARD_CORPUS_KIND)
+        assert envelope["identity"] == {"model_id": "gemma-3-1b-it", "source_set_id": "gemmascope-2-transcoder-16k"}
+        assert envelope["subject"]["model"]["id"] == "google/gemma-3-1b-it"
+        assert envelope["layers"]["generated"] == [0, 1]
+
+    def test_a_corpus_is_refused_by_a_store_reader(self):
+        """The default kind is the store, so every existing store reader refuses a corpus without being changed."""
+        with pytest.raises(ArtifactEnvelopeError, match="is not the 'analysis-store' this reader expects"):
+            validate_artifact_envelope(self._corpus(), source="corpus")
+
+    def test_a_store_is_refused_by_a_corpus_reader(self):
+        from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND
+
+        with pytest.raises(ArtifactEnvelopeError, match="is not the 'dashboard-corpus' this reader expects"):
+            validate_artifact_envelope(_fixture(3), source="store", kind=DASHBOARD_CORPUS_KIND)
+
+    def test_a_corpus_claiming_a_schema_before_the_kind_existed_is_refused(self):
+        from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND
+
+        envelope = {**self._corpus(), "schema": 2}
+        with pytest.raises(ArtifactEnvelopeError, match="predates the corpus kind"):
+            validate_artifact_envelope(envelope, source="corpus", kind=DASHBOARD_CORPUS_KIND)
+
+    @pytest.mark.parametrize(
+        "mutate, match",
+        [
+            (lambda e: e["identity"].pop("source_set_id"), "must name its Neuronpedia"),
+            (lambda e: e.pop("subject"), "must name the model as `model.id`"),
+            (lambda e: e["layers"].pop("generated"), "layers.generated"),
+        ],
+        ids=["no-source-set", "no-subject", "no-layers"],
+    )
+    def test_a_corpus_missing_a_required_block_is_refused(self, mutate, match):
+        from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND
+
+        envelope = self._corpus()
+        mutate(envelope)
+        with pytest.raises(ArtifactEnvelopeError, match=match):
+            validate_artifact_envelope(envelope, source="corpus", kind=DASHBOARD_CORPUS_KIND)
+
+    def test_an_unknown_kind_argument_is_refused(self):
+        with pytest.raises(ValueError, match="is not an artifact kind"):
+            validate_artifact_envelope(self._corpus(), kind="sorcery")
+
+
 class TestReaderWindowMatrix:
     """The three reader paths the window makes reachable, each against an envelope a writer produced (#283).
 

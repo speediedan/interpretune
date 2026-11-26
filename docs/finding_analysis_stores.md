@@ -174,7 +174,7 @@ interpretune). Bindings are never inferred from a column's name or its values. R
 
 Dashboard corpora are discovered from the same publishers. `find_dashboard_corpora` and `resolve_bucket_for` (in
 `interpretune.utils.neuronpedia_hub_fetch`) take the same `publishers=` keyword and read the same environment
-variable; a corpus is a bucket that carries a `dashboards.json`. See
+variable; a corpus is a bucket that carries an `it_artifact.json` of kind `dashboard-corpus`. See
 [Finding a published corpus](neuronpedia_dashboard_pipeline.md#finding-a-published-corpus-trusted-publishers).
 
 ## Publishing so others can find you

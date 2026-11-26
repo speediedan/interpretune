@@ -52,7 +52,7 @@ local dev stacks) — subject to the same upstream-ownership framing above.
 ### Standardized hub-based dashboard discovery
 
 Shipped ([#262](https://github.com/interpretune/interpretune/issues/262)): published corpora are discovered through
-Hub collections whose items are buckets, with each corpus's own `dashboards.json` as the only description of what it
+Hub collections whose items are buckets, with each corpus's own `it_artifact.json` as the only description of what it
 holds. A client's trust list is the collections it reads (the project's own by default), and a publisher registers a
 corpus by adding its bucket to a collection, with no client release. Trust is per publisher for now, and the
 permission model is still evolving (a finer, sub-publisher posture may follow); AnalysisStore discovery and trust are

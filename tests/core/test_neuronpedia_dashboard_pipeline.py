@@ -4466,7 +4466,7 @@ def test_layer_runner_command_forwards_parquet_row_group_size(tmp_path: Path, mo
     assert not any("row-group-size" in arg for arg in legacy_command)
 
 
-def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
+def test_corpus_envelope_records_the_row_group_size(tmp_path: Path) -> None:
     """A published corpus has to say how it was laid out.
 
     A consumer deciding whether streaming is viable needs this without downloading anything, and it is the only way to
@@ -4497,7 +4497,7 @@ def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
         interpretune_env_file=None,
         runner_dashboard_output_format="columnar",
     )
-    manifest = dashboard_pipeline.build_dashboard_manifest(config)
+    manifest = dashboard_pipeline.build_corpus_envelope(config)
     assert manifest["artifacts"]["parquet_row_group_size"] == SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
 
 

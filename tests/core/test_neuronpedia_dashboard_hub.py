@@ -19,9 +19,9 @@ import pytest
 
 from interpretune.utils.neuronpedia_dashboard_hub import (
     BUCKET_ROOT,
-    CORPUS_MANIFEST_FILE,
+    CORPUS_ENVELOPE_FILE,
     COPY_ROWS_STEM,
-    corpus_manifest_summary,
+    corpus_envelope_summary,
     manifest_referenced_tables,
     DASHBOARD_STORES,
     DEFAULT_STORE,
@@ -568,46 +568,55 @@ class TestBucketPrefix:
             assert "huggingface.co/datasets/ns/ds" in capsys.readouterr().out
 
 
-class TestCorpusManifest:
-    """``dashboards.json`` is what lets a consumer identify a corpus without opening a parquet file."""
+def _corpus_envelope(**layers) -> dict:
+    """A minimal valid ``dashboard-corpus`` envelope, as the pipeline writes it."""
+    from interpretune.hub.artifacts import ARTIFACT_SCHEMA_VERSION, DASHBOARD_CORPUS_KIND
+
+    return {
+        "schema": ARTIFACT_SCHEMA_VERSION,
+        "artifact_kind": DASHBOARD_CORPUS_KIND,
+        "identity": {"model_id": "gemma-3-1b-it", "source_set_id": "gemmascope-2-transcoder-16k"},
+        "subject": {"model": {"id": "google/gemma-3-1b-it", "revision": None, "n_layers": 26}},
+        "prompt_corpus": {"n_prompts": 24576, "n_tokens_in_prompt": 128},
+        "layers": {"generated": list(range(26)), **layers},
+    }
+
+
+class TestCorpusEnvelope:
+    """The corpus ``it_artifact.json`` is what lets a consumer identify a corpus without opening a parquet file."""
 
     def test_filename_matches_the_pipeline_that_writes_it(self) -> None:
         """The constant is duplicated to keep the publisher light; drift must fail here, not silently."""
-        from interpretune.utils.neuronpedia_dashboard_pipeline import DASHBOARD_MANIFEST_FILE
+        from interpretune.utils.neuronpedia_dashboard_pipeline import CORPUS_ENVELOPE_FILE as WRITTEN
 
-        assert CORPUS_MANIFEST_FILE == DASHBOARD_MANIFEST_FILE
+        assert CORPUS_ENVELOPE_FILE == WRITTEN == "it_artifact.json"
 
     def test_summary_renders_the_identifying_fields(self, tmp_path: Path) -> None:
-        (tmp_path / CORPUS_MANIFEST_FILE).write_text(
-            json.dumps(
-                {
-                    "model": {"name": "gemma-3-1b-it"},
-                    "source_set": {"id": "gemmascope-2-transcoder-16k"},
-                    "prompt_corpus": {"n_prompts": 24576, "n_tokens_in_prompt": 128},
-                    "layers": {"generated": list(range(26))},
-                }
-            ),
-            encoding="utf-8",
-        )
-        summary = corpus_manifest_summary(tmp_path)
-        assert "gemma-3-1b-it" in summary
+        (tmp_path / CORPUS_ENVELOPE_FILE).write_text(json.dumps(_corpus_envelope()), encoding="utf-8")
+        summary = corpus_envelope_summary(tmp_path)
+        assert "gemma-3-1b-it / gemmascope-2-transcoder-16k" in summary
         assert "24576 prompts x 128 tokens" in summary
         assert "26 layers" in summary
 
-    def test_absent_manifest_is_flagged_not_fatal(self, tmp_path: Path) -> None:
+    def test_absent_envelope_is_flagged_not_fatal(self, tmp_path: Path) -> None:
         """Nothing imports from it, so a corpus without one still publishes -- visibly."""
-        assert "ABSENT" in corpus_manifest_summary(tmp_path)
+        assert "ABSENT" in corpus_envelope_summary(tmp_path)
         with patch("huggingface_hub.HfApi") as api:
             publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", store="dataset", token="t")
         api.return_value.upload_folder.assert_called_once()
 
-    def test_unreadable_manifest_does_not_abort_the_report(self, tmp_path: Path) -> None:
-        (tmp_path / CORPUS_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
-        assert "UNREADABLE" in corpus_manifest_summary(tmp_path)
+    def test_unreadable_envelope_is_reported_as_invalid(self, tmp_path: Path) -> None:
+        (tmp_path / CORPUS_ENVELOPE_FILE).write_text("{not json", encoding="utf-8")
+        assert "INVALID" in corpus_envelope_summary(tmp_path)
+
+    def test_an_envelope_of_another_kind_is_reported_as_invalid(self, tmp_path: Path) -> None:
+        envelope = {**_corpus_envelope(), "artifact_kind": "analysis-store"}
+        (tmp_path / CORPUS_ENVELOPE_FILE).write_text(json.dumps(envelope), encoding="utf-8")
+        assert "INVALID" in corpus_envelope_summary(tmp_path)
 
     def test_plan_report_includes_the_summary(self, tmp_path: Path) -> None:
         run = _build_run(tmp_path, page_index=True)
-        assert "corpus manifest:" in format_publish_plan(build_publish_plan(run), repo_id="ns/n")
+        assert "corpus envelope:" in format_publish_plan(build_publish_plan(run), repo_id="ns/n")
 
 
 class TestTokenResolution:
@@ -672,13 +681,13 @@ class TestManifestConsistency:
 
 
 class TestManifestRelease:
-    """A bucket is discoverable once its root ``dashboards.json`` is there, so that file goes up last, and only for
-    a corpus whose published copy passed every check."""
+    """A bucket is discoverable once its root ``it_artifact.json`` is there, so that file goes up last, and only
+    for a corpus whose published copy passed every check."""
 
     @staticmethod
     def _run_with_manifest(tmp_path: Path) -> Path:
         run = _build_run(tmp_path, page_index=True)
-        (run / "dashboards.json").write_text(json.dumps({"model": {"name": "m"}}), encoding="utf-8")
+        (run / CORPUS_ENVELOPE_FILE).write_text(json.dumps(_corpus_envelope()), encoding="utf-8")
         return run
 
     def test_the_manifest_is_held_back_from_the_sync_and_released_after_the_checks(self, tmp_path: Path) -> None:
@@ -687,9 +696,9 @@ class TestManifestRelease:
             publish_dashboard_run(run, "ns/bkt", store="bucket", revision="pfx", token="t")
         calls = [c[0] for c in api.return_value.method_calls]
         assert calls.index("sync_bucket") < calls.index("batch_bucket_files")
-        assert "dashboards.json" in api.return_value.sync_bucket.call_args.kwargs["exclude"]
+        assert CORPUS_ENVELOPE_FILE in api.return_value.sync_bucket.call_args.kwargs["exclude"]
         api.return_value.batch_bucket_files.assert_called_once_with(
-            "ns/bkt", add=[(run / "dashboards.json", "pfx/dashboards.json")], token="t"
+            "ns/bkt", add=[(run / CORPUS_ENVELOPE_FILE, f"pfx/{CORPUS_ENVELOPE_FILE}")], token="t"
         )
 
     def test_a_failed_read_back_releases_nothing(self, tmp_path: Path, monkeypatch) -> None:

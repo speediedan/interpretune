@@ -374,10 +374,12 @@ returns its result through the same validator the read paths use, so a schema bu
 reader's window, or an identity block preserved from a corrupted existing envelope, fails locally
 instead of landing on the Hub.
 
-Neuronpedia dashboard corpora carry their own manifests (`dashboards.json` for provenance,
-`source_ids.json` for identity), documented in the dashboard pipeline guide. They follow the same
-single-integer convention but are read leniently today; if and when they adopt this envelope they
-take a distinct `artifact_kind` under the rules above.
+Neuronpedia dashboard corpora use this envelope too, with `artifact_kind` `dashboard-corpus`, under the same schema
+window and validator. A reader names the kind it can use (`validate_artifact_envelope(..., kind=...)`, which defaults
+to `analysis-store`), so a corpus is never read as a store, or a store as a corpus. A corpus envelope requires its
+Neuronpedia `identity` (`model_id`, `source_set_id`), a `subject` naming the Hub model, and `layers.generated`; the
+kind entered at schema 3, so a corpus envelope claiming an earlier schema is refused. `source_ids.json` stays the
+corpus's identity sidecar, documented with the rest of the corpus layout in the dashboard pipeline guide.
 
 ### Op-collection provenance: what the envelope does and does not record
 

@@ -68,9 +68,6 @@ DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS = (
     "POSTGRES_URL_NON_POOLING",
     "DATABASE_URL",
 )
-DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME = "postgres"
-DEFAULT_LOCAL_NEURONPEDIA_HOST = "127.0.0.1"
-DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV = "POSTGRES_HOST_PORT"
 DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS = 5
 #: The URL a Neuronpedia development setup listens on by default, for messages and docs. Never a fallback: an import
 #: writes to the database it resolves, so the database is always named by the caller or the environment.
@@ -97,7 +94,6 @@ __all__ = [
     "import_neuronpedia_export_bundle_local_db",
     "import_saedashboard_columnar_bundle_local_db",
     "resolve_local_neuronpedia_db_url",
-    "rewrite_container_postgres_url_for_host",
     "summarize_neuronpedia_export_bundle",
     "summarize_neuronpedia_export_bundle_arrow",
     "summarize_neuronpedia_export_bundle_parquet",
@@ -130,40 +126,13 @@ def _redact_connection_url(connection_url: str) -> str:
     return urlunparse(parsed._replace(netloc=netloc))
 
 
-def rewrite_container_postgres_url_for_host(
-    connection_url: str,
-    *,
-    env: Mapping[str, str] | None = None,
-    container_hostname: str = DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME,
-    host: str = DEFAULT_LOCAL_NEURONPEDIA_HOST,
-    port_env_var: str = DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV,
-) -> str:
-    """Rewrite a docker-only Postgres URL to the host-mapped local port when configured."""
-
-    env_map = dict(os.environ if env is None else env)
-    parsed = urlparse(connection_url)
-    if parsed.hostname != container_hostname:
-        return connection_url
-    host_port = env_map.get(port_env_var)
-    if not host_port:
-        return connection_url
-    username = parsed.username or ""
-    password = parsed.password or ""
-    auth_prefix = username
-    if password:
-        auth_prefix = f"{auth_prefix}:{password}"
-    if auth_prefix:
-        auth_prefix = f"{auth_prefix}@"
-    netloc = f"{auth_prefix}{host}:{host_port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
 def resolve_local_neuronpedia_db_url(
     local_db_url: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    """Resolve the best local Neuronpedia Postgres URL from explicit input or environment."""
+    """Resolve the local Neuronpedia Postgres URL: ``local_db_url``, else the first of
+    :data:`DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS` that is set. There is no default database."""
 
     env_map = dict(os.environ if env is None else env)
     candidate = local_db_url
@@ -177,7 +146,7 @@ def resolve_local_neuronpedia_db_url(
             "Could not resolve a local Neuronpedia DB URL. Set one of "
             f"{', '.join(DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS)}, e.g. {EXAMPLE_LOCAL_NEURONPEDIA_DB_URL}."
         )
-    return rewrite_container_postgres_url_for_host(candidate, env=env_map)
+    return candidate
 
 
 def check_local_neuronpedia_services(
