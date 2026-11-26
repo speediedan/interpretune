@@ -435,6 +435,18 @@ something pushed by hand) is reported by name and removed in the same commit, so
 pair and nothing arrives out of band. If you see that report and did not expect it, the named files came from a
 hand-push; declare what you want kept.
 
+### Publishing your own README
+
+The published `README.md` is generated from the manifest, so a README in your directory is not published unless the
+manifest declares it:
+
+```yaml
+card: README.md
+```
+
+Its text then follows the generated sections. Start it without YAML front matter, which is generated, and give every
+link as a full URL: a link relative to your repository resolves differently on the Hub, and the publish refuses it.
+
 ### Verifying a publish from the same machine
 
 Resolution is cache-only and reads whichever revision `refs/main` names, and a `local_publish` snapshot (the
