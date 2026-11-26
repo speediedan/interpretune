@@ -3,8 +3,7 @@
 # (`datamodule_cfg.prompt_cfg.prompts`), and circuit-tracer's salient-logit selection applies unless the caller names
 # targets. Experiment variants that need targets set them (see capital_states.*).
 # The backend is chosen at run time (`circuit_tracer_cfg.backend`): "nnsight", the default here, or "transformerlens",
-# which is unavailable until circuit-tracer ports its TransformerLens replacement model to TransformerLens 4.0's
-# TransformerBridge (TransformerLens 4.0 removed HookedTransformer, which that model subclasses).
+# circuit-tracer's replacement model on a TransformerLens TransformerBridge.
 task_variant: prompt_analysis
 model: gemma2
 composition: [circuit_tracer]

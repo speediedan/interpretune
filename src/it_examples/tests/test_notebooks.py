@@ -331,18 +331,19 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
 # Test parameters for CT Analysis Backend Demo notebook (public dashboard mode). The
 # notebook's in-cell sanity gates (unit direction norm, post-gap > pre-gap) catch wild divergences
 # without heavy assertions.
+# GPU declarations per case, measured with tests/gpu_ci/calibrate.py (AMD R9700, ROCm). The nnsight case is unmeasured
+# on this host and keeps the 10 GiB it was declared at (out of memory on an 8 GiB card; 5.5 GiB seen in the kernel).
 CT_ANALYSIS_BACKEND_PARAMS = [
     pytest.param(
         {"backend": "nnsight", "dashboard_mode": "public"},
         id="ct_analysis_backend_nnsight_public",
+        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0),
     ),
-    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
-    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
-    # when that lands; the nnsight case above covers the notebook meanwhile.
-    # pytest.param(
-    #     {"backend": "transformerlens", "dashboard_mode": "public"},
-    #     id="ct_analysis_backend_tl_public",
-    # ),
+    pytest.param(
+        {"backend": "transformerlens", "dashboard_mode": "public"},
+        id="ct_analysis_backend_tl_public",
+        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=14.0),  # need 11.80 GiB
+    ),
 ]
 
 # Local-dashboard-mode params: identical analysis flow, feature-dashboard links point at the
@@ -376,7 +377,6 @@ def _run_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path) ->
     _cleanup_notebook_artifacts()
 
 
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # out of memory on an 8 GiB card (5.5 GiB seen in the kernel)
 @pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_PARAMS)
 def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
     """Test CT analysis backend demo notebook (public dashboard mode)."""
@@ -428,11 +428,15 @@ def test_ct_attention_attribution_notebook(tmp_path: Path):
 # defaults ARE its substrate. The public notebook
 # needs no services and is the CI lane; the local one is opt-in (see below).
 CT_CONCEPT_STEERING_PARAMS = [
-    pytest.param({}, id="ct_concept_steering_public"),
-    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
-    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
-    # when that lands; the nnsight case above covers the notebook meanwhile.
-    # pytest.param({"BACKEND": "transformerlens"}, id="ct_concept_steering_tl_public"),
+    # need 13.85 GiB
+    pytest.param({}, id="ct_concept_steering_public", marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=16.0)),
+    # need 14.04 GiB with the kernel's allocator capped at 16 GiB. Uncapped, a 32 GiB device shows 22.2 GiB, most of it
+    # memory PyTorch keeps reserved (the largest amount any cell allocates is 12.5 GiB).
+    pytest.param(
+        {"BACKEND": "transformerlens"},
+        id="ct_concept_steering_tl_public",
+        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=16.5),
+    ),
 ]
 
 # Local-Neuronpedia notebook. Its defaults already carry the gemma-3-1b-it + local-webapp substrate,
@@ -501,7 +505,6 @@ def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path, no
     _cleanup_notebook_artifacts()
 
 
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # out of memory on an 8 GiB card (5.5 GiB seen in the kernel)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_PARAMS)
 def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
     """Test the concept-direction steering demo notebook (feature-mediated + direct-hook paths).
