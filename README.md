@@ -167,24 +167,28 @@ scalability, example-aligned customizability, and (soon) direct shareability/str
 The [MVP milestone](https://github.com/interpretune/interpretune/milestone/1) centers on making
 Interpretune artifacts shareable on the Hub — most importantly **AnalysisStore upload/download**
 (analyses as exchangeable, reproducible, composable datasets), **adapter/session shareability**
-(an analysis is runnable, not just readable), and **cross-backend support hardening**
-([#201](https://github.com/interpretune/interpretune/issues/201),
-[#224](https://github.com/interpretune/interpretune/issues/224)). This is the same hub-artifact
+(an analysis is runnable, not just readable), and **cross-backend support hardening** (the
+abstraction-layer validation of [#201](https://github.com/interpretune/interpretune/issues/201) has shipped;
+the cross-backend demo of [#224](https://github.com/interpretune/interpretune/issues/224) is deferred). This is the same hub-artifact
 pattern as the streamable-dashboards effort — one consistent story for dashboards, explanations,
 and analysis results.
 
-### Following: hub-resident, streamable dashboards
+### Hub-resident, streamable dashboards
 
-Dashboards and locally-generated feature explanations become **Hugging Face Hub artifacts that
-viewers stream on demand**, optionally disintermediating the Neuronpedia DB for user-generated
-dashboards (on neuronpedia.org and local dev stacks alike) — same upstream-ownership framing as
-above.
+Shipped: generated dashboard corpora publish to **Hugging Face Hub buckets**, laid out so one feature
+can be read without downloading the corpus, and a consumer finds them per trusted publisher and imports
+them into a local Neuronpedia. Following: **viewers streaming those corpora on demand**, optionally
+disintermediating the Neuronpedia DB for user-generated dashboards (on neuronpedia.org and local dev
+stacks alike), which depends on the upstream Scalable Dashboards PRs
+([#231](https://github.com/interpretune/interpretune/issues/231)). Locally generated feature explanations
+are not yet part of a published corpus. The same upstream-ownership framing as above applies.
 
 ### Research directions
 
-RTE cross-backend research ([#220](https://github.com/interpretune/interpretune/issues/220)),
-Jacobian-space (J-lens) analysis support
-([#225](https://github.com/interpretune/interpretune/issues/225)), **self-interpretability**
+RTE cross-backend research ([#667](https://github.com/interpretune/interpretune/issues/667)),
+attribution-graph auto-pruning and tuning ([#220](https://github.com/interpretune/interpretune/issues/220)),
+Jacobian-space (J-lens) analysis (the ops of [#225](https://github.com/interpretune/interpretune/issues/225)
+have shipped; J-space attribution graphs are [#683](https://github.com/interpretune/interpretune/issues/683)), **self-interpretability**
 (interpretability that accelerates model advancement via self-reflection, including internal
 reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
 reflective cognition for counterfactuals via latent-state evaluation, meta-latent world model

@@ -37,17 +37,24 @@ Interpretune's artifacts **shareable on the Hugging Face Hub** — most importan
   one consistent hub-artifact story for dashboards, explanations, and analysis results.
 - **Adapter/session shareability**: uploadable session and adapter configurations so an analysis
   is runnable, not just readable.
-- **Cross-backend support hardening**: completing the dual-backend abstraction-layer validation
-  ([#201](https://github.com/interpretune/interpretune/issues/201) — latent model handle lifecycle,
-  backend compatibility matrix) and broadening cross-backend demo/e2e coverage
-  ([#224](https://github.com/interpretune/interpretune/issues/224)).
+- **Cross-backend support hardening**: the dual-backend abstraction-layer validation has shipped
+  ([#201](https://github.com/interpretune/interpretune/issues/201): latent model handle lifecycle,
+  backend compatibility matrix); broadening cross-backend demo/e2e coverage
+  ([#224](https://github.com/interpretune/interpretune/issues/224)) is deferred.
 
-## Following: hub-resident, streamable dashboards
+## Hub-resident, streamable dashboards
 
-Building on the upstream Scalable Dashboard PRs: dashboards and locally-generated feature
-explanations become Hugging Face Hub artifacts that viewers stream on demand, optionally
-disintermediating the Neuronpedia DB for user-generated dashboards (both on neuronpedia.org and
-local dev stacks) — subject to the same upstream-ownership framing above.
+Shipped: generated dashboard corpora publish to Hugging Face Hub buckets, laid out so one feature can
+be read without downloading the corpus, and a consumer finds them per trusted publisher and imports
+them into a local Neuronpedia (the
+[pipeline guide](../neuronpedia_dashboard_pipeline.md#publishing-generated-dashboards-to-the-hub) has
+the commands).
+
+Following, building on the upstream Scalable Dashboard PRs
+([#231](https://github.com/interpretune/interpretune/issues/231)): viewers stream those corpora on
+demand, optionally disintermediating the Neuronpedia DB for user-generated dashboards (both on
+neuronpedia.org and local dev stacks), subject to the same upstream-ownership framing above. Locally
+generated feature explanations are not yet part of a published corpus.
 
 ### Standardized hub-based dashboard discovery
 
@@ -61,7 +68,8 @@ tracked in [#1008](https://github.com/interpretune/interpretune/issues/1008). Th
 
 ## Research directions
 
-- **RTE cross-backend research** ([#220](https://github.com/interpretune/interpretune/issues/220)):
+- **RTE cross-backend research** ([#667](https://github.com/interpretune/interpretune/issues/667);
+  attribution-graph auto-pruning and tuning in [#220](https://github.com/interpretune/interpretune/issues/220)):
   the recognizing-textual-entailment research program that motivated the cross-backend demo
   infrastructure — resuming on the hardened dual-backend substrate.
 - **Jacobian-space (J-lens) analysis support**
