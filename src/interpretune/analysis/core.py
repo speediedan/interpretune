@@ -399,6 +399,40 @@ def schema_to_features(
     return Features(features_dict)
 
 
+def stamp_op_provenance(store: Any, op: Any) -> None:
+    """Record which op collection produced ``store``'s columns, at the moment the store is created.
+
+    Write time is the only place this can be recorded truthfully. Reconstructing it later by matching column names
+    against op output schemas would consult `DISPATCHER.op_precedence`, which is session-mutable and re-read from
+    `IT_OP_PRECEDENCE` on every access -- so a bare name can resolve to a different collection by the time a store is
+    published, and the store keeps no trace of which naming form was used to tell the safe case from the unsafe one.
+
+    Leaves the store's empty default in place when there is nothing to record, rather than substituting a guess. Both
+    writers call this: ``AnalysisCfg.apply`` and :func:`analysis_store_from_batches`.
+    """
+    if op is None:
+        return  # no op, no dispatcher call at all
+    try:
+        store.op_provenance = DISPATCHER.op_provenance(op)
+    except Exception as e:  # provenance is descriptive: never fail a run to record it
+        rank_zero_warn(f"Could not record op provenance for {getattr(op, 'name', op)}: {e}")
+
+
+def stamp_subject(store: Any, module: Any) -> None:
+    """Record what ``store``'s columns were computed on, from the module that computes them.
+
+    Like op provenance, only write time knows this: a store carries nothing from which the model, tokenizer, component
+    map or dictionaries could be recovered later. A module stating no model id leaves the store without a subject, and
+    publishing it then asks for one explicitly.
+    """
+    from interpretune.hub.subject import StoreSubjectError, subject_from_module
+
+    try:
+        store.subject = subject_from_module(module)
+    except StoreSubjectError as e:
+        rank_zero_warn(f"The store's subject was not recorded: {e}")
+
+
 def analysis_store_from_batches(
     module: Any,
     analysis_batches: Sequence[Any],
@@ -414,6 +448,9 @@ def analysis_store_from_batches(
     store carries backend-aware format kwargs so local access hydrates exactly as a pulled store
     would. ``analysis_backend`` accepts a registered backend NAME (preferred — it is what the
     artifact envelope records) or an instance.
+
+    The store is stamped as the runner's path stamps it: with the module's subject (what the columns were computed
+    on) and the op's provenance, so it publishes as built.
     """
     import torch
 
@@ -469,7 +506,10 @@ def analysis_store_from_batches(
     it_format_kwargs: dict[str, Any] = {"col_cfg": {name: cfg.to_dict() for name, cfg in output_schema.items()}}
     if analysis_backend is not None:
         it_format_kwargs["analysis_backend"] = analysis_backend
-    return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
+    store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
+    stamp_op_provenance(store, resolved_op)
+    stamp_subject(store, module)
+    return store
 
 
 class _StreamCursor:
