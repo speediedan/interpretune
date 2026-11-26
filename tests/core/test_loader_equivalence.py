@@ -31,6 +31,20 @@ def _baseline_for(config_path):
     return BASELINE_SPECS[fixture_key(config_path)]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _knowing_using_published():
+    """Publish the in-tree ``knowing_using`` component locally, so its configurations' entrypoint classes resolve.
+
+    The ``kug_lrsd`` configurations name their classes by the entrypoint stem, which only a cached component declaring
+    it resolves. The component is in-tree rather than pinned on the Hub, so the warm step does not fetch it, and this
+    module must not rely on another test module having published it first.
+    """
+    from interpretune.hub.components import local_publish
+
+    kug_dir = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "knowing_using"
+    local_publish(kug_dir, "speediedan/knowing-using", entrypoint_src=kug_dir / "knowing_using.py")
+
+
 def test_all_cli_experiment_configs_discovered():
     """The harness must cover the full experiment-config surface; a moved/removed config shrinks it loudly."""
     assert len(CONFIGS) == 15, sorted(str(c) for c in CONFIGS)
