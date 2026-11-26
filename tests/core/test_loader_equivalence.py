@@ -46,7 +46,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 24, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 25, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -220,6 +220,12 @@ def test_materialized_defaults_present_and_declarative():
             # the fine-tuning variants set their own: no lr scheduler, so a phase's learning rate is what it declares
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
+            continue
+        if key.startswith("rte_latent."):
+            # the latent tuning recipe: no lr scheduler, and tokenized in chunks of one batch so that unshuffled batches
+            # are padded to their own longest prompt
+            assert not loaded.module_cfg.lr_scheduler_init, key
+            assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True, "batch_size": 2}, key
             continue
         if key.startswith("kug_lrsd."):
             # the paper's recipe: a constant learning rate, and a datamodule that tokenizes without a dataset map

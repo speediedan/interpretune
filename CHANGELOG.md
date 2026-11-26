@@ -485,7 +485,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
-- The conformance seed and the test cache pin `speediedan/rte` at `4e581264`, whose left-padding configurations declare the attention mask (and `input_ids` over nnsight). The previous pin's configurations ran left-padded batches over the padding ([#1237](https://github.com/interpretune/interpretune/issues/1237))
+- The conformance seed and the test cache pin `speediedan/rte` at `4e581264`, whose left-padding configurations declare the attention mask (and `input_ids` over nnsight). The previous pin's configurations ran left-padded batches over the padding. With those rows masked, the conformance suite's two-adds commuting control measured 1.125e-4 on NVIDIA, so its 3e-4 bound, measured on ROCm, now applies on every vendor ([#1237](https://github.com/interpretune/interpretune/issues/1237))
 
 - The direct-forward input check (a batch keyed by a primary input the model's forward cannot take is refused by name) covers nnsight wrappers, circuit-tracer's nnsight replacement model among them, PEFT models and SAE Lens bridges. It skipped all four, the PEFT ones because it looked for the model on `base_model`, which is the tuner, so such a configuration failed inside the model with its own message about a missing input ([#748](https://github.com/interpretune/interpretune/issues/748))
 
