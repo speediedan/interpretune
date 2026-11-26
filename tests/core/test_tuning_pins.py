@@ -219,26 +219,105 @@ class TestWhereBooksAreRead:
         with pytest.raises(ValueError, match="there is no module to check them against"):
             load_recipe(source)
 
-    def test_a_schedule_using_a_pinned_books_sets_is_refused(self, tmp_path):
-        """Finetuning-scheduler reads a schedule's books and does not check pins, so it runs none that has them."""
-        pytest.importorskip("finetuning_scheduler.core.tuning_scheduler")
-        from functools import partial
 
-        from finetuning_scheduler.core.schedule import FTSConfigurationError
+class TestSchedules:
+    """Finetuning-scheduler reads a schedule's books and asks the module's view to check the ones that pin
+    models."""
+
+    PINS = {"base_model": {"id": "tiny", "revision": REVISION}}
+
+    @pytest.fixture(autouse=True)
+    def _scheduler(self):
+        pytest.importorskip("finetuning_scheduler.core.tuning_scheduler")
+
+    @staticmethod
+    def _module(attach=True, revision=REVISION):
+        from interpretune.tuning.views import attach_tunable_view, identity_view
+        from tests.core import test_core_loop_training as core_loop
+
+        module = core_loop.TinyModule()
+        module.it_cfg.model_name_or_path = "tiny"
+        module._it_state = SimpleNamespace(_model_revision=revision)
+        if attach:
+            module.build_tunable_view = lambda: identity_view(module)
+            attach_tunable_view(module)
+        return module
+
+    def _train(self, module, tmp_path, book, address="@bias"):
+        from functools import partial
 
         from interpretune.tuning.core_loop import FTSCoreCallback
         from tests.core import test_core_loop_training as core_loop
 
-        module = core_loop.TinyModule()
-        pins = {"base_model": {"id": "tiny", "revision": REVISION}}
-        book = {"schema_version": 8, "name": "tiny", "requires": pins, "sets": {"bias": "leaf:bias"}}
         (tmp_path / "book.yaml").write_text(yaml.safe_dump(book), encoding="utf-8")
-        schedule = {"addresses": str(tmp_path / "book.yaml"), 0: {"params": ["@bias"]}}
+        schedule = {"addresses": str(tmp_path / "book.yaml"), 0: {"params": [address]}}
         (tmp_path / "schedule.yaml").write_text(yaml.safe_dump(schedule), encoding="utf-8")
-        before = module.model.bias.detach().clone()
         fts = FTSCoreCallback(
             str(tmp_path / "schedule.yaml"), tuning_scheduler_kwargs={"optimizer": partial(torch.optim.SGD, lr=0.1)}
         )
-        with pytest.raises(FTSConfigurationError, match="it pins the models it was written against"):
+        before = {n: p.detach().clone() for n, p in module.model.named_parameters()}
+        try:
             core_loop._train(module, max_epochs=1, callbacks=[fts])
-        assert torch.equal(module.model.bias, before)
+        finally:
+            self.trained = sorted(n for n, p in module.model.named_parameters() if not torch.equal(p, before[n]))
+
+    @property
+    def _book(self):
+        return {"schema_version": 8, "name": "tiny", "requires": self.PINS, "sets": {"bias": "leaf:bias"}}
+
+    def test_a_book_pinned_to_the_loaded_models_runs(self, tmp_path):
+        self._train(self._module(), tmp_path, self._book)
+        assert self.trained == ["bias"]
+
+    def test_a_book_pinned_to_other_models_is_refused(self, tmp_path):
+        from finetuning_scheduler.core.schedule import FTSConfigurationError
+
+        with pytest.raises(FTSConfigurationError, match="do not apply through this view") as err:
+            self._train(self._module(revision="1" * 40), tmp_path, self._book)
+        assert isinstance(err.value.__cause__, PinMismatchError)
+        assert err.value.__cause__.entries == ("requires.base_model",)
+        assert self.trained == []
+
+    def test_an_imported_books_pins_bind(self, tmp_path):
+        from finetuning_scheduler.core.schedule import FTSConfigurationError
+
+        (tmp_path / "pinned.yaml").write_text(yaml.safe_dump(self._book), encoding="utf-8")
+        outer = {"schema_version": 1, "name": "outer", "imports": {"p": "pinned.yaml"}, "sets": {"s": "@p.bias"}}
+        self._train(self._module(), tmp_path, outer, "@s")
+        assert self.trained == ["bias"]
+        with pytest.raises(FTSConfigurationError, match="do not apply through this view"):
+            self._train(self._module(revision="1" * 40), tmp_path, outer, "@s")
+
+    def test_the_latent_models_of_the_module_are_checked(self):
+        """The view answers for the module it was attached to, as it is when the schedule compiles."""
+        from interpretune.tuning.views import attach_tunable_view, default_view
+
+        root = _root()
+        root.build_tunable_view = lambda: default_view(root)
+        book = _pinned(root)
+        attach_tunable_view(root).check_book(book)
+        detach_latent_model(root, "sae")
+        with pytest.raises(PinMismatchError, match="which is not loaded"):
+            root.tunable_view.check_book(book)
+
+    def test_a_view_that_checks_nothing_still_refuses_a_pinned_book(self, tmp_path):
+        from finetuning_scheduler.core.schedule import FTSConfigurationError
+
+        with pytest.raises(FTSConfigurationError, match="defines no `check_book`"):
+            self._train(self._module(attach=False), tmp_path, self._book)
+        assert self.trained == []
+
+    def test_a_views_own_check_is_kept(self):
+        from interpretune.tuning.views import check_books_of
+
+        class Own:
+            def check_book(self, book):
+                return "own"
+
+        class Slotted:
+            __slots__ = ()
+
+        own, slotted = Own(), Slotted()
+        check_books_of(own, _root())
+        check_books_of(slotted, _root())
+        assert own.check_book(None) == "own" and not hasattr(slotted, "check_book")
