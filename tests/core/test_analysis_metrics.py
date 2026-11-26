@@ -119,7 +119,7 @@ def test_the_store_callback_sends_the_averages_to_the_trainer_s_loggers(tmp_path
     trainer.predict(module, datamodule=it_session.datamodule, return_predictions=False)
     (epoch,) = module.analysis_metrics
     assert epoch["batch_index"] == 0.5 and epoch["batch_rows"] > 0
-    with open(f"{logger.log_dir}/metrics.csv") as f:
+    with open(f"{logger.log_dir}/metrics.csv", encoding="utf-8", newline="") as f:
         logged = list(csv.DictReader(f))
     assert [(float(r["analysis/batch_index"]), float(r["analysis/batch_rows"]), r["step"]) for r in logged] == [
         (0.5, epoch["batch_rows"], "0")
