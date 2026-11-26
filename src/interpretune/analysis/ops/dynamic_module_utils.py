@@ -1,6 +1,7 @@
 """Utilities to dynamically load functions from Hub-downloaded modules."""
 
 from __future__ import annotations
+import ast
 import os
 import sys
 import threading
@@ -121,6 +122,23 @@ def get_function_in_module(
         return getattr(module, function_name)
 
 
+def _sibling_imports(module_file: str | os.PathLike) -> list[str]:
+    """The modules a file imports with ``from . import name``, which ``check_imports`` does not report.
+
+    ``check_imports`` finds ``from .name import member`` by its text and stages that module beside the importing one. In
+    ``from . import name`` the name may be a sibling module or something the package itself defines; a hub op's package
+    is empty, so there it is a sibling.
+    """
+    tree = ast.parse(Path(module_file).read_text(encoding="utf-8"))
+    names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module is None
+        for alias in node.names
+    }
+    return sorted(names)
+
+
 def get_cached_module_file_it(
     op_repo_name_or_path: str | os.PathLike,
     module_file: str,
@@ -191,9 +209,11 @@ def get_cached_module_file_it(
     if is_local:
         submodule = os.path.basename(op_repo_name_or_path)
     else:
-        # Replace '.' with '/' for repo names to support HuggingFace repo conventions
-        op_repo_name_or_path = op_repo_name_or_path.replace(".", "/")
-        submodule = op_repo_name_or_path.replace("/", os.path.sep)
+        # a namespace (`user.repo`) becomes a repo id; only its first dot separates, since a repo name may contain dots
+        if "/" not in op_repo_name_or_path:
+            op_repo_name_or_path = op_repo_name_or_path.replace(".", "/", 1)
+        # the submodule is imported as a dotted module path, so a dot inside the repo name cannot stay one
+        submodule = op_repo_name_or_path.replace(".", "_dot_").replace("/", os.path.sep)
         cached_module = try_to_load_from_cache(
             op_repo_name_or_path,
             module_file,
@@ -229,7 +249,7 @@ def get_cached_module_file_it(
     # Check we have all the requirements in our environment
     if resolved_module_file is None:
         raise RuntimeError(f"Failed to resolve module file {module_file} from {op_repo_name_or_path}")
-    modules_needed = check_imports(resolved_module_file)
+    modules_needed = sorted({*check_imports(resolved_module_file), *_sibling_imports(resolved_module_file)})
 
     # Now we move the module inside our cached dynamic modules.
     full_submodule = IT_DYNAMIC_MODULE_NAME + os.path.sep + submodule
