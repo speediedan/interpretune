@@ -126,6 +126,14 @@ def _measurement_hf_state(model: Any) -> dict[str, Any]:
     return {name: value for name, value in state.items() if name not in artifact_keys}
 
 
+def _measurement_dtype(state: Mapping[str, Any]) -> str:
+    """The one floating precision of the measured HF weights, which the attribution edges are computed in."""
+    dtypes = {str(tensor.dtype).removeprefix("torch.") for tensor in state.values() if tensor.is_floating_point()}
+    if len(dtypes) != 1:
+        raise ValueError(f"measurement HF weights must share one floating precision, got {sorted(dtypes)}")
+    return dtypes.pop()
+
+
 def _model_provenance(module: Any) -> tuple[str, str]:
     config = module.it_cfg
     model_id = getattr(config, "model_name_or_path", None)
@@ -199,8 +207,10 @@ class RteSparseAttributionCollector:
             if backend != "nnsight":
                 raise ValueError(f"RTE checkpoint collection requires the nnsight backend, got {backend!r}")
             basis = transcoder_basis_id(model)
-            if tensor_state_sha256(_measurement_hf_state(model)) != weights_sha:
+            measured_state = _measurement_hf_state(model)
+            if tensor_state_sha256(measured_state) != weights_sha:
                 raise ValueError("measurement HF weights do not match the selected training model")
+            measurement_dtype = _measurement_dtype(measured_state)
             target = _decision_target(model, targets)
             for row_id, ids in items.items():
                 with torch.no_grad():
@@ -237,6 +247,7 @@ class RteSparseAttributionCollector:
             model_id,
             revision,
             targets,
+            measurement_dtype,
             checks={
                 "selected_hf_state_sha256": weights_sha,
                 "validation_inputs_sha256": tensor_state_sha256(items),

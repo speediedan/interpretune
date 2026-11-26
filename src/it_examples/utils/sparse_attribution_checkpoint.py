@@ -38,6 +38,7 @@ class CheckpointMeasurements:
     model_id: str
     model_revision: str
     target_token_ids: tuple[int, int]
+    measurement_dtype: str
     checks: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -198,6 +199,7 @@ class SparseAttributionReportCallback:
             model_id=measurements.model_id,
             model_revision=measurements.model_revision,
             target_token_ids=measurements.target_token_ids,
+            measurement_dtype=measurements.measurement_dtype,
             top_k=self.top_k,
         )
         if verify_attribution_checkpoint(checkpoint, scheduler.view.checkpoint_state_dict()) != verified:

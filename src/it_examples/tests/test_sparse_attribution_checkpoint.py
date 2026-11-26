@@ -111,7 +111,7 @@ class ScalarMeasurements:
             rows = [replace(row, checkpoint_sha256="0" * 64)]
         elif self.defect == "mutate-fitted":
             module.fitted.add_(1)
-        return CheckpointMeasurements(rows, ["validation-1"], "test-basis", "linear", "test", (0, 1))
+        return CheckpointMeasurements(rows, ["validation-1"], "test-basis", "linear", "test", (0, 1), "float32")
 
 
 class DecreasingValidation(TinyModule):

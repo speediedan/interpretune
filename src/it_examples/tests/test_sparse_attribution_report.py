@@ -49,6 +49,7 @@ def rows():
 
 
 def report(measurements=None, **kwargs):
+    kwargs.setdefault("measurement_dtype", "float32")
     return checkpoint_attribution_report(
         rows() if measurements is None else measurements,
         checkpoint_sha256=CHECKPOINT,
@@ -154,6 +155,37 @@ def test_a_planted_partition_defect_cannot_produce_a_report(field, value):
     measurements[0] = replace(measurements[0], **{field: value})
     with pytest.raises(ValueError, match="partition"):
         report(measurements)
+
+
+def _bypass_gap(gap):
+    """The rows with layer 0's partition of the first row off edge_total by ``gap``."""
+    measurements = rows()
+    first = measurements[0]
+    measurements[0] = replace(first, bypass_edges=[first.bypass_edges[0] + gap, *first.bypass_edges[1:]])
+    return measurements
+
+
+def test_the_float32_floor_admits_the_measured_rounding_gap_and_records_it():
+    # 2.3e-5 is the largest gap a float32 GPU replay measured; rtol 0 leaves the absolute floor as the only bound.
+    actual = report(_bypass_gap(2.3e-5), partition_rtol=0.0)
+    assert actual["measurement_dtype"] == "float32"
+    assert actual["partition_atol"] == 5e-5
+    assert actual["max_partition_error"] == pytest.approx(2.3e-5)
+    with pytest.raises(ValueError, match="partition"):
+        report(_bypass_gap(2.3e-5), partition_rtol=0.0, partition_atol=1e-5)
+
+
+def test_a_planted_mismatch_fails_under_the_float32_floor():
+    with pytest.raises(ValueError, match="partition"):
+        report(_bypass_gap(1e-3), partition_rtol=0.0)
+
+
+def test_a_precision_without_a_measured_floor_needs_an_explicit_one():
+    with pytest.raises(ValueError, match="no measured partition_atol for measurement_dtype 'bfloat16'"):
+        report(measurement_dtype="bfloat16")
+    assert report(measurement_dtype="bfloat16", partition_atol=1e-2)["partition_atol"] == 1e-2
+    with pytest.raises(ValueError, match="measurement_dtype must name"):
+        report(measurement_dtype=" ")
 
 
 def test_duplicate_rows_and_mixed_bias_evidence_are_rejected():

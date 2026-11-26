@@ -83,6 +83,7 @@ class TestExampleHeadReport:
         summary = checkpoint_attribution_report(
             [row], checkpoint_sha256="a" * 64, basis_id="toy-transcoders", model_id="tiny-gemma2",
             model_revision="random-test-model", target_token_ids=(positive, negative),
+            measurement_dtype="float32",
         )  # fmt: skip
         assert row.decision == decision
         assert row.bias is None

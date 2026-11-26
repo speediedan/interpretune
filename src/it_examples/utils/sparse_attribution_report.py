@@ -16,6 +16,13 @@ import math
 import json
 from typing import Any, Sequence
 
+# The partition check's absolute floor, by the precision the edges were computed in. Each partition and edge_total are
+# separate sums of the same edges, so they differ by that precision's rounding, and a floor below it refuses a correct
+# measurement. In float32 the gap measured flat over the 5,130 partitions of a GPU replay of all 190 RTE validation
+# rows (median 1.2e-5, max 2.3e-5); 5e-5 clears it while a 1e-3 mismatch still fails. No other precision has a measured
+# floor, so a caller states one explicitly.
+PARTITION_ATOL = {"float32": 5e-5}
+
 
 @dataclass(frozen=True)
 class SparseAttributionRow:
@@ -64,7 +71,8 @@ def _report_metadata(
     model_revision: str,
     target_token_ids: tuple[int, int],
     top_k: int,
-    partition_atol: float,
+    measurement_dtype: str,
+    partition_atol: float | None,
     partition_rtol: float,
 ) -> tuple[float, float]:
     if len(checkpoint_sha256) != 64 or any(c not in "0123456789abcdef" for c in checkpoint_sha256):
@@ -77,6 +85,15 @@ def _report_metadata(
         raise ValueError("target_token_ids must name distinct positive and negative targets")
     if type(top_k) is not int or top_k < 1:
         raise ValueError("top_k must be a positive integer")
+    if not isinstance(measurement_dtype, str) or not measurement_dtype.strip():
+        raise ValueError("measurement_dtype must name the precision the edges were computed in")
+    if partition_atol is None:
+        if measurement_dtype not in PARTITION_ATOL:
+            raise ValueError(
+                f"no measured partition_atol for measurement_dtype {measurement_dtype!r} (measured: "
+                f"{sorted(PARTITION_ATOL)}); state one explicitly"
+            )
+        partition_atol = PARTITION_ATOL[measurement_dtype]
     atol, rtol = _finite(partition_atol, "partition_atol"), _finite(partition_rtol, "partition_rtol")
     if atol < 0 or rtol < 0:
         raise ValueError("partition tolerances must be nonnegative")
@@ -151,8 +168,9 @@ def checkpoint_attribution_report(
     model_id: str,
     model_revision: str,
     target_token_ids: tuple[int, int],
+    measurement_dtype: str,
     top_k: int = 10,
-    partition_atol: float = 1e-5,
+    partition_atol: float | None = None,
     partition_rtol: float = 1e-5,
 ) -> dict[str, Any]:
     """Summarize measured rows for one checkpoint and basis, refusing incomplete or incompatible partitions.
@@ -160,9 +178,19 @@ def checkpoint_attribution_report(
     The target is the first token's logit minus the second's. Top answer-position features are ranked by the
     magnitude of their aggregated signed share, so opposing features remain visible. The output is JSON-compatible;
     an unknown bias is ``None``. It reports the head layers it actually received and whether they cover the model.
+    ``measurement_dtype`` names the precision the edges were computed in; it selects the partition check's absolute
+    floor from ``PARTITION_ATOL`` unless ``partition_atol`` is given, and both are recorded in the report.
     """
     atol, rtol = _report_metadata(
-        checkpoint_sha256, basis_id, model_id, model_revision, target_token_ids, top_k, partition_atol, partition_rtol
+        checkpoint_sha256,
+        basis_id,
+        model_id,
+        model_revision,
+        target_token_ids,
+        top_k,
+        measurement_dtype,
+        partition_atol,
+        partition_rtol,
     )
     if not rows:
         raise ValueError("a checkpoint report needs at least one measured row")
@@ -253,6 +281,7 @@ def checkpoint_attribution_report(
             for layer, feature in top
         ],
         "max_partition_error": max_partition_error,
+        "measurement_dtype": measurement_dtype,
         "partition_atol": atol,
         "partition_rtol": rtol,
         "rows": item_records,
