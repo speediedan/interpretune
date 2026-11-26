@@ -24,7 +24,7 @@ Aliases and composite ops do not create separate storage rules. Aliases resolve 
 - `array_shape` maps to `Array2D` or `Array3D` when the rank is fixed.
 - `sequence_type` maps to `Sequence(Value(...))` for variable-length vectors.
 - `non_tensor` marks fields that should remain Python values instead of being tensorized by the formatter.
-- `per_latent` and `per_latent_model_hook` describe nested latent-model dictionaries.
+- `per_latent` and `per_latent_model_hook` describe nested latent model dictionaries.
 - `site` declares what the column's values name in the model they were computed on: a layer index, hook-name keys, token ids or positions, latent indices, or values in an activation space. It is published with `col_cfg`, and `AnalysisStore.resolve_on` reads it to decide whether the column carries over to another model (see [Reading a store against another model](finding_analysis_stores.md#reading-a-store-against-another-model)).
 - formatter kwargs can optionally provide an analysis backend that hydrates richer objects from the primitive row data after Arrow decoding.
 
@@ -87,7 +87,7 @@ measured over scalar, sequence, 2-D (`Array2D`) and ragged 3-D (nested sequence)
 | `bfloat16` | refused when the schema is built, naming the column: Arrow has no bfloat16 type | |
 
 A **bfloat16 tensor** is written to a `float32` column, which holds every bfloat16 value exactly; it reads back as
-`float32`. A latent-model column (`per_latent_model_hook`) takes its dtype from the latent model's config, and a
+`float32`. A latent model column (`per_latent_model_hook`) takes its dtype from the latent model's config, and a
 latent model loaded in bfloat16 gets `float32` columns for the same reason.
 
 **Writing a tensor of another dtype** into a column is accepted when casting it to the column's dtype and back

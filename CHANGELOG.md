@@ -8,9 +8,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Breaking
 
-- Core Hugging Face text models derive positions from the attention mask for padded direct forwards. The real tokens of a left-padded row start at position zero, matching nnsight and TransformerLens. Explicit position IDs take precedence. This corrects the training and validation logits of padded GPT-2 batches ([#1242](https://github.com/interpretune/interpretune/issues/1242)).
+- With transformers 5.24 and later, TransformerLens generation defaults to full-sequence forwards and an explicit `use_past_kv_cache=True` raises with the installed versions. The pinned bridge misses the new cache argument, so cached steps lose the prompt context. Leave `TLensGenerationConfig.use_past_kv_cache` unset for the version-dependent default ([#1218](https://github.com/interpretune/interpretune/issues/1218)).
 
 - `IT_ANALYSIS_OP_PATHS` naming a directory that holds a component manifest loads the op files the manifest declares (`ops.files`) and no other YAML of that component; it used to load every `*.yaml` and `*.yml` under the directory except the manifest, which registered the mapping-valued keys of address books and model specs as ops. A component whose manifest cannot be read, or declares a file it does not hold, is reported and supplies no ops. A directory with no manifest is still scanned recursively, and a file named directly still loads ([#1211](https://github.com/interpretune/interpretune/issues/1211))
+
+- Core Hugging Face text models derive positions from the attention mask for padded direct forwards. The real tokens of a left-padded row start at position zero, matching nnsight and TransformerLens. Explicit position IDs take precedence. This corrects the training and validation logits of padded GPT-2 batches ([#1242](https://github.com/interpretune/interpretune/issues/1242)).
 
 - An AnalysisStore write refuses (`StoreDtypeError`) a value a text column would store as something else: a list, dict, tensor or number in a string column, which was stored as its Python repr or digits, and a string in a list-of-strings column, which was stored as the list of its characters. A column declared `datasets_dtype: object` is a string column once compiled, so it holds strings only. The bundled columns that relied on this changed: `jlens_provenance` (a mapping) is `jlens_provenance_json` (JSON text, read with `load_json_field`) in `jlens_read`, `jlens_concept_probe`, `jlens_sparse_inventory` and `concept_direction`; `jlens_top_token_strings`, `jlens_inventory_token_ids` and `jlens_inventory_coefficients` are nested lists; `jlens_basis`, `concept_label`, `intervention_config`, `intervention_specs_json` and `feature_intervention_dict_json` are one string each rather than a list ([#1209](https://github.com/interpretune/interpretune/issues/1209))
 
@@ -364,6 +366,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- Interpretune describes itself as a framework for latent model analysis and tuning, which is what it does today, and names world model analysis as its aim; the README, the docs' index and concepts pages, `CITATION.cff` and the agent instruction files say so. "Latent model", "latent space" and "world model" are written unhyphenated, also as modifiers, in prose and docstrings ([#1263](https://github.com/interpretune/interpretune/issues/1263))
+
 - The `peft` floor of the `tune` extra rises from 0.18 to 0.22, which transformers 5.24's `load_adapter` requires ([#1216](https://github.com/interpretune/interpretune/issues/1216))
 - The finetuning-scheduler pin moves to its main with promotion on a sharded model: a schedule's `promote` acts under placements `ddp` and `fsdp2`, where it was refused. The venngram pin includes the default `promote`, which the circuit-tracer composition's view uses, acting on `DTensor` parameters ([#882](https://github.com/interpretune/interpretune/issues/882))
 
@@ -426,6 +430,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - PEFT adapter roles come from venngram's overlay maps, one per PEFT tuner family (LoRA and DoRA, AdaLoRA, IA3, LoHa, LoKr, OFT, BOFT, VeRA, FourierFT), each tensor as `adapter:<name>`; `peft_adapter_roles()` is replaced by `adapter_roles()` ([#900](https://github.com/interpretune/interpretune/issues/900))
 
+- The core training loop stops at the first non-finite training loss: `run_step` raises `NonFiniteLossError` naming the epoch, batch, step and loss before the batch-end hook and `backward()` run, so the weights are those after the last finite step and the run no longer trains on NaN gradients to a result that looks like a measurement. `SessionRunnerCfg.allow_nonfinite_loss` (off by default) restores the old behavior for a step function or callback that handles non-finite losses itself ([#1268](https://github.com/interpretune/interpretune/issues/1268)).
+
 - venngram is a base dependency, so tunable views attach and the view conformance cases run whether or not Fine-Tuning Scheduler is installed: `TuningConformance` runs venngram's `ViewConformance` cases, extended by Fine-Tuning Scheduler's when it is installed. The `venngram` extra is removed, and the declared torch floor rises to 2.12.0, which venngram requires ([#874](https://github.com/interpretune/interpretune/issues/874))
 
 - venngram is pinned at `bdd879e2` (main with #53 and #51), and the test suite reads venngram's seed registry at a pinned generation (`venngram.registries` in `tests/hf_warm_manifest.yaml`), which the hosted CI warms into `~/.cache/venngram` beside the Hub cache ([#900](https://github.com/interpretune/interpretune/issues/900))
@@ -486,6 +492,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - sae-lens installs from a released floor (`sae-lens >=6.55.0,<7` in the `examples` extra) instead of a git pin to the head of decoderesearch/SAELens#739: 6.55.0 is the first release that imports under transformer-lens 4.0. The Neuronpedia dashboard pipeline's generation subprocess therefore imports the installed release: a SAELens checkout goes on its `PYTHONPATH` only when `--saelens-repo-root` names one, as the preserved-baseline benchmark legs do. It used to prepend `SAELENS_REPO_ROOT` (default `~/repos/SAELens`) whenever that directory existed, so a stale checkout silently shadowed the release while benchmark lineage recorded the release version. The benchmark setup installs the preserved baseline's missing dependencies with uv rather than pip, and under `--skip-env-build` names any it finds missing. ([#652](https://github.com/interpretune/interpretune/issues/652))
 
 ### Fixed
+
+- The conformance seed and the test cache pin `speediedan/rte` at `4e581264`, whose left-padding configurations declare the attention mask (and `input_ids` over nnsight). The previous pin's configurations ran left-padded batches over the padding. With those rows masked, the conformance suite's two-adds commuting control measured 1.125e-4 on NVIDIA, so its 3e-4 bound, measured on ROCm, now applies on every vendor ([#1237](https://github.com/interpretune/interpretune/issues/1237))
 
 - The direct-forward input check (a batch keyed by a primary input the model's forward cannot take is refused by name) covers nnsight wrappers, circuit-tracer's nnsight replacement model among them, PEFT models and SAE Lens bridges. It skipped all four, the PEFT ones because it looked for the model on `base_model`, which is the tuner, so such a configuration failed inside the model with its own message about a missing input ([#748](https://github.com/interpretune/interpretune/issues/748))
 

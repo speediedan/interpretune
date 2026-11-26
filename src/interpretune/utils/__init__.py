@@ -1,4 +1,4 @@
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.utils.exceptions import MisconfigurationException, NonFiniteLossError
 from typing import TYPE_CHECKING
 
 from interpretune.utils.model_fallback import (
@@ -154,6 +154,7 @@ __all__ = [
     "_resolve_env_auth_token",
     # exceptions
     "MisconfigurationException",
+    "NonFiniteLossError",
     # import_utils
     "package_available",
     "module_available",

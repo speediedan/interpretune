@@ -332,7 +332,7 @@ def schema_to_features(
 
         dtype = validate_declared_dtype(col_name, col_cfg.array_dtype or col_cfg.datasets_dtype)
 
-        # Handle per-latent-model hook fields first
+        # Handle per latent model hook fields first
         if col_cfg.per_latent_model_hook:
             # Check if names_filter is available
             if not _check_names_filter_available(module, col_name, col_cfg):
@@ -931,7 +931,7 @@ class AnalysisStore:
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
-        """Transform batch-oriented field values into per-latent-model lists of batch values.
+        """Transform batch-oriented field values into per latent model lists of batch values.
 
         Args:
             field_name: Name of the field to process (e.g. 'correct_activations', 'preds')
@@ -1152,7 +1152,7 @@ def default_sae_hook_match_fn(
 
 @dataclass
 class LatentAnalysisTargets:
-    """Encapsulation of latent model FQNs and specific hooks involved in a latent-model-mediated analysis, along
+    """Encapsulation of latent model FQNs and specific hooks involved in a latent model-mediated analysis, along
     with helper functions for explicit or pattern based matching by name and/or layer."""
 
     latent_model_fqns: Sequence[LatentModelFqn] = field(default_factory=tuple)
@@ -1167,7 +1167,7 @@ class LatentAnalysisTargets:
         self.validate_latent_model_fqns()
 
     def validate_latent_model_fqns(self):
-        """Validate declared latent-model FQNs, or derive them from target SAE ids / layers.
+        """Validate declared latent model FQNs, or derive them from target SAE ids / layers.
 
         Called from ``__post_init__``, so a configuration is either coherent by the time it is
         constructed or fails there rather than at first use.

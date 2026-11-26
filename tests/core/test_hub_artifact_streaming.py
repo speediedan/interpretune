@@ -340,7 +340,7 @@ class TestStreamedReadCost:
         import fsspec
         from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
 
-        stats = {"requests": 0, "bytes": 0}
+        stats = {"requests": 0, "bytes": 0, "log": []}
 
         class _CountingFile(AbstractBufferedFile):
             def _fetch_range(self, start, end):
@@ -349,6 +349,7 @@ class TestStreamedReadCost:
                     data = handle.read(end - start)
                 stats["requests"] += 1
                 stats["bytes"] += len(data)
+                stats["log"].append((start, len(data)))
                 return data
 
         class _CountingFS(AbstractFileSystem):
@@ -457,16 +458,35 @@ class TestStreamedReadCost:
 
     @pytest.mark.parametrize("columns", [None, ["values"], ["label"]])
     def test_the_estimate_tracks_what_the_first_row_fetches(self, counting_fs, grouped_parquet, columns):
-        """Within a factor of two of the measured fetch, for the full read and both projections."""
+        """Within a factor of two of the measured fetch, for the full read and both projections.
+
+        The estimate is the data reaching the first row needs: the first row group and the one group the scan reads
+        ahead (the footer read is bounded separately, above). The scan's threads can fetch further groups before the
+        first row is returned, and how many depends on how they are scheduled (on a loaded host they reached every
+        group of this file), so only the requests that start in the first two groups are measured.
+        """
+        import pyarrow.parquet as pq
+
         from interpretune.hub.artifacts import STREAMING_BLOCK_SIZE, _stream_parquet, _streamed_first_row_bytes
 
+        metadata = pq.ParquetFile(grouped_parquet).metadata
+        assert metadata.num_row_groups > 2
+
+        def group_start(g: int) -> int:
+            chunks = [metadata.row_group(g).column(c) for c in range(metadata.row_group(g).num_columns)]
+            return min(c.dictionary_page_offset or c.data_page_offset for c in chunks)
+
+        data_start, ahead_start = group_start(0), group_start(2)
         url = f"itcountfs://{grouped_parquet.as_posix()}"
         options = {"itcountfs": {"block_size": STREAMING_BLOCK_SIZE}}
         estimate, _ = _streamed_first_row_bytes(url, columns, options)
         counting_fs.update(requests=0, bytes=0)
+        counting_fs["log"].clear()
         next(iter(_stream_parquet([url], "validation", columns=columns, storage_options=options, token=None)))
-        measured = counting_fs["bytes"]
-        # small projections are dominated by the footer and block rounding, so they get an absolute allowance too
+        first_groups = [size for start, size in counting_fs["log"] if data_start <= start < ahead_start]
+        assert first_groups, counting_fs["log"]  # the first row's own group was read
+        measured = sum(first_groups)
+        # small projections are dominated by block rounding, so they get an absolute allowance too
         assert measured / 2 - 4 * STREAMING_BLOCK_SIZE <= estimate <= 2 * measured + 4 * STREAMING_BLOCK_SIZE
 
     def test_one_row_group_costs_the_whole_file(self, counting_fs, tmp_path):

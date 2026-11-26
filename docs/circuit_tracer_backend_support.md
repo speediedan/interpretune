@@ -143,7 +143,7 @@ seven-method `ModelBackend` surface; the differences are in *how* and in edge-ca
 | --- | --- | --- | --- |
 | `fwd` (minimal forward) | ✅ | ✅ | ✅ (trace-wrapped so input-key mapping applies) |
 | `fwd_w_cache` (activation caching) | ✅ | ✅ | ✅ (envoy reads via `nnsight.save`) |
-| `fwd_w_cache_and_latent_models` (latent-model splice + cache) | ✅ `run_with_cache_with_saes` | ✅ `run_with_cache_with_saes` | ✅ trace-scoped splice; ⚠️ requesting the **base** activation at a spliced site double-reads the envoy input (`OutOfOrderError`) — cache the SAE stage subhooks instead |
+| `fwd_w_cache_and_latent_models` (latent model splice + cache) | ✅ `run_with_cache_with_saes` | ✅ `run_with_cache_with_saes` | ✅ trace-scoped splice; ⚠️ requesting the **base** activation at a spliced site double-reads the envoy input (`OutOfOrderError`) — cache the SAE stage subhooks instead |
 | `fwd_w_hooks_and_latent_models` (custom hooks + splice) | ✅ | ✅ | ✅ (edit-context interventions) |
 | `fwd_w_hooks_batched` (multi-config hook batching) | ⚠️ sequential fallback (one pass per config; `configs_per_pass` no-op) | ⚠️ sequential fallback | ✅ native batched invokes |
 | `fwd_w_grads_and_latent_models` (gradient capture + splice) | ✅ | ✅ | ✅ |

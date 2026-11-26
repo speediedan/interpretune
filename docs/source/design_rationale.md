@@ -12,8 +12,8 @@ interpretability tooling: ensuring compatibility between any two *particular* fr
 diminished in importance, but **defining an effective protocol for interpretability-framework
 interoperability has become imperative**. That is the bet Interpretune makes: a protocol layer
 over which frameworks and methods compose, with Interpretune helping validate more robust
-causal/mechanistic guarantees while working at those higher levels of abstraction with AI world
-models.
+causal/mechanistic guarantees while working at those higher levels of abstraction with the latent
+models of AI systems.
 
 A considered follow-on ([#6](https://github.com/interpretune/interpretune/issues/6)): extracting the
 core protocol out of Interpretune into a standalone, neutrally-named distribution once the MVP
