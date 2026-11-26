@@ -16,6 +16,7 @@ import types
 
 import httpx
 import pytest
+import torch
 
 import nnsight
 
@@ -63,6 +64,18 @@ class TestCircuitTracerConfig:
         """The TransformerLens backend needs HookedTransformer, which transformer-lens 4.0 removed."""
         cfg = CircuitTracerConfig()
         assert cfg.backend == "nnsight"
+
+    @pytest.mark.parametrize("dtype", ["float32", "torch.float32", torch.float32])
+    def test_a_dtype_given_by_name_is_resolved(self, dtype):
+        """A YAML configuration can only name the dtype, and circuit-tracer takes only a ``torch.dtype``
+        (#1241)."""
+        assert CircuitTracerConfig(dtype=dtype).dtype is torch.float32
+
+    @pytest.mark.parametrize("dtype", ["flaot32", "tensor", None])
+    def test_a_dtype_that_is_none_is_refused(self, dtype):
+        """``tensor`` is an attribute of ``torch`` and no dtype."""
+        with pytest.raises(ValueError, match="is not a torch dtype"):
+            CircuitTracerConfig(dtype=dtype)
 
     @pytest.mark.parametrize("mode", ["missing", "migration_error"])
     def test_transformerlens_backend_is_refused_without_hooked_transformer(self, monkeypatch, mode):

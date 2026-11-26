@@ -263,6 +263,7 @@ python scripts/run_dashboard_benchmark_suite.py \
 | `--rolling-coefficient-substage` | Include deep `rolling_*` sub-substage aggregation when instrumented |
 | `--skip-parity` | Skip the per-feature activation row parity pass (parses all legacy batch JSONs) |
 | `--skip-notebook` | Skip papermill execution/HTML export |
+| `--allow-failed-legs` | Package the legs that succeeded when some failed. The summary names the failed ones and the exit status is 1 (default: refuse to package) |
 | `--target-batches` / `--summary-warmup-batches` / `--layer` | Benchmark shape (defaults 4 / 1 / 9) |
 | `--rolling-threads` | `--runner-rolling-coefficient-num-threads` value for every leg (default 8) |
 | `--run-tag` | Suffix tag baked into child run names |

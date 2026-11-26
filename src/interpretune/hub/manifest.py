@@ -274,6 +274,12 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     "and not the manifest itself. The published artifact is the manifest's allowlist plus these "
                     "declared extras; nothing outside the component directory is ever published."
                 )
+    card = manifest.get("card")
+    if card is not None and (not isinstance(card, str) or not card.endswith(".md") or not _is_relative_inside(card)):
+        raise ComponentManifestError(
+            f"{source}: `card` must be a relative path, inside the component directory, to the Markdown file whose "
+            f"text the published card carries, got {card!r}."
+        )
     _validate_requires_shape(manifest.get("requires"), f"{source}: `requires`")
     for entry in (
         ((manifest.get("adapters") or {}).get("compositions") or [])

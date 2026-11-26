@@ -29,7 +29,8 @@ rewrites that module's input or its output:
   its capture and intervention paths accept, and the seam rewrites the hook point's output;
 - on a core/HF or nnsight composition the point resolves through the architecture's component map
   (:class:`~interpretune.analysis.backends.hook_mapping.HookNameResolver`) to an HF module and the side of it that
-  holds the activation, under the HF model's path in the interpretune module.
+  holds the activation, under the HF model's path in the interpretune module. When PEFT wraps that model, the path is
+  the wrapped model's (``model.base_model.model``), where the tunable view mounts its component map.
 
 A point a composition cannot place is refused, naming the point and the composition; it is never mapped onto a nearby
 module. An address may reference a named set of an address book (``@steer_site``), so a shared book drives
@@ -43,7 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from torch import nn
 
@@ -118,16 +119,44 @@ def _path_of(root: nn.Module, target: Any) -> str | None:
     return next((n for n, m in root.named_modules() if m is target), None)
 
 
+def registered_path(root: nn.Module, path: str) -> str:
+    """``path`` as the name ``root`` holds its module under, for a path that reaches the module through a wrapper's
+    attribute forwarding: a ``PeftModel`` answers ``model.transformer.h.1`` for the block registered as
+    ``model.base_model.model.transformer.h.1``. A tunable view places modules by the registered name.
+
+    Raises:
+        AttributeError: ``path`` reaches no module under ``root``.
+    """
+    module = root
+    for atom in path.split(".") if path else ():
+        child = module._modules.get(atom)
+        if child is None:
+            return _path_of(root, root.get_submodule(path)) or path
+        module = child
+    return path
+
+
+def peft_base_model(model: Any) -> nn.Module | None:
+    """The model a PEFT wrapper carries, or ``None`` when ``model`` is not a PEFT model."""
+    get_base_model = getattr(model, "get_base_model", None)
+    if not callable(get_base_model) or type(model).__module__.split(".")[0] != "peft":
+        return None
+    return cast(nn.Module, get_base_model())
+
+
 def _tl_model(root: nn.Module) -> Any | None:
     model = getattr(root, "model", None)
     return model if isinstance(model, nn.Module) and hasattr(model, "hook_dict") else None
 
 
 def _hf_model(root: nn.Module) -> tuple[str, nn.Module] | None:
-    """The HF model under ``root`` and its path: ``hf_model`` on an nnsight composition, else ``model``."""
+    """The HF model under ``root`` and its path: ``hf_model`` on an nnsight composition, else ``model``, or the
+    model PEFT wraps there."""
     for attr in ("hf_model", "model"):
         model = getattr(root, attr, None)
         if isinstance(model, nn.Module) and getattr(getattr(model, "config", None), "model_type", None) is not None:
+            if (base := peft_base_model(model)) is not None and (path := _path_of(root, base)) is not None:
+                return path, base
             return attr, model
     return None
 

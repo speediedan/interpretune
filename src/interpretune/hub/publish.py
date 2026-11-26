@@ -155,6 +155,19 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
 
+    # The component's own card text. The card generator appends it to the generated sections and writes the result
+    # as the published README.md, which replaces this file when the card is declared as README.md.
+    card = manifest.get("card")
+    if card:
+        src = (component_dir / card).resolve()
+        if component_dir.resolve() not in src.parents:
+            raise ValueError(f"card {card!r} resolves outside {component_dir}; refusing to publish it")
+        if not src.is_file():
+            raise FileNotFoundError(f"Manifest declares card {card!r}, which is not present in {component_dir}.")
+        dest = out_dir / card
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
     entrypoint = module_section.get("entrypoint")
     if entrypoint:
         if entrypoint_src is None or not Path(entrypoint_src).is_file():
@@ -686,7 +699,7 @@ def publish_op_collection(
             collection_version=collection_version,
             requires=requires,
         )
-        generate_component_card(manifest, repo_id).save(out_dir / "README.md")
+        generate_component_card(manifest, repo_id, tree=out_dir).save(out_dir / "README.md")
         manager = ITHubResourceManager(kind=OPS_KIND, token=token)
         return manager.upload(
             out_dir,
