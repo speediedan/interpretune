@@ -227,19 +227,43 @@ version 2 every envelope carries a `subject`:
 | `component_map` | the map that resolved the store's sites: its `architecture`, `source` and `schema_version` |
 | `dictionaries` | each attached latent dictionary by `kind` (`sae_lens`: `release`, `sae_id`; `circuit_tracer`: `transcoder_set`) |
 
-`AnalysisCfg.apply` stamps the subject onto the store it writes, from the module the op runs on, for
-the reason it stamps op provenance: only write time knows it. Every key is present, and what
-interpretune cannot read is recorded as `null` rather than filled with a plausible value. Only the
-model id is required.
+Both writers stamp the subject onto the store they write, from the module the op runs on, for the
+reason they stamp op provenance: only write time knows it. `AnalysisCfg.apply` stamps the store of a
+configured run, and `analysis_store_from_batches` stamps a store built from in-memory op results, so
+either publishes as built. Every key is present, and what interpretune cannot read is recorded as
+`null` rather than filled with a plausible value. Only the model id is required.
 
-A store assembled outside an op (with `analysis_store_from_batches`, say) carries no subject, and
-publishing it is refused until one is given:
+A module that states no model id leaves the store without a subject (with a warning), and so does a
+store assembled from a bare `Dataset`. Publishing such a store is refused until one is given:
 
 ```python
-it.hub.push_analysis_store(store, repo_id, subject=it.hub.subject_from_module(module))
+it.hub.push_analysis_store(store, repo_id, subject=it.hub.StoreSubject(model_id="..."))
 ```
 
 `it.hub.pull_analysis_store` puts the subject back on the store it returns, as `store.subject`.
+
+### The generated card
+
+`push_analysis_store` writes the dataset card (`README.md`) from the envelope, so a Hub visitor sees
+what the store holds without running code: the subject (model and revision, architecture, tokenizer,
+component map, dictionaries), the artifact (split, rows, columns) and the provenance (each op
+collection that wrote the columns, the interpretune version, the content fingerprint, and every field
+passed as `provenance=`). Say what the rows are, and where their inputs came from, with
+`card_summary`, Markdown rendered under the title:
+
+```python
+it.hub.push_analysis_store(
+    store,
+    repo_id,
+    provenance={"items": "48 prompts we generated ourselves"},
+    card_summary="Readouts of ... on 48 generated prompts.\n\n## Data\n\n...",
+)
+```
+
+The summary is recorded in the envelope's `card` block, so the card is regenerated the same way on
+every push: a re-push that passes no `card_summary` keeps the published one, and `card_summary=""`
+drops it. Text edited into the card on the Hub is replaced by the next push, so put it in
+`card_summary` instead.
 
 ### Checks on push
 

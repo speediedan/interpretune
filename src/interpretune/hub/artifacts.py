@@ -118,7 +118,17 @@ def validate_artifact_envelope(envelope: Any, source: str = "<envelope>") -> dic
             StoreSubject.from_dict(envelope.get("subject"), source=source)
         except StoreSubjectError as e:
             raise ArtifactEnvelopeError(str(e)) from None
+    _validate_card_block(envelope.get("card"), source)
     return envelope
+
+
+def _validate_card_block(card: Any, source: str) -> None:
+    """The optional ``card`` block holds the publisher's card text; refuse one whose shape this build cannot
+    render."""
+    if card is None:
+        return
+    if not isinstance(card, dict) or not isinstance(card.get("summary"), str):
+        raise ArtifactEnvelopeError(f"{source}: the `card` block must be a mapping whose `summary` is a string.")
 
 
 def _serialize_col_cfg(store) -> dict[str, dict]:
@@ -270,13 +280,15 @@ def build_analysis_store_envelope(
     provenance: dict | None = None,
     interchange: dict | None = None,
     subject=None,
+    card_summary: str | None = None,
 ) -> dict:
     """Build the envelope for an AnalysisStore (descriptive; dataset files remain the truth).
 
     ``identity`` is normally supplied by :func:`push_analysis_store` (preserved from an existing
     envelope on re-push, minted once otherwise); ``provenance`` entries are merged over the
     defaults derived here. ``subject`` (a :class:`~interpretune.hub.subject.StoreSubject`) defaults to the one
-    the store was stamped with when an op wrote it; a store with neither is refused by name.
+    the store was stamped with when an op wrote it; a store with neither is refused by name. ``card_summary`` is
+    the publisher's card text (Markdown), recorded as the ``card`` block the generated card renders under its title.
     """
     import uuid
     from datetime import datetime, timezone
@@ -327,6 +339,8 @@ def build_analysis_store_envelope(
             **_protocol_cls_entry(store),
         },
     }
+    if card_summary:
+        envelope["card"] = {"summary": card_summary}
     # writer-side guard: never emit an envelope this build could not itself read back. Catches a
     # schema bumped past the reader's window and a caller-supplied `identity` that would publish
     # unreadable — both cheap here, both expensive once they are on the hub.
@@ -386,12 +400,18 @@ def push_analysis_store(
     add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     subject=None,
     row_group_size: int | str = ANALYSIS_STORE_ROW_GROUP_SIZE,
+    card_summary: str | None = None,
 ) -> str:
     """Publish an AnalysisStore as a dataset repo: parquet interchange + envelope + generated card.
 
     Returns the resulting repo revision (commit sha). On re-push to an existing artifact repo, the
     envelope's ``identity`` block is read back and preserved verbatim — identity survives
     mutation; only ``provenance``/``artifacts`` refresh.
+
+    The card is generated from the envelope: the store's subject, its provenance (``provenance`` fields included) and
+    ``card_summary``, the publisher's own Markdown, rendered under the title (say what the rows are and where their
+    inputs came from). The summary is recorded in the envelope, so a re-push that passes none keeps the published one;
+    pass ``card_summary=""`` to drop it. Text edited into the card on the Hub is replaced by the next push.
 
     The Parquet is written by ``Dataset.push_to_hub``, which page-indexes every file from ``datasets`` 4.1.0 (the
     floor), so no pre-upload check reads it. After the upload the ``range-read`` check reads one published file back
@@ -424,6 +444,8 @@ def push_analysis_store(
     if store.dataset is None:
         raise ArtifactEnvelopeError("Cannot push an AnalysisStore with no dataset loaded.")
     subject = _store_subject(store, subject)  # refused before any network call
+    if card_summary is not None and not isinstance(card_summary, str):
+        raise TypeError(f"card_summary must be Markdown text (a str), got {type(card_summary).__name__}.")
     target = PublishTarget(kind=ANALYSIS_STORE, destination=repo_id, store="dataset", token=token)
     run_publish_checks(target, PRE_UPLOAD, skip_checks=skip_checks, add_checks=add_checks)
     skipped = sorted(set(skip_checks))
@@ -432,16 +454,20 @@ def push_analysis_store(
     api = HfApi(token=token)
     api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
 
-    identity = None
+    identity, published_summary = None, None
     try:
         existing = api.hf_hub_download(repo_id, IT_ARTIFACT_ENVELOPE, repo_type="dataset")
-        identity = validate_artifact_envelope(
+        existing_envelope = validate_artifact_envelope(
             json.loads(Path(existing).read_text(encoding="utf-8")), source=f"{repo_id} (existing)"
-        )["identity"]
+        )
+        identity = existing_envelope["identity"]
+        published_summary = (existing_envelope.get("card") or {}).get("summary")
     except ArtifactEnvelopeError:
         raise  # a malformed EXISTING envelope must fail loudly, not be silently re-minted
     except Exception:
         identity = None  # first publish (no envelope yet)
+    if card_summary is None:
+        card_summary = published_summary  # the card text survives a re-push that does not restate it
 
     # parquet interchange: push_to_hub converts per-shard; the LOCAL store remains Arrow (R9)
     with _row_group_target(row_group_bytes):
@@ -455,6 +481,7 @@ def push_analysis_store(
         provenance=provenance,
         interchange={"files": parquet_files, "row_group_target_bytes": row_group_bytes},
         subject=subject,
+        card_summary=card_summary,
     )
     api.upload_file(
         path_or_fileobj=io.BytesIO(json.dumps(envelope, indent=1, sort_keys=True).encode("utf-8")),
