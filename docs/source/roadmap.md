@@ -12,8 +12,8 @@ A coordinated multi-repo PR set upstreaming the scalable-dashboard-generation wo
 end-to-end with Interpretune: peak-memory-controlled dashboard generation with per-stage CUDA
 accounting and pretokenization records (SAEDashboard), supporting surfaces in SAELens, the
 circuit-tracer attribution-target abstraction, and Neuronpedia-side import/coverage support — with
-the dashboard benchmark suite in this repo providing the quantified evidence. Coordination PR:
-*link forthcoming once the interpretune coordination PR opens*.
+the dashboard benchmark suite in this repo providing the quantified evidence. The upstream PR set is
+tracked in [#231](https://github.com/interpretune/interpretune/issues/231).
 
 **On ownership**: the upstream repos — principally Neuronpedia, together with SAEDashboard — own
 the core dashboard APIs and generation protocol today and will continue to own them. Interpretune
