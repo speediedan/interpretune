@@ -548,3 +548,13 @@ tests/core/test_jlens_patch_validation.py::TestGemmaPairLevel3::test_gemma3_1b_i
   torch: 2.13.0+cu130
   seconds: 4.98
   date: '2026-10-01'
+tests/core/test_rte_ft_cli.py::test_the_hosts_agree_in_bf16_mixed_with_accumulation:
+  outcome: passed
+  need_gb: 4.776
+  allocator_peak_gb: 4.225
+  device_peak_gb: 4.776
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 18.07
+  date: '2026-11-24'

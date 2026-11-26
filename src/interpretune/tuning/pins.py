@@ -26,8 +26,8 @@ the dictionaries it was written against. Its ``requires`` pins them (venngram's 
 (``venngram.PinMismatchError``). Interpretune checks every book it reads for a module: the book of a configured
 intervention and :func:`~interpretune.tuning.sites.book_sets`, and a treatment
 (:func:`~interpretune.analysis.venngram.fetch.load_recipe`). A pinned book read with no module to check it against is
-refused. A schedule's ``addresses`` are finetuning-scheduler's to read, and it does not check pins, so it refuses a
-schedule that uses a pinned book's sets.
+refused. Finetuning-scheduler reads a schedule's ``addresses`` and asks the module's view to check each pinned book
+(``check_book``, which :func:`~interpretune.tuning.views.attach_tunable_view` gives every view it attaches).
 
 A module reports what its latent models were loaded from with ``latent_model_releases()``: the ``release`` each was
 attached with (:func:`~interpretune.tuning.latents.attach_latent_model`), the configured release and id of a spliced

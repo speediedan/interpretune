@@ -194,6 +194,11 @@ def _term_sites(
     if logits:
         return ((None, 0, logits.pop()),)
     evaluator = _ReadSiteEvaluator(address, sets, n_layers, where=where)
+    if outside := sorted(point for point in points if evaluator.is_global(point)):
+        raise MisconfigurationException(
+            f"{where}: {outside} are global points, and a readout reads the logits (`{LOGITS_POINT}`) or points inside "
+            "the block stack"
+        )
     universe = frozenset((layer, point) for point in points for layer in range(n_layers))
     selected = evaluator.evaluate(expr, universe, ())
     if not selected:

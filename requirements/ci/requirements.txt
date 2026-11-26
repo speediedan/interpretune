@@ -554,7 +554,7 @@ patsy==1.0.3
     # via
     #   plotly-express
     #   statsmodels
-peft==0.21.2
+peft==0.22.0
     # via interpretune (pyproject.toml)
 pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via ipython

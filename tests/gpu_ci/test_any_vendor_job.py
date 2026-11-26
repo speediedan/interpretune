@@ -161,6 +161,8 @@ def test_phases_are_collected_before_and_reported_after_the_gpu_work():
     names = [s["displayName"] for s in _steps(_template_use(_load("gpu-tests.yml")))]
     collect, report = names.index("Collect phase manifests"), names.index("Phase reports")
     assert collect < names.index("Acquire host GPU lease: small-device stage")
+    # collection parametrizes from the pinned Hub components, which only the warm step puts on the agent's cache
+    assert names.index("Warm Hub components from manifest") < collect
     assert report > max(i for i, n in enumerate(names) if n.startswith("Testing: ") and "extended" not in n)
     step = _steps(_template_use(_load("gpu-tests.yml")))[report]
     # it reports whatever the phases did, and only when the phases were collected

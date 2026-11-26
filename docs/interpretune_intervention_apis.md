@@ -288,7 +288,8 @@ precedence. A payload key, or the shorthand's `intervention_hook_pattern`, may b
 site address, which names one activation the same way on every backend: `point:hook_resid_post & layers:13` rather
 than one backend's module path. An address expands like a layer wildcard, to the sites it selects in layer order
 (`point:hook_resid_post & layers:-4:` is the last four blocks' residual stream), each matched as its hook name would
-be. A site the model does not expose is refused rather than mapped onto a nearby hook, and an address saying
+be. A point outside the block stack (`point:unembed.hook_in`) resolves to its one layer-free name, and no `layers` term
+selects it. A site the model does not expose is refused rather than mapped onto a nearby hook, and an address saying
 `of: grad` is refused here: it names a gradient, which `model_bwd_intervention` edits. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.

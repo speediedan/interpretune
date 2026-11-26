@@ -226,17 +226,25 @@ def _lookup_store_row_value(store: Any, field_name: str, batch_idx: int | None) 
     if store is None or batch_idx is None:
         return _MISSING
 
-    dataset = getattr(store, "dataset", None)
-    column_names = getattr(dataset, "column_names", []) if dataset is not None else []
-    if dataset is not None and field_name in column_names:
+    if hasattr(type(store), "batch_value"):  # an AnalysisStore; one that only looks like it is read by row
         try:
-            row = dataset[batch_idx]
+            value = store.batch_value(field_name, batch_idx)
         except Exception:
-            row = None
-        if isinstance(row, Mapping):
-            value = row[field_name] if field_name in row else _MISSING
-            if value is not None and value is not _MISSING:
-                return value
+            value = None
+        if value is not None:
+            return value
+    else:
+        dataset = getattr(store, "dataset", None)
+        column_names = getattr(dataset, "column_names", []) if dataset is not None else []
+        if dataset is not None and field_name in column_names:
+            try:
+                row = dataset[batch_idx]
+            except Exception:
+                row = None
+            if isinstance(row, Mapping):
+                value = row[field_name] if field_name in row else _MISSING
+                if value is not None and value is not _MISSING:
+                    return value
 
     store_value = _lookup_mapping_or_attr(store, field_name)
     if store_value is _MISSING:
