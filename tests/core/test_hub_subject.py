@@ -111,22 +111,78 @@ class TestSubjectFromModule:
 
 
 class TestWriteTimeStamp:
-    """``AnalysisCfg.apply`` stamps the store it writes, as it stamps op provenance."""
+    """Both writers stamp the store with the module's subject, as they stamp op provenance."""
 
     def test_the_store_is_stamped_with_the_modules_subject(self):
-        from interpretune.config.analysis import AnalysisCfg
+        from interpretune.analysis.core import stamp_subject
 
         store = SimpleNamespace(subject=None)
-        AnalysisCfg._stamp_subject(store, _module())
+        stamp_subject(store, _module())
         assert store.subject == subject_from_module(_module())
 
     def test_a_module_with_no_model_id_leaves_the_store_without_one_and_says_so(self, recwarn):
-        from interpretune.config.analysis import AnalysisCfg
+        from interpretune.analysis.core import stamp_subject
 
         store = SimpleNamespace(subject=None)
         module = SimpleNamespace(it_cfg=SimpleNamespace(model_name_or_path=None), model=None, datamodule=None)
-        AnalysisCfg._stamp_subject(store, module)
+        stamp_subject(store, module)
         assert store.subject is None
+        assert any("subject was not recorded" in str(w.message) for w in recwarn.list)
+
+    def test_a_store_built_from_batches_publishes_as_built(self):
+        """The batch path and ``AnalysisCfg.apply`` stamp the same subject and op provenance for the same
+        module."""
+        from unittest.mock import MagicMock
+
+        import torch
+
+        from interpretune.analysis import AnalysisBatch, AnalysisStore, analysis_store_from_batches
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+        from interpretune.hub.artifacts import build_analysis_store_envelope
+
+        class _Module(SimpleNamespace):
+            """Hashable and weak-referenceable, as ``AnalysisCfg.apply`` records the modules it is applied to."""
+
+            __hash__ = object.__hash__
+
+        op = DISPATCHER.get_op("labels_to_ids")
+        module = _Module(**vars(_module()))
+        module.model.tokenizer = SimpleNamespace(vocab_size=32, model_max_length=32)
+        module.datamodule.itdm_cfg = SimpleNamespace(eval_batch_size=1)
+        batch = AnalysisBatch()
+        batch.label_ids = torch.tensor([1])
+        batch.orig_labels = torch.tensor([1])
+        from_batches = analysis_store_from_batches(module, [batch], op=op)
+
+        applied = AnalysisStore()
+        cfg = AnalysisCfg(target_op=op, output_store=applied)
+        cfg.prepare_model_ctx = MagicMock()  # the stamp is what is compared, not the hook wiring
+        cfg.apply(module)
+
+        assert from_batches.subject is not None and from_batches.subject == applied.subject
+        assert from_batches.op_provenance and from_batches.op_provenance == applied.op_provenance
+        # so the envelope a push writes needs no `subject=` from the caller
+        assert build_analysis_store_envelope(from_batches)["subject"] == subject_from_module(module).to_dict()
+
+    def test_a_module_with_no_model_id_still_builds_a_store_from_batches(self, recwarn):
+        import torch
+
+        from interpretune.analysis import AnalysisBatch, analysis_store_from_batches
+        from interpretune.analysis.ops.base import AnalysisOp, ColCfg, OpSchema
+
+        op = AnalysisOp(
+            name="probe", description="one column", output_schema=OpSchema({"x": ColCfg(datasets_dtype="int64")})
+        )
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(model_name_or_path=None),
+            model=SimpleNamespace(tokenizer=SimpleNamespace(vocab_size=32, model_max_length=32)),
+            datamodule=SimpleNamespace(itdm_cfg=SimpleNamespace(eval_batch_size=1)),
+        )
+        batch = AnalysisBatch()
+        batch.x = torch.tensor([3])
+        store = analysis_store_from_batches(module, [batch], op=op)
+        assert store.subject is None and store.op_provenance == ()  # an unregistered op records nothing
         assert any("subject was not recorded" in str(w.message) for w in recwarn.list)
 
 

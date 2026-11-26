@@ -39,30 +39,97 @@ def component_card_metadata(manifest: dict, license_id: str = "apache-2.0") -> M
     )
 
 
+#: Provenance fields interpretune derives itself; every other field in an envelope's ``provenance`` is the publisher's.
+_DERIVED_PROVENANCE = ("interpretune_version", "content_fingerprint", "op_collections", "publish_checks_skipped")
+
+
+def _card_value(value: Any) -> str:
+    """A provenance value as card text: a string as itself, anything else as compact JSON in a code span."""
+    if isinstance(value, str):
+        return " ".join(value.split())  # one list item: a newline would end it
+    return f"`{json.dumps(value, sort_keys=True)}`"
+
+
+def _subject_lines(subject: dict | None) -> list[str]:
+    """The card section saying what the store's columns were computed on, from the envelope's ``subject`` block."""
+    if not subject:
+        return []
+    model = subject.get("model") or {}
+    lines = ["", "## Subject", "", "What the columns were computed on:", ""]
+    revision = f" at revision `{model['revision']}`" if model.get("revision") else " (revision not recorded)"
+    lines.append(f"- model: `{model.get('id')}`{revision}")
+    if subject.get("architecture"):
+        lines.append(f"- architecture: `{subject['architecture']}`")
+    if model.get("n_layers"):
+        lines.append(f"- layers: {model['n_layers']}")
+    if (subject.get("tokenizer") or {}).get("id"):
+        lines.append(f"- tokenizer: `{subject['tokenizer']['id']}`")
+    component_map = subject.get("component_map")
+    if component_map:
+        lines.append(
+            f"- component map: `{component_map.get('architecture')}` from `{component_map.get('source')}`"
+            f" (schema v{component_map.get('schema_version')})"
+        )
+    for dictionary in subject.get("dictionaries") or ():
+        ids = ", ".join(f"{k} `{v}`" for k, v in dictionary.items() if k != "kind" and v is not None)
+        lines.append(f"- dictionary ({dictionary.get('kind')}): {ids}")
+    return lines
+
+
+def _provenance_lines(prov: dict) -> list[str]:
+    """The card section saying what wrote the store: the op collections, interpretune, and the publisher's record."""
+    lines = ["", "## Provenance", ""]
+    for record in prov.get("op_collections") or ():
+        requested, resolved = record.get("requested_name"), record.get("resolved_name")
+        name = f"`{resolved}`" if requested == resolved else f"`{requested}` (resolved to `{resolved}`)"
+        # a bundled op records no collection revision, and the keys with nothing to say are absent
+        collection = f", collection `{record['collection']}`" if record.get("collection") else ""
+        version = f" {record['version']}" if record.get("version") else ""
+        revision = f" at revision `{record['revision']}`" if record.get("revision") else ""
+        lines.append(f"- op {name}: {record.get('source')}{collection}{version}{revision}")
+    if prov.get("interpretune_version"):
+        lines.append(f"- generated with interpretune `{prov['interpretune_version']}`")
+    if prov.get("content_fingerprint"):
+        lines.append(f"- content fingerprint: `{prov['content_fingerprint']}`")
+    if prov.get("publish_checks_skipped"):
+        lines.append(f"- publish checks skipped: {', '.join(f'`{c}`' for c in prov['publish_checks_skipped'])}")
+    publisher = {k: v for k, v in prov.items() if k not in _DERIVED_PROVENANCE}
+    if publisher:
+        lines += ["", "Recorded by the publisher:", ""]
+        lines += [f"- {key}: {_card_value(value)}" for key, value in sorted(publisher.items())]
+    return lines
+
+
 def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = None) -> ModelCard:
     """Generate the card for an artifact (dataset) repo from its validated envelope.
 
     The card behavior is reimplemented once for BOTH repo types (§8): dataset repos carry the same
     ``library_name`` + tag sentinel so ``interpretune-analysis-store`` artifacts are discoverable.
+
+    The card is rendered from the envelope alone, so a re-push regenerates the same card: what the columns were
+    computed on (``subject``), what wrote them (``provenance``: the op collections, interpretune, and every field the
+    publisher recorded), and the publisher's own text (``card.summary``, Markdown, under the title). ``summary``
+    overrides the envelope's text for this rendering only.
     """
     kind = envelope["artifact_kind"]
     meta = ModelCardData(license="apache-2.0", library_name=LIBRARY_NAME, tags=[LIBRARY_NAME, f"{LIBRARY_NAME}-{kind}"])
     title = repo_id.split("/", 1)[-1]
     arts = envelope.get("artifacts") or {}
     prov = envelope.get("provenance") or {}
+    summary = summary if summary is not None else (envelope.get("card") or {}).get("summary")
     lines = [f"# {title}", ""]
-    lines.append(summary or f"An interpretune {kind} artifact ({title}).")
-    lines.append("")
     lines.append(
         f"An [interpretune](https://github.com/interpretune/interpretune) artifact repo "
         f"(kind: {kind}; envelope schema v{envelope['schema']})."
     )
+    if summary:  # after the fixed line, so headings of the publisher's own cannot swallow it
+        lines += ["", summary.strip()]
+    lines += _subject_lines(envelope.get("subject"))
     lines += ["", "## Artifact", ""]
     lines.append(f"- split: `{arts.get('split')}`, rows: {arts.get('num_rows')}")
     if arts.get("columns"):
         lines.append(f"- columns: {', '.join(f'`{c}`' for c in arts['columns'])}")
-    if prov.get("interpretune_version"):
-        lines.append(f"- generated with interpretune `{prov['interpretune_version']}`")
+    lines += _provenance_lines(prov)
     lines += [
         "",
         "Load with `interpretune.hub.pull_analysis_store(...)` — the interpretune formatter",
@@ -425,10 +492,10 @@ def generate_component_card(
         lines += [f"- `{rel}`" for rel in hookmap_files]
         lines += [
             "",
-            "One document per architecture, in the activation-point vocabulary's component-map schema. These are",
+            "One document per architecture, in venngram's component-map schema. These are",
             'DATA (no code executes): fetch and register with `interpretune.hub.pull_hookmaps("<org>/<repo>")`, or',
-            "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture interpretune already",
-            "bundles must agree with the bundled one, or be loaded with `replace=True` deliberately.",
+            "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture venngram's registry already",
+            "serves must agree with the served one, or be loaded with `replace=True` deliberately.",
         ]
     helper_modules = (manifest.get("helpers") or {}).get("modules") or {}
     if helper_modules:

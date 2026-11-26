@@ -93,13 +93,6 @@ class TranscoderFitMeter:
             )
         acts = self.transcoders.encode(mlp_inputs)
         recon = self.transcoders.decode(acts, mlp_inputs).float()
-        if recon.shape != mlp_outputs.shape:
-            # circuit-tracer's cross-layer decode sizes its output by the last position with an active feature
-            raise ValueError(
-                f"The transcoders' reconstruction has shape {tuple(recon.shape)} for MLP outputs of shape"
-                f" {tuple(mlp_outputs.shape)}; a cross-layer transcoder drops trailing positions with no active"
-                " feature, so measure a chunk whose last position has one."
-            )
         y = mlp_outputs.float()
         active = acts != 0
         chunk = (

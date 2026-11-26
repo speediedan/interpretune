@@ -23,7 +23,6 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
-from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import _SL_AVAILABLE, MisconfigurationException, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter, StrOrPath
@@ -52,7 +51,7 @@ if TYPE_CHECKING:
 #: What a circuit-tracer replacement model may be. `torch.nn.Module`, and it CANNOT be narrower:
 #:
 #: `circuit_tracer.ReplacementModel` is a FACTORY, not a base class. Its products inherit from
-#: UNRELATED bases -- the bundled two extend `HookedTransformer` and `TransformersModel` respectively, and
+#: UNRELATED bases -- the bundled two extend `TransformerBridge` and `TransformersModel` respectively, and
 #: circuit-tracer's own additional backends extend others still -- so the products share no common
 #: ancestor except `nn.Module`. Neither the factory class nor a union of the bundled two is a
 #: supertype of all of them, which is measurable rather than theoretical: type-checking against a
@@ -63,11 +62,9 @@ if TYPE_CHECKING:
 #: contributes a class no module in core can name, so the union would reject it -- the old
 #: privileged position, expressed in the type system instead of in a branch.
 #:
-#: `CT_BACKEND_REGISTRY` is the runtime authority on what a given backend must have produced. The
-#: TransformerLens product is deliberately not imported here: it subclasses `HookedTransformer`, which
-#: transformer-lens 4.0 removed, so importing it would make this whole module, nnsight backend included,
-#: unimportable. That backend is refused by name when its replacement model is built
-#: (`require_hooked_transformer`), so a config naming it still loads.
+#: `CT_BACKEND_REGISTRY` is the runtime authority on what a given backend must have produced. No
+#: backend's product is imported here: each pulls in its framework, and choosing one backend must not
+#: import the others.
 ReplacementModelType: TypeAlias = nn.Module
 
 # The registries live in `registry.py`, which imports NOTHING from circuit-tracer. They are the seam a
@@ -381,11 +378,16 @@ class BaseCircuitTracerModule(BaseITModule):
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
         super().__init__(*args, **kwargs)
 
-    def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
+    def _load_replacement_model(self, pretrained_kwargs: dict | None = None, bridge: Any = None) -> None:
         """Load the ReplacementModel for circuit tracing.
 
         Supports both TransformerLens and NNsight backends. The backend is determined by the circuit_tracer_cfg.backend
         setting.
+
+        Args:
+            pretrained_kwargs: passed to ``ReplacementModel.from_pretrained``.
+            bridge: a ``TransformerBridge`` the TransformerLens composition has already built from its own config;
+                the TransformerLens replacement model is made from it rather than loaded again.
         """
         pretrained_kwargs = pretrained_kwargs or {}
         cfg = self.circuit_tracer_cfg
@@ -394,10 +396,6 @@ class BaseCircuitTracerModule(BaseITModule):
             return
 
         backend = cfg.backend
-        if backend == "transformerlens":
-            # A config naming this backend is declarative and stays loadable; building its replacement model is what
-            # needs HookedTransformer, so this is where it is refused.
-            require_hooked_transformer()
         rank_zero_info(f"Loading ReplacementModel with backend: {backend}")
 
         # Add NNsight-specific kwargs if using NNsight backend
@@ -417,7 +415,9 @@ class BaseCircuitTracerModule(BaseITModule):
         # Determine lazy_encoder: explicit config takes precedence, otherwise auto-enable when offloading
         lazy_encoder = cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu")
         hf_cfg = self.it_cfg.hf_from_pretrained_cfg
-        if hf_cfg is not None and hf_cfg.meta_init:
+        if bridge is not None:
+            replacement_model = self._replacement_model_from_bridge(cfg, bridge, lazy_encoder)
+        elif hf_cfg is not None and hf_cfg.meta_init:
             replacement_model = self._meta_replacement_model(cfg, lazy_encoder, pretrained_kwargs)
         else:
             replacement_model = ReplacementModel.from_pretrained(
@@ -476,6 +476,57 @@ class BaseCircuitTracerModule(BaseITModule):
                     f"No model-backend factory registered for circuit-tracer backend {backend!r}; "
                     "leaving the module's model backend unset for its own adapter to attach."
                 )
+
+    @staticmethod
+    def _complete_bridge_cfg(bridge: Any) -> None:
+        """Fill the two config fields ``HookedTransformer``'s config carried and a ``TransformerBridge``'s leaves
+        unset.
+
+        Circuit-tracer copies the model's config into every graph, and that config's ``to_dict`` drops unset fields, so
+        a graph stored by the analysis backend could not rebuild its config when read back (``KeyError``). The bridge
+        knows both values under other names: its tokenizer's ``name_or_path``, and ``cfg.architecture``.
+
+        Raises:
+            MisconfigurationException: When the bridge has no tokenizer name or architecture to record.
+        """
+        cfg = bridge.cfg
+        if cfg.tokenizer_name is None:
+            cfg.tokenizer_name = getattr(getattr(bridge, "tokenizer", None), "name_or_path", None) or None
+        if getattr(cfg, "original_architecture", None) is None:
+            cfg.original_architecture = getattr(cfg, "architecture", None)
+        missing = [name for name in ("tokenizer_name", "original_architecture") if not getattr(cfg, name, None)]
+        if missing:
+            raise MisconfigurationException(
+                f"circuit-tracer's TransformerLens backend records {missing} in the graphs it stores, and the "
+                "TransformerBridge has neither those config fields nor a tokenizer `name_or_path` / `cfg.architecture`."
+            )
+
+    @staticmethod
+    def _replacement_model_from_bridge(cfg: CircuitTracerConfig, bridge: Any, lazy_encoder: bool) -> Any:
+        """Circuit-tracer's TransformerLens replacement model, made from ``bridge`` with ``cfg``'s transcoders.
+
+        Raises:
+            MisconfigurationException: For a backend other than ``transformerlens``, which cannot take a bridge.
+        """
+        if cfg.backend != "transformerlens":
+            raise MisconfigurationException(
+                f"A TransformerBridge was built for circuit-tracer backend {cfg.backend!r}; only the "
+                "'transformerlens' backend is made from one."
+            )
+        from circuit_tracer.replacement_model.replacement_model_transformerlens import (
+            TransformerLensReplacementModel,
+        )
+        from circuit_tracer.utils.hf_utils import load_transcoder_from_hub
+
+        BaseCircuitTracerModule._complete_bridge_cfg(bridge)
+        transcoders, _ = load_transcoder_from_hub(
+            cfg.transcoder_set,
+            device=torch.device(bridge.cfg.device),
+            dtype=cfg.dtype,
+            lazy_encoder=lazy_encoder,
+            lazy_decoder=cfg.lazy_decoder,
+        )
+        return TransformerLensReplacementModel.from_bridge(bridge, transcoders)
 
     def _meta_replacement_model(self, cfg: CircuitTracerConfig, lazy_encoder: bool, pretrained_kwargs: dict) -> Any:
         """The replacement model built on the meta device for ``hf_from_pretrained_cfg.meta_init`` (see
@@ -657,42 +708,33 @@ class BaseCircuitTracerModule(BaseITModule):
 class CircuitTracerTLModuleMixin(TLensAttributeMixin):
     """Mixin that provides TransformerLens-specific functionality for Circuit Tracer.
 
-    This mixin is composed with BaseCircuitTracerModule when using the TransformerLens backend to provide
-    _convert_hf_to_tl and other TL-specific methods.
+    This mixin is composed with BaseCircuitTracerModule when using the TransformerLens backend to provide the
+    TransformerBridge conversion that yields the replacement model.
     """
 
-    def _convert_hf_to_tl(self) -> None:
-        """Convert HF model to TransformerLens ReplacementModel.
+    def _convert_hf_to_bridge(self) -> None:
+        """Wrap the HF model in a ``TransformerBridge``, then make it circuit-tracer's replacement model.
 
-        This method handles TransformerLens-specific conversion logic by pruning config values that circuit_tracer
-        forces in from_pretrained.
+        The bridge is built exactly as the TransformerLens adapter builds it (device, dtype, bridge config overrides,
+        LoRA), then given circuit-tracer's ``TransformerLensReplacementModel`` class with the transcoders spliced in,
+        as the SAE Lens adapter does for its bridge.
+
+        Raises:
+            MisconfigurationException: When the TransformerLens config enables compatibility mode, which folds and
+                centers the weights: the transcoders read the unprocessed model's activations, so every graph built
+                on the processed one would be wrong without any error.
         """
-        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()
+        from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
 
-        # TransformerLens-specific: prune config values that CT forces in from_pretrained
-        # TODO: we currently prune model_name, dtype and the below values from tl_cfg as CT currently forces these
-        #       values in from_pretrained. We prob want a sync method in the future instead.
-        #           fold_ln=False,
-        #           center_writing_weights=False,
-        #           center_unembed=False,
-        pruned_tl_cfg = self._prune_tl_cfg_dict(  # from BaseITLensModule
-            normalize_device=True,
-            prune_list=[
-                "hf_model",
-                "tokenizer",
-                "model_name",
-                "dtype",
-                "fold_ln",
-                "center_writing_weights",
-                "center_unembed",
-            ],
-        )
-        loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}
-
-        self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
-        # Preserve original HF config for reference (dynamic attribute on backend model)
-        assert self.model is not None, "Replacement model must be loaded"
-        self.model.config = hf_preconversion_config
+        tl_cfg = self.it_cfg.tl_cfg
+        if isinstance(tl_cfg, ITLensBridgeConfig) and tl_cfg.enable_compatibility_mode:
+            raise MisconfigurationException(
+                "circuit-tracer's TransformerLens backend cannot run on a TransformerBridge in compatibility mode: "
+                "its weight processing (LayerNorm folding, centering) changes the activations the transcoders read. "
+                "Set `enable_compatibility_mode: false` on the model's `tl_cfg`."
+            )
+        super()._convert_hf_to_bridge()  # type: ignore[misc]  # from BaseITLensModule
+        self._load_replacement_model(bridge=self.model)
 
 
 class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
@@ -1130,7 +1172,7 @@ class CircuitTracerTLModule(
     """Circuit Tracer module with TransformerLens backend.
 
     This module combines:
-    - CircuitTracerTLModuleMixin: Provides _convert_hf_to_tl for TL-specific conversion
+    - CircuitTracerTLModuleMixin: Provides _convert_hf_to_bridge, which yields the replacement model
     - BaseITLensModule: Provides _prune_tl_cfg_dict and other TL utilities
     - BaseCircuitTracerModule: Provides _load_replacement_model and circuit tracer functionality
     """

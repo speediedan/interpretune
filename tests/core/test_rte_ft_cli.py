@@ -95,7 +95,7 @@ def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed:
         hf_cfg = {"pretrained_kwargs": {"device_map": "cuda:0", "dtype": "float32"}}
         registered["module_cfg"] = {"init_args": {"hf_from_pretrained_cfg": {"init_args": hf_cfg}}}
     args += ["--registered_cfg", json.dumps(registered)]
-    # the bf16-mixed run's transitions land by epoch 4 (below), so it needs one epoch fewer than the fp32 run's 6
+    # the bf16-mixed run's transitions land by epoch 3 (below), so it needs one epoch fewer than the fp32 run's 6
     limits = {**LIMITS, "max_epochs": 5} if bf16_mixed else LIMITS
     if interface == "core":
         args += [f"--run_cfg.{k}={v}" for k, v in limits.items()]
@@ -139,17 +139,18 @@ def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component_gpu, clea
     CLI runs then take from half an hour to over an hour.
 
     With accumulation over the CPU-sized limit of 2 batches, each epoch is one optimizer step on the two batches' mean
-    loss rather than two steps, so the loss trajectory differs from the fp32 run's and the plateau transition lands an
-    epoch earlier (4, not 5).
+    loss rather than two steps, so the loss trajectory differs from the fp32 run's and the plateau transition lands
+    earlier (3, not 5): phase 1's first epoch already improves the validation loss by less than ``MIN_DELTA``.
     """
     core = _run("core", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
     lightning = _run("lightning", rte_component_gpu, tmp_path, monkeypatch, bf16_mixed=True, gpu=True)
     assert core["devices"] == lightning["devices"] == ["cuda:0"]
-    assert core["transition_epochs"] == lightning["transition_epochs"] == [2, 4]
+    assert core["transition_epochs"] == lightning["transition_epochs"]
+    assert core["transition_epochs"] == [2, 3]
     assert core["final_depth"] == lightning["final_depth"] == 2
     assert core["best_depth"] == lightning["best_depth"] == 2
     assert [e["thawed"] for e in core["epochs"]] == [e["thawed"] for e in lightning["epochs"]]
-    assert [len(e["thawed"]) for e in core["epochs"]] == [26, 26, 74, 74, 148]
+    assert [len(e["thawed"]) for e in core["epochs"]] == [26, 26, 74, 148, 148]
     assert [e["val_loss"] for e in core["epochs"]] == pytest.approx(
         [e["val_loss"] for e in lightning["epochs"]], rel=1e-3
     )

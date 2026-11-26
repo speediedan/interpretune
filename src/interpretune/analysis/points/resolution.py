@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from interpretune.analysis.points.component_map import ComponentMap
+from venngram.maps import ComponentMap as VenngramComponentMap
+
+from interpretune.analysis.points.component_map import ComponentMap, from_venngram, renamed_component_refusal
 from interpretune.analysis.points.vocabulary import ActivationPoint, Slot
 
 
@@ -61,13 +63,19 @@ def _contribution_component(point: ActivationPoint, cmap: ComponentMap) -> str:
     sublayers = cmap.sublayers
     if cmap.sandwich_norms and kind in sublayers:
         post = f"ln{sublayers.index(kind) + 1}_post"
-        if cmap.kind_of(post, 0, point.stack) == "norm":
+        row = cmap.row(post, point.stack)
+        if row is not None and row.kind == "norm":
             return post
     return kind
 
 
-def resolve(point: ActivationPoint, cmap: ComponentMap) -> Resolution:
-    """Resolve a parsed point against an architecture's component map."""
+def resolve(point: ActivationPoint, cmap: VenngramComponentMap) -> Resolution:
+    """Resolve a parsed point against an architecture's component map.
+
+    A venngram map is read as an unbound :class:`ComponentMap`, so an optional row is refused by name rather than
+    resolved for a layer whose module may not exist.
+    """
+    cmap = from_venngram(cmap)
     layer = point.layer
     component = _contribution_component(point, cmap) if point.contribution is not None else point.component
     lookup_layer = layer if not point.is_global else None
@@ -86,6 +94,9 @@ def resolve(point: ActivationPoint, cmap: ComponentMap) -> Resolution:
         excluded = cmap.unmapped_reason(component, lookup_layer, stack)
         if excluded is not None:
             return Unresolvable(f"{cmap.architecture}: {excluded}")
+        renamed = renamed_component_refusal(component, cmap, stack) if layer is not None else None
+        if renamed is not None:
+            return Unresolvable(f"{cmap.architecture}: {renamed}")
         head = f"{stack}." if stack else ""
         where = f"{head}blocks.{layer}" if layer is not None else "the model"
         known = sorted(

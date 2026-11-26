@@ -301,6 +301,36 @@ def _tl_backward(
     )
 
 
+#: Bridge components whose hooks exist but never fire, by the parent bridge class and the child's name, with the
+#: reason. A hook name alone cannot tell a capturable tensor from one of these, so each is refused by name rather than
+#: declared capturable and then returned missing from every cache.
+_UNFIRED_BRIDGE_CHILDREN: dict[str, dict[str, str]] = {
+    "JointQKVAttentionBridge": {
+        "qkv": (
+            "the bridge splits the fused qkv projection into q, k and v at load and runs those, so the fused module's "
+            "hooks never fire; capture `attn.q`, `attn.k` and `attn.v` instead"
+        ),
+    },
+}
+
+
+def _unfired_reason(model: Any, point: str) -> str | None:
+    """Why a block-relative component point's hook never fires on this bridge, or ``None`` when nothing says so."""
+    from interpretune.analysis.points.vocabulary import parse
+
+    parsed = parse(point)
+    parent_path, _, child = parsed.component.rpartition(".")
+    blocks = getattr(model, "blocks", None)
+    if parsed.layer is None or not parent_path or blocks is None or parsed.layer >= len(blocks):
+        return None
+    parent: Any = blocks[parsed.layer]
+    for part in parent_path.split("."):
+        parent = getattr(parent, part, None)
+        if parent is None:
+            return None
+    return _UNFIRED_BRIDGE_CHILDREN.get(type(parent).__name__, {}).get(child)
+
+
 def _hf_architecture(model: Any) -> str:
     """The HuggingFace class name the component maps are keyed by, from either TransformerLens wrapper."""
     cfg = getattr(model, "cfg", None)
@@ -366,17 +396,28 @@ class TLModelBackend:
         them where the tensor is the same, and deliberately does not map where it is not (its `hook_mlp_out` /
         `hook_attn_out` are the post-norm outputs on a sandwich-norm architecture, so `mlp.hook_out` / `attn.hook_out`
         stay unaliased and are uncapturable there by those spellings). The declaration reports that gap by name.
+
+        The component map is bound to the HF model the bridge wraps, so a hybrid stack's attention is probed on a layer
+        that has it; a wrapper that carries no HF model is read against the unbound map, which refuses an optional row
+        by name.
         """
-        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points import bind_component_map, component_map_for
         from interpretune.analysis.points.inventory import inventory, spelled_at
 
         architecture = _hf_architecture(model)
         cmap = component_map_for(architecture)
+        original = getattr(model, "original_model", None)
+        if original is not None:
+            cmap = bind_component_map(cmap, original)
         available = _build_available_hook_map(model)
         capturable: set[str] = set()
         uncapturable: dict[str, str] = {}
         for base in inventory(cmap):
             name = spelled_at(base, cmap)
+            unfired = _unfired_reason(model, name)
+            if unfired is not None:
+                uncapturable[base] = unfired
+                continue
             try:
                 expand_intervention_patterns([name], available)
                 capturable.add(base)

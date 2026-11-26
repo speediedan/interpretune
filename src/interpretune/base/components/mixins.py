@@ -10,6 +10,7 @@ from transformers import AutoConfig, PreTrainedModel, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
+from interpretune.analysis.backends.positions import install_mask_derived_positions
 from interpretune.utils import (
     rank_zero_warn,
     _import_class,
@@ -46,6 +47,12 @@ def enable_activation_checkpointing(model: PreTrainedModel) -> None:
     """
     enable = getattr(model, "activation_checkpointing_enable", None) or model.gradient_checkpointing_enable
     enable()
+
+
+def configure_hf_position_ids(model: PreTrainedModel) -> None:
+    """Use the shared padding convention for an HF text model. Composite models own their position layout."""
+    if model.config.get_text_config() is model.config:
+        install_mask_derived_positions(model)
 
 
 class ITStateMixin:
@@ -709,6 +716,8 @@ class HFFromPretrainedMixin:
 
         if quantized:
             self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
+        # The base model sees the forwarded tokens even when PEFT wraps its forward signature.
+        configure_hf_position_ids(self.model)
         # peft wraps the HF model in a PeftModel; the mixin keeps using it through the HF surface it forwards.
         self.model = cast(PreTrainedModel, get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg)))
         from interpretune.runners.distributed import META_INIT_SOURCE

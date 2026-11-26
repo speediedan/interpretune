@@ -16,6 +16,7 @@ from interpretune.analysis import (
     OpWrapper,
     AnalysisOpLike,
 )
+from interpretune.analysis.core import stamp_op_provenance, stamp_subject
 from interpretune.analysis.execution import execute_analysis_step
 from interpretune.analysis.inputs import OpStateStore
 from interpretune.analysis.ops.dispatcher import DISPATCHER
@@ -629,48 +630,6 @@ class AnalysisCfg(ITSerializableCfg):
             # Reset for all modules
             self._applied_to.clear()
 
-    def _stamp_op_provenance(self, store) -> None:
-        """Record which op collection produced this store's columns, at the moment the store is created.
-
-        Write time is the only place this can be recorded truthfully. Reconstructing it later by matching
-        column names against op output schemas would consult `DISPATCHER.op_precedence`, which is
-        session-mutable and re-read from `IT_OP_PRECEDENCE` on every access -- so a bare name can resolve to
-        a different collection by the time a store is published, and the store keeps no trace of which
-        naming form was used to tell the safe case from the unsafe one.
-
-        Leaves the store's empty default in place when there is nothing to record, rather than substituting
-        a guess.
-        """
-        if self.op is None:
-            return  # no op, no dispatcher call at all -- see the loading note below
-        # `DISPATCHER.op_provenance` is `@_ensure_loaded`, so in principle this could force definition
-        # loading from `apply`. It cannot in practice, and the reason is worth stating rather than
-        # re-derived: `__init__` calls `resolve_op()` whenever an op is set, which loads. Measured both
-        # ways -- passing a name AND passing an already-resolved op object each leave `_loaded` True before
-        # `apply` runs. With the `self.op is None` early return above, the two branches are: no op, so the
-        # dispatcher is never touched; or an op, so loading already happened. Neither reaches a cold load.
-        from interpretune.analysis.ops.dispatcher import DISPATCHER
-
-        try:
-            store.op_provenance = DISPATCHER.op_provenance(self.op)
-        except Exception as e:  # provenance is descriptive: never fail a run to record it
-            rank_zero_warn(f"Could not record op provenance for {getattr(self.op, 'name', self.op)}: {e}")
-
-    @staticmethod
-    def _stamp_subject(store, module) -> None:
-        """Record what the store's columns were computed on, from the module that computes them.
-
-        Like op provenance, only write time knows this: a store carries nothing from which the model, tokenizer,
-        component map or dictionaries could be recovered later. A module stating no model id leaves the store without a
-        subject, and publishing it then asks for one explicitly.
-        """
-        from interpretune.hub.subject import StoreSubjectError, subject_from_module
-
-        try:
-            store.subject = subject_from_module(module)
-        except StoreSubjectError as e:
-            rank_zero_warn(f"The store's subject was not recorded: {e}")
-
     def apply(
         self,
         module,
@@ -754,9 +713,11 @@ class AnalysisCfg(ITSerializableCfg):
             )
 
         # Stamp whichever store we ended up with, including one the caller supplied: this cfg's op is what
-        # writes it, so it is the op whose provenance that store carries.
-        self._stamp_op_provenance(self.output_store)
-        self._stamp_subject(self.output_store, module)
+        # writes it, so it is the op whose provenance that store carries. `DISPATCHER.op_provenance` is
+        # `@_ensure_loaded`, but it cannot force a cold load from here: `__init__` calls `resolve_op()` whenever an
+        # op is set, which loads, and with no op `stamp_op_provenance` never touches the dispatcher.
+        stamp_op_provenance(self.output_store, self.op)
+        stamp_subject(self.output_store, module)
 
         # Always prepare the model context to ensure names_filter is materialized
         self.prepare_model_ctx(module, fallback_sae_targets)

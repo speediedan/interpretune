@@ -183,15 +183,19 @@ def _real_effect(effect: torch.Tensor, attention_mask: torch.Tensor | None) -> t
 
 
 def _captured_under(captured: dict[str, torch.Tensor], name: str, cmap: Any) -> str | None:
-    """The key ``name`` was captured under: itself, or its canonical spelling on ``cmap``'s architecture."""
-    from interpretune.analysis.points import TensorRef, parse, resolve
+    """The key ``name`` was captured under: itself, or its canonical spelling on ``cmap``'s architecture.
+
+    ``cmap`` is the unbound map (a case has no model to bind it to), so a point an optional row carries does not
+    resolve here; that is raised with the resolver's reason rather than reported as a point that was not captured.
+    """
+    from interpretune.analysis.points import TensorRef, describe_unresolvable, parse, resolve
 
     if name in captured:
         return name
     point = parse(name)
     ref = resolve(point, cmap)
     if not isinstance(ref, TensorRef):
-        return None
+        raise AssertionError(f"cannot match {name!r} to a captured spelling: {describe_unresolvable(point, ref)}")
     for key in captured:
         other = resolve(parse(key), cmap)
         if isinstance(other, TensorRef) and other.module_path == ref.module_path and other.io == ref.io:
