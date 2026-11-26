@@ -1,4 +1,4 @@
-"""Distributed placement for the core training and test loops.
+"""Distributed placement for the core training and test loops, and for the analysis runner under ``tp``.
 
 ``SessionRunnerCfg.placement`` chooses one of four placements:
 
@@ -28,6 +28,13 @@ module is placed before its optimizers are built. Each rank's loaders are rebuil
 loops average logged metrics across ranks, so callbacks, lr schedulers and transition policies see one global value on
 every rank (ranks that disagree on a phase transition deadlock at the next collective).
 
+The analysis runner (``AnalysisRunnerCfg.placement``) takes ``single`` and ``tp``. A run's ranks fall into lockstep
+groups, whose ranks see the same batches and make every call together, and data shares, each taking its own part of the
+dataset (:attr:`DistributedRun.lockstep_size`, :attr:`DistributedRun.data_shares`): under ``tp`` one group of every
+rank and one share, under ``ddp`` and ``fsdp2`` one rank per group and one share per rank. The first rank of a group
+writes its outputs (:attr:`DistributedRun.writes_outputs`). Code that reads a weight directly, outside the module call
+that would hand it on whole, reads it through :func:`whole_tensor`.
+
 Every combination this module cannot vouch for is refused by name: a placement that does not match the launch, a rank
 whose parameters span several devices (a layer split under data parallelism), two ranks on one accelerator, a parameter
 ``fully_shard`` cannot shard, and a loader that cannot be rebuilt faithfully over a ``DistributedSampler``.
@@ -52,6 +59,8 @@ Placement = Literal["single", "ddp", "fsdp2", "tp"]
 PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2", "tp")
 # the placements that give each rank its own share of the data; under the others every rank sees the same batches
 DATA_PARALLEL_PLACEMENTS: tuple[str, ...] = ("ddp", "fsdp2")
+# the whole tensors `whole_tensor` gathered inside `gathered_weights`, by the identity of the split tensor; None outside
+_GATHERED: dict[int, tuple[torch.Tensor, torch.Tensor]] | None = None
 # the attribute holding rank 0's CPU copy of a model built on the meta device (`HFFromPretrainedConfig.meta_init`),
 # which `place_module` loads into the sharded model and then drops
 META_INIT_SOURCE = "_meta_init_source"
@@ -86,6 +95,33 @@ class DistributedRun:
         """Whether each rank takes its own share of the data (``ddp``, ``fsdp2``), rather than every rank the
         same."""
         return self.placement in DATA_PARALLEL_PLACEMENTS
+
+    @property
+    def data_shares(self) -> int:
+        """How many disjoint shares the dataset is divided into: one per rank under a data-parallel placement, one
+        for the whole run under ``tp``, whose ranks see the same batches."""
+        return self.world_size if self.data_parallel else 1
+
+    @property
+    def data_index(self) -> int:
+        """Which of the :attr:`data_shares` this rank takes."""
+        return self.rank if self.data_parallel else 0
+
+    @property
+    def lockstep_size(self) -> int:
+        """How many ranks share each batch and make every call on it together: the ranks of one lockstep group.
+
+        One under a data-parallel placement, where each rank computes its own batches, and every rank under ``tp``.
+        """
+        return self.world_size // self.data_shares
+
+    @property
+    def writes_outputs(self) -> bool:
+        """Whether this rank writes its lockstep group's outputs (an analysis store, its artifacts).
+
+        The ranks of a lockstep group compute the same outputs, so one of them, the group's first, writes them.
+        """
+        return self.rank % self.lockstep_size == 0
 
     @property
     def is_rank_zero(self) -> bool:
@@ -1318,8 +1354,8 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0)
         )
     dist_sampler = DistributedSampler(
         loader.dataset,
-        num_replicas=run.world_size if run.data_parallel else 1,
-        rank=run.rank if run.data_parallel else 0,
+        num_replicas=run.data_shares,
+        rank=run.data_index,
         shuffle=type(sampler) is RandomSampler,
         seed=seed,
         drop_last=loader.drop_last,
@@ -1367,3 +1403,42 @@ def reduce_metrics(metrics: Mapping[str, float], run: DistributedRun) -> dict[st
     values = torch.tensor([float(metrics[k]) for k in keys], dtype=torch.float64, device=device)
     dist.all_reduce(values)
     return {k: v / run.world_size for k, v in zip(keys, values.tolist())}
+
+
+@contextmanager
+def gathered_weights() -> Iterator[None]:
+    """Keep the whole tensors :func:`whole_tensor` gathers for the enclosed block, so each is gathered once.
+
+    The analysis runner enters it for a run: a readout that reads the unembedding on every batch would otherwise gather
+    it on every batch. The block must not change the weights it reads (an analysis run does not), since a cached whole
+    tensor is not refreshed. Re-entering it keeps the outer cache.
+    """
+    global _GATHERED
+    if _GATHERED is not None:
+        yield
+        return
+    _GATHERED = {}
+    try:
+        yield
+    finally:
+        _GATHERED = None
+
+
+def whole_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    """``tensor`` whole: a ``DTensor``'s ``full_tensor()``, or ``tensor`` itself when it is not split.
+
+    For code that reads a weight directly, outside the module call that would hand it on whole (a J-lens readout
+    reads the unembedding, the final norm and the embedding). Under placement ``tp`` such a weight may be split
+    across ranks, and each rank holds only its part. Gathering is a collective, so every rank must make the same
+    reads in the same order, which holds under ``tp``: the ranks share every call. The result is detached, since the
+    readouts treat weights as constants. Inside :func:`gathered_weights` each tensor is gathered once.
+    """
+    if not hasattr(tensor, "full_tensor"):
+        return tensor
+    if _GATHERED is not None and (hit := _GATHERED.get(id(tensor))) is not None and hit[0] is tensor:
+        return hit[1]
+    with torch.no_grad():
+        whole = tensor.full_tensor().detach()  # pyright: ignore[reportAttributeAccessIssue]  # a DTensor
+    if _GATHERED is not None:
+        _GATHERED[id(tensor)] = (tensor, whole)  # the split tensor is kept with it, so its id is not reused
+    return whole
