@@ -1335,7 +1335,9 @@ class BatchShare:
             set_epoch(epoch)
 
 
-def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0, share_batches: bool = False) -> Any:
+def distributed_dataloader(
+    loader: Iterable, run: DistributedRun, seed: int = 0, share_batches: bool = False, whole_sequence: bool = False
+) -> Any:
     """``loader`` rebuilt over a ``DistributedSampler`` that gives this rank its share of the dataset.
 
     Under a placement that is not data parallel (``tp``), every rank takes the whole dataset in the same order instead:
@@ -1350,7 +1352,8 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0,
     With ``share_batches`` (the analysis runner under a data-parallel placement), the share is taken in whole batches
     instead (:class:`BatchShare`): every rank forms the single-process batch sequence and takes every
     :attr:`DistributedRun.data_shares`-th batch of it, with no padding, so the rows each batch yields are the ones a
-    single process would yield for it.
+    single process would yield for it. With ``whole_sequence`` as well, the rank takes every batch of that sequence
+    (the analysis runner's serial prefix pass).
 
     Raises:
         MisconfigurationException: If ``loader`` is not a ``DataLoader``, iterates an ``IterableDataset``, or uses a
@@ -1383,7 +1386,7 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0,
             " samples: use PyTorch's sequential or random sampler (without replacement), or shard the data by rank in"
             " the datamodule."
         )
-    by_batch = share_batches and run.data_shares > 1
+    by_batch = share_batches and (run.data_shares > 1 or whole_sequence)
     dist_sampler = DistributedSampler(
         loader.dataset,
         num_replicas=1 if by_batch else run.data_shares,
@@ -1394,9 +1397,8 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0,
     )
     if by_batch:
         assert loader.batch_size is not None  # a BatchSampler over the original sampler, checked above
-        shared = BatchShare(
-            BatchSampler(dist_sampler, loader.batch_size, loader.drop_last), run.data_index, run.data_shares
-        )
+        index, shares = (0, 1) if whole_sequence else (run.data_index, run.data_shares)
+        shared = BatchShare(BatchSampler(dist_sampler, loader.batch_size, loader.drop_last), index, shares)
         return DataLoader(
             loader.dataset,
             batch_sampler=shared,

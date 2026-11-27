@@ -188,9 +188,16 @@ spreads an analysis over the ranks when the model fits each of them. It adds thr
   and the ranks never wait on each other between batches. A gradient an op reads is its own rank's;
 - each rank writes its share, and rank 0 merges the shares by batch into the store one process would write, row for
   row, which every rank then loads. Ranks on several hosts need a filesystem they share;
-- an op whose state accumulates across batches (`op_state`, as `concept_direction` declares) is refused, since each
-  rank's state would see only its own batches, and so is a deterministic `dataset_fingerprint` (or
-  `case_key_target_part`): a share served from the generator cache would not say which batches its rows came from.
+- an op whose state runs across batches (`op_state`, as `concept_direction` declares) still gives every row its
+  one-process value, although each rank sees only its own batches:
+  - when it is the composition's last op, each rank records the op's inputs for each of its batches, and after the
+    merge rank 0 runs the op again over them in one-process order, with fresh state, and rewrites its columns;
+  - when a later op reads its output (`attribution_from_concept` and `intervention_from_concept` attribute and
+    intervene with each batch's running direction), every rank first runs the composition up to that op over the whole
+    batch sequence, in one-process order, and then runs only the rest on its own batches. That prefix is the cheap part
+    when it reads an input store, as `concept_direction` does; the attribution graphs and interventions are shared out;
+- a deterministic `dataset_fingerprint` (or `case_key_target_part`) is refused: a share served from the generator cache
+  would not say which batches its rows came from.
 
 A module whose submodules the analysis calls directly needs them as units of their own in `fsdp_plan`, as under the
 core loops.
@@ -461,8 +468,8 @@ else:
 - A loader that cannot be rebuilt faithfully: not a `DataLoader`, an `IterableDataset`, or a sampler other than
   PyTorch's sequential sampler and its random sampler without replacement (shard such data by rank in the datamodule).
 - Ranks that logged different metric names in an epoch.
-- `fsdp2` on the analysis runner (`single`, `tp` and `ddp` place it), and under `ddp` an op declaring `op_state` or a
-  deterministic generator-cache key.
+- `fsdp2` on the analysis runner (`single`, `tp` and `ddp` place it), and under `ddp` a deterministic generator-cache
+  key.
 
 ## Compositions under `fsdp2`
 
@@ -501,7 +508,7 @@ its tensors are artifacts until then).
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
   (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
-The design, and the work that remains for the analysis runner (merging cross-batch op state across data shares, sharded
-transcoders and latent models, and FSDP2 shard dimensions above one), is tracked in
+The design, and the work that remains for the analysis runner (sharded transcoders and latent models, and FSDP2 shard
+dimensions above one), is tracked in
 [interpretune#803](https://github.com/interpretune/interpretune/issues/803). Splitting one prompt's attribution across
 ranks is [interpretune#1274](https://github.com/interpretune/interpretune/issues/1274).
