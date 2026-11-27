@@ -213,6 +213,23 @@ class TestRawSourceIdentity:
         with pytest.raises(ValueError, match="layer 1 attributes different source"):
             _head_source_report(parts)
 
+    @staticmethod
+    def _shifted(parts, dtype, shift):
+        # The measured case: gemma-2-2b in bfloat16 had a largest edge of 5.12 and layers 0.0215 apart.
+        edges = torch.tensor([5.12, 1.0, 0.5, -2.0, 0.25, 3.0, -0.75]).to(dtype)
+        shifted = edges.clone()
+        shifted[1] += shift
+        return [replace(parts[0], total=edges), replace(parts[1], total=shifted)]
+
+    def test_a_bfloat16_rounding_gap_between_cuts_is_accepted(self, parts):
+        result = _head_source_report(self._shifted(parts, torch.bfloat16, 0.0215))
+        assert result["head_loading_feature_edges"].dtype == torch.bfloat16
+
+    @pytest.mark.parametrize("dtype, shift", [(torch.bfloat16, 0.2), (torch.float32, 0.0215)])
+    def test_a_gap_past_the_precision_floor_is_refused(self, parts, dtype, shift):
+        with pytest.raises(ValueError, match=r"layer 1 attributes different source edges .*largest edge 5\.12"):
+            _head_source_report(self._shifted(parts, dtype, shift))
+
     def test_an_incomplete_source_vector_is_refused(self, parts):
         parts[0] = replace(parts[0], total=torch.ones(6))
         with pytest.raises(ValueError, match="incomplete source-node layout"):

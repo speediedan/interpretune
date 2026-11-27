@@ -38,6 +38,11 @@ def _require_single_prompt(batch_size: int) -> None:
 
 _SOURCE_EDGE_ATOL = 1e-5
 _SOURCE_EDGE_RTOL = 1e-5
+# Units of the edges' own machine epsilon, at the largest edge, added to the absolute floor. Each layer's cut recomputes
+# the same edges in a different accumulation order, so in a low precision they differ by about one rounding step at
+# the scale of the whole vector: gemma-2-2b in bfloat16 on an RTX 4090 differed by 0.0215 with a largest edge of 5.12,
+# under one bfloat16 step there (0.03125). In float32 the term is negligible and the fixed floor governs.
+_SOURCE_EDGE_EPS_UNITS = 2.0
 
 
 def _head_source_report(parts: list[Any]) -> dict[str, Any]:
@@ -58,16 +63,18 @@ def _head_source_report(parts: list[Any]) -> dict[str, Any]:
             raise ValueError(f"head_loadings layer {part.layer} attributes different source nodes")
     if not torch.isfinite(edges).all():
         raise ValueError("head_loadings returned nonfinite source edges")
-    # Each layer's cut recomputes the same source edges, so they differ only by accumulation order. Report the worst
-    # excess with the scale and precision it was measured at, so a tolerance can be set from a measured gap.
-    bound = _SOURCE_EDGE_ATOL + _SOURCE_EDGE_RTOL * edges.abs()
-    worst = max(parts, key=lambda part: float(((part.total.detach().cpu() - edges).abs() - bound).max()))
-    gap = (worst.total.detach().cpu() - edges).abs()
+    # Compared in float32 so the comparison adds no rounding of its own; the tolerance follows the edges' precision.
+    ref = edges.float()
+    scale = float(ref.abs().max())
+    atol = _SOURCE_EDGE_ATOL + _SOURCE_EDGE_EPS_UNITS * torch.finfo(edges.dtype).eps * scale
+    bound = atol + _SOURCE_EDGE_RTOL * ref.abs()
+    worst = max(parts, key=lambda part: float(((part.total.detach().cpu().float() - ref).abs() - bound).max()))
+    gap = (worst.total.detach().cpu().float() - ref).abs()
     if bool((gap > bound).any()):
         raise ValueError(
             f"head_loadings layer {worst.layer} attributes different source edges than layer {reference.layer}: "
-            f"largest difference {float(gap.max()):.3g} against atol {_SOURCE_EDGE_ATOL:g} + rtol "
-            f"{_SOURCE_EDGE_RTOL:g} times the edge (largest edge {float(edges.abs().max()):.3g}, {edges.dtype})"
+            f"largest difference {float(gap.max()):.3g} against atol {atol:.3g} + rtol {_SOURCE_EDGE_RTOL:g} times "
+            f"the edge (largest edge {scale:.3g}, {edges.dtype})"
         )
     return {
         "head_loading_feature_nodes": nodes,
