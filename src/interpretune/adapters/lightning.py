@@ -204,7 +204,8 @@ if _LIGHTNING_AVAILABLE:
         Trainer's callbacks, the rows those steps yield are also written as the analysis config's ``AnalysisStore``,
         as ``AnalysisRunner.run_analysis`` writes them: the same features and format from the op's output schema, the
         same ``output_store.save_dir``, ``output_store.dataset`` set to the result, the ``on_analysis_start``,
-        ``on_analysis_epoch_end`` and ``on_analysis_end`` hooks around the run, and the same run-scoped op state.
+        ``on_analysis_epoch_end`` and ``on_analysis_end`` hooks around the run, and the same run-scoped op state. The
+        metrics a step records with ``log_analysis`` are averaged per epoch and sent to the Trainer's loggers.
 
         Rows are streamed to disk as each batch's step yields them, so the run's host memory follows
         ``writer_batch_size`` rather than its length. ``Trainer.predict`` still keeps every batch's outputs to return
@@ -247,6 +248,7 @@ if _LIGHTNING_AVAILABLE:
             # the run boundary of declared op state, as `AnalysisRunner` owns it: a second predict starts clean
             analysis_cfg.reset_op_state()
             _call_itmodule_hook(pl_module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
+            pl_module.reset_analysis_metrics()
             features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
             pl_module._it_analysis_row_writer = AnalysisRowWriter(
                 features,
@@ -256,12 +258,24 @@ if _LIGHTNING_AVAILABLE:
             )
 
         def on_predict_epoch_end(self, trainer: Any, pl_module: Any) -> None:
-            """Run the analysis epoch end hook, then clear the op state of ops that reset at an epoch boundary."""
+            """Run the analysis epoch end hook, report the epoch's ``log_analysis`` metrics to the Trainer's
+            loggers, then clear the op state of ops that reset at an epoch boundary.
+
+            The metrics go to each logger directly: Lightning refuses ``self.log`` in every predict hook, and a
+            logger's ``log_metrics`` is the route it leaves open. They are logged as ``analysis/<name>``, with the
+            analysis epoch as the step.
+            """
             from interpretune.base.call import _call_itmodule_hook
 
             _call_itmodule_hook(
                 pl_module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks"
             )
+            metrics = pl_module.flush_analysis_metrics()
+            if metrics:
+                epoch = len(pl_module.analysis_metrics) - 1
+                for logger in trainer.loggers:
+                    logger.log_metrics({f"analysis/{name}": value for name, value in metrics.items()}, step=epoch)
+                    logger.save()
             pl_module.it_cfg.analysis_cfg.reset_op_state(epoch_boundary=True)
 
         def on_predict_end(self, trainer: Any, pl_module: Any) -> None:

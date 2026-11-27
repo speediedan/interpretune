@@ -28,6 +28,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+from interpretune.base.components.mixins import AnalysisStepMixin
+
 
 def _ops():
     from interpretune.analysis.inputs import OpStateSpec
@@ -101,6 +103,12 @@ class _Module(nn.Module):
         self.it_cfg = SimpleNamespace(profiler_cfg=SimpleNamespace(which=None))
         self.global_step, self.current_epoch, self.dtype, self.tokenizer = 1, 0, torch.float32, object()
         self.analysis_cfg = None
+
+    # the analysis-metric accumulator the loop resets, flushes and reports, as every analysis module has it
+    log_analysis = AnalysisStepMixin.log_analysis
+    reset_analysis_metrics = AnalysisStepMixin.reset_analysis_metrics
+    flush_analysis_metrics = AnalysisStepMixin.flush_analysis_metrics
+    analysis_metrics = AnalysisStepMixin.analysis_metrics
 
     def batch_to_device(self, batch):
         return batch
