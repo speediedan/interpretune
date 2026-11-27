@@ -147,7 +147,17 @@ if _LIGHTNING_AVAILABLE:
                         f" {type(result).__name__}, which is not an iterable of rows, so no AnalysisStore can be built"
                         " from it"
                     ) from err
+                # under a multi-process predict each row also says which rank and batch produced it
+                rank = getattr(self, "_it_analysis_row_rank", None)
                 for row in rows:
+                    if rank is not None:
+                        if not isinstance(row, Mapping):
+                            raise MisconfigurationException(
+                                f"the analysis step yielded a {type(row).__name__} row, but a multi-process"
+                                " AnalysisStore adds `rank` and `batch_idx` columns to each row, which needs mapping"
+                                " rows"
+                            )
+                        row = {**row, "rank": rank, "batch_idx": batch_idx}
                     writer.write(row)
             return True, result
 
@@ -197,6 +207,54 @@ if _LIGHTNING_AVAILABLE:
 
     from lightning.pytorch.callbacks import Callback
 
+    _ROW_ORIGIN_COLUMNS = ("rank", "batch_idx")
+    _NO_ROWS_MSG = (
+        "Trainer.predict produced no analysis rows, so there is no AnalysisStore to write (check"
+        " limit_predict_batches and the predict dataloader)."
+    )
+
+    def _merge_rank_shards(writer: Any, save_dir: Any) -> Any:
+        """Merge every rank's rows into the store at rank 0's ``save_dir``, and give every rank the merged store.
+
+        A collective: every rank calls it. Each rank closes its shard and reports it; a rank whose shard failed
+        reports the error instead, so every rank refuses together rather than waiting on a rank that has stopped.
+        Rank 0 orders the rows by ``batch_idx`` then ``rank``, keeping each batch's own row order, and saves them;
+        every rank then loads that store and removes its shard.
+        """
+        from contextlib import suppress
+
+        import torch.distributed as dist
+        from datasets import Dataset, concatenate_datasets, load_from_disk
+
+        error = None
+        try:
+            writer.finalize()
+        except Exception as err:  # reported to every rank below, so none waits on this one
+            error = f"{type(err).__name__}: {err}"
+            writer.abort()
+        try:
+            reports: list[Any] = [None] * dist.get_world_size()
+            dist.all_gather_object(reports, (str(writer.path), len(writer), error))
+            failed = [f"rank {rank}: {err}" for rank, (_, _, err) in enumerate(reports) if err]
+            if failed:
+                raise RuntimeError(f"A rank could not close its AnalysisStore shard: {'; '.join(failed)}")
+            if sum(rows for _, rows, _ in reports) == 0:
+                raise MisconfigurationException(_NO_ROWS_MSG)
+            shared = [str(save_dir)]
+            if dist.get_rank() == 0:
+                shards = [Dataset.from_file(path) for path, rows, _ in reports if rows]
+                laid = concatenate_datasets(shards)
+                origin = list(zip(laid["batch_idx"], laid["rank"]))
+                laid.select(sorted(range(len(laid)), key=lambda i: (*origin[i], i))).save_to_disk(shared[0])
+            dist.broadcast_object_list(shared, src=0)
+            dist.barrier()  # rank 0 has saved the merged store
+            merged = load_from_disk(shared[0])
+        finally:
+            with suppress(OSError):  # the merged store holds the rows now
+                writer.path.unlink(missing_ok=True)
+        assert isinstance(merged, Dataset)
+        return merged.with_format("interpretune", **writer.it_format_kwargs)
+
     class AnalysisStoreCallback(Callback):
         """Write an analysis composition's ``AnalysisStore`` from a ``Trainer.predict`` run.
 
@@ -211,8 +269,20 @@ if _LIGHTNING_AVAILABLE:
         ``writer_batch_size`` rather than its length. ``Trainer.predict`` still keeps every batch's outputs to return
         them unless it is called with ``return_predictions=False``, which a long run should pass.
 
-        Scope: predict in one process. A module without an analysis config and op, a multi-process predict, and a run
-        that yields no rows are each refused by name. A run that raises leaves no partial store behind.
+        Under a multi-process ``Trainer`` (``ddp``, ``fsdp`` and the other strategies whose predict sampler gives each
+        process a disjoint share of the examples) each rank writes the rows of its own batches to a shard, and rank 0
+        merges the shards into the store, which every rank then loads. A rank's batch holds different examples from a
+        one-process run's batch (the sampler deals examples out in turn), so the store cannot match a one-process store
+        row for row. Each row carries two more columns instead: ``rank`` and ``batch_idx``, the process and the
+        process's batch that produced it, and the rows are ordered by ``batch_idx`` then ``rank``. The ``log_analysis``
+        values of every rank are pooled before they are averaged, so the logged metrics are the one-process averages.
+        Rank 0 reads the other ranks' shards from their cache directories, so ranks on several hosts need a filesystem
+        they share.
+
+        Refused by name: a module without an analysis config and op, a run that yields no rows, and, under several
+        processes, a predict sampler that does not split the examples across all of them, more than one predict
+        dataloader, an op declaring cross-batch ``op_state``, and an op whose output already has a ``rank`` or
+        ``batch_idx`` field. A run that raises leaves no partial store behind.
 
         Args:
             writer_batch_size: How many rows the writer buffers before each flush to disk. ``None`` (default) keeps the
@@ -236,26 +306,66 @@ if _LIGHTNING_AVAILABLE:
                     " analysis config with an op. Set `analysis_cfg` on the module, or drop the callback."
                 )
             if trainer.world_size > 1:
-                raise MisconfigurationException(
-                    f"AnalysisStoreCallback builds the AnalysisStore in one process, but this Trainer runs"
-                    f" {trainer.world_size} processes, whose rows the store would miss. Run the analysis predict on"
-                    " one device."
-                )
+                self._check_distributed_run(trainer, analysis_cfg)
             from interpretune.base.call import _call_itmodule_hook
             from interpretune.runners.analysis import AnalysisRowWriter, dataset_features_and_format
 
             pl_module._ensure_analysis_setup()  # runs before the module's own predict-start hook
+            features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
+            pl_module._it_analysis_row_rank = None
+            if trainer.world_size > 1:
+                from datasets import Value
+
+                if clashing := sorted(set(features) & set(_ROW_ORIGIN_COLUMNS)):
+                    raise MisconfigurationException(
+                        f"A multi-process AnalysisStore adds {list(_ROW_ORIGIN_COLUMNS)} columns to every row, but the"
+                        f" op's output already has {clashing}. Run the analysis predict on one device, or rename the"
+                        " op's field."
+                    )
+                if features:  # without features the writer infers every column, these two included
+                    features = {**features, "rank": Value("int32"), "batch_idx": Value("int64")}
+                pl_module._it_analysis_row_rank = trainer.global_rank
             # the run boundary of declared op state, as `AnalysisRunner` owns it: a second predict starts clean
             analysis_cfg.reset_op_state()
             _call_itmodule_hook(pl_module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
             pl_module.reset_analysis_metrics()
-            features, it_format_kwargs, _ = dataset_features_and_format(pl_module, {})
             pl_module._it_analysis_row_writer = AnalysisRowWriter(
                 features,
                 cache_dir=analysis_cfg.output_store.cache_dir,
                 it_format_kwargs=it_format_kwargs,
                 writer_batch_size=self.writer_batch_size,
             )
+
+        @staticmethod
+        def _check_distributed_run(trainer: Any, analysis_cfg: Any) -> None:
+            """Refuse a multi-process predict whose rows the merged store could not account for."""
+            from torch.utils.data import DistributedSampler
+
+            from interpretune.runners.analysis import declared_op_states
+
+            loaders = trainer.predict_dataloaders
+            loaders = list(loaders) if isinstance(loaders, (list, tuple)) else [loaders]
+            if len(loaders) != 1:
+                raise MisconfigurationException(
+                    f"A multi-process AnalysisStore orders its rows by batch index, which restarts with each predict"
+                    f" dataloader, but this predict has {len(loaders)}. Predict over one dataloader."
+                )
+            # Lightning wraps a predict loader's batch sampler to track indices; the sampler it shards with is inside
+            sampler = getattr(getattr(loaders[0], "batch_sampler", None), "sampler", None)
+            if not isinstance(sampler, DistributedSampler) or sampler.num_replicas != trainer.world_size:
+                found = f"{sampler.num_replicas} shares" if isinstance(sampler, DistributedSampler) else "no shares"
+                raise MisconfigurationException(
+                    f"A multi-process AnalysisStore needs each of the Trainer's {trainer.world_size} processes to"
+                    f" analyze its own share of the examples, but the predict sampler makes {found}"
+                    f" ({type(sampler).__name__}), so the store would repeat or miss examples. Keep"
+                    " `use_distributed_sampler=True` and a strategy that splits the data across every process."
+                )
+            if names := declared_op_states(analysis_cfg.op):
+                raise MisconfigurationException(
+                    f"Under a multi-process Trainer each process analyzes its own share of the examples, but"
+                    f" {', '.join(names)} declare cross-batch `op_state`, which would accumulate over one process's"
+                    " share only. Run this op's predict on one device."
+                )
 
         def on_predict_epoch_end(self, trainer: Any, pl_module: Any) -> None:
             """Run the analysis epoch end hook, report the epoch's ``log_analysis`` metrics to the Trainer's
@@ -270,6 +380,10 @@ if _LIGHTNING_AVAILABLE:
             _call_itmodule_hook(
                 pl_module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks"
             )
+            if trainer.world_size > 1:
+                from interpretune.runners.analysis import pool_analysis_metrics
+
+                pool_analysis_metrics(pl_module)  # each rank's values cover its own examples only
             metrics = pl_module.flush_analysis_metrics()
             if metrics:
                 epoch = len(pl_module.analysis_metrics) - 1
@@ -285,18 +399,19 @@ if _LIGHTNING_AVAILABLE:
             from interpretune.base.call import _call_itmodule_hook
 
             writer, pl_module._it_analysis_row_writer = pl_module._it_analysis_row_writer, None
+            pl_module._it_analysis_row_rank = None
+            output_store = pl_module.it_cfg.analysis_cfg.output_store
             try:
+                if trainer.world_size > 1:
+                    output_store.dataset = _merge_rank_shards(writer, Path(output_store.save_dir))
+                    return
                 try:
                     if len(writer) == 0:
-                        raise MisconfigurationException(
-                            "Trainer.predict produced no analysis rows, so there is no AnalysisStore to write (check"
-                            " limit_predict_batches and the predict dataloader)."
-                        )
+                        raise MisconfigurationException(_NO_ROWS_MSG)
                     dataset = writer.finalize()
                 except BaseException:
                     writer.abort()
                     raise
-                output_store = pl_module.it_cfg.analysis_cfg.output_store
                 dataset.save_to_disk(Path(output_store.save_dir))
                 output_store.dataset = dataset
             finally:
@@ -313,7 +428,7 @@ if _LIGHTNING_AVAILABLE:
             """
             writer = getattr(pl_module, "_it_analysis_row_writer", None)
             if writer is not None:
-                pl_module._it_analysis_row_writer = None
+                pl_module._it_analysis_row_writer = pl_module._it_analysis_row_rank = None
                 writer.abort()
                 pl_module.it_cfg.analysis_cfg.finalize_op_state()
 
