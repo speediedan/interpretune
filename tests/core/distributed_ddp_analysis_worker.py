@@ -13,7 +13,8 @@ Runs of ``core_analysis_loop``:
 - ``shuffled``: a shuffled loader over two epochs. Both ranks return the same merged store, every example once per
   epoch, with batch indices in order.
 - ``limited``: ``limit_analysis_batches=3`` keeps the first three batches of the whole sequence.
-- Refusals: an op declaring ``op_state``, and a deterministic ``dataset_fingerprint``.
+- Refusal: a deterministic ``dataset_fingerprint``. Ops declaring ``op_state`` are checked in
+  ``distributed_ddp_op_state_worker.py``.
 
 The step records its output with ``log_analysis``, so each run's ``analysis_metrics`` (per epoch) are recorded too:
 every rank's equal the one-process run's, although each rank analyzed only its own batches.
@@ -130,12 +131,6 @@ def main() -> None:
     limited = analysis.core_analysis_loop(module, _DataModule(shuffle=False), limit_analysis_batches=3, dist_run=run)
     record["limited"] = _rows(limited)
     refusals = {}
-    module.analysis_cfg.op = SimpleNamespace(name="running_mean", op_state={"scope": "run"})
-    try:
-        analysis.core_analysis_loop(module, _DataModule(shuffle=False), dist_run=run)
-    except MisconfigurationException as err:
-        refusals["op_state"] = str(err)
-    module.analysis_cfg.op = None
     module.analysis_cfg.output_store = _Store(root / "keyed")
     try:
         analysis.core_analysis_loop(module, _DataModule(shuffle=False), dist_run=run, dataset_fingerprint="k")

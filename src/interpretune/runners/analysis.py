@@ -22,6 +22,7 @@ from interpretune.runners.distributed import (
     gathered_weights,
     gradient_sync_off,
 )
+from interpretune.analysis.share_exec import ShareExecution, plan_share_execution, share_execution
 from interpretune.utils import MisconfigurationException
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol, TestLoadable
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
@@ -57,14 +58,6 @@ def merged_row_order(logs: list[list[tuple[int, int, int]]]) -> list[int]:
             keyed.extend(((epoch, batch_idx, i), offset + i) for i in range(rows))
             offset += rows
     return [position for _, position in sorted(keyed)]
-
-
-def declared_op_states(op: Any) -> list[str]:
-    """The names of ``op`` and its member ops (a composite's) that declare cross-batch ``op_state``."""
-    if op is None:
-        return []
-    members = getattr(op, "composition", None) or [op]
-    return [getattr(member, "name", str(member)) for member in members if getattr(member, "op_state", None) is not None]
 
 
 def analysis_store_generator(
@@ -778,6 +771,8 @@ def _merge_shares(
     it_format_kwargs: dict,
     dist_run: DistributedRun,
     share_log: ShareLog,
+    module: Any = None,
+    plan: ShareExecution | None = None,
 ) -> Dataset:
     """Put the ranks' shares of the store back in single-process order, and give every rank the merged store.
 
@@ -785,6 +780,10 @@ def _merge_shares(
     shares end to end, orders the rows by their batches (:func:`merged_row_order`) and saves the merged store, which
     every rank then loads. Each rank removes its share once the merged store is saved. Ranks on several hosts need a
     filesystem they share.
+
+    With a ``plan`` whose op is replayed, each rank also reports the inputs it recorded for the op, and rank 0 runs
+    the op again over them in one-process order and rewrites its output columns before saving
+    (:func:`~interpretune.analysis.share_exec.replay_rows`).
     """
     import shutil
 
@@ -794,13 +793,19 @@ def _merge_shares(
     assert dataset is not None
     share_dir = save_dir.with_name(f"{save_dir.name}.share{dist_run.data_index}")
     dataset.save_to_disk(share_dir)
+    # a manual analysis step never calls the configured op, so it records nothing and nothing is replayed
+    replaying = plan is not None and plan.replay_op is not None and bool(plan.recorded)
+    recorded = plan.recorded if replaying and plan is not None else {}
     reports: list[Any] = [None] * dist_run.world_size
-    dist.all_gather_object(reports, (str(share_dir), share_log.batches))
+    dist.all_gather_object(reports, (str(share_dir), share_log.batches, recorded))
     if dist_run.rank == 0:
-        shares = [load_from_disk(path) for path, _ in reports]
+        shares = [load_from_disk(path) for path, _, _ in reports]
         assert all(isinstance(share, Dataset) for share in shares)
         laid = concatenate_datasets(shares)  # pyright: ignore[reportArgumentType]  # Datasets, checked above
-        laid.select(merged_row_order([entries for _, entries in reports])).save_to_disk(save_dir)
+        merged_out = laid.select(merged_row_order([entries for _, entries, _ in reports]))
+        if replaying and plan is not None:
+            merged_out = _replayed(merged_out, module, plan, reports)
+        merged_out.save_to_disk(save_dir)
     shared = [str(save_dir)]
     dist.broadcast_object_list(shared, src=0, device=torch.device("cpu"))
     dist.barrier()
@@ -838,17 +843,54 @@ def pool_analysis_metrics(module: Any, contribute: bool = True) -> None:
     module.__dict__["_pending_analysis_metrics"] = pooled
 
 
-def _refuse_op_state(module: Any, dist_run: DistributedRun) -> None:
-    """Refuse an op whose state accumulates across batches under a placement that shares the batches out: each
-    rank's state would see only its own batches."""
-    op = getattr(getattr(module, "analysis_cfg", None), "op", None)
-    if names := declared_op_states(op):
+def _replayed(merged: Dataset, module: Any, plan: ShareExecution, reports: list[Any]) -> Dataset:
+    """``merged`` with the replay op's output columns rewritten from its replay in one-process order."""
+    from interpretune.analysis.share_exec import replay_rows
+
+    entries = sorted(entry for _, batches, _ in reports for entry in batches)
+    if any(rows != 1 for _, _, rows in entries):
         raise MisconfigurationException(
-            f"Under placement {dist_run.placement!r} each rank analyzes its own share of the batches, but"
-            f" {', '.join(names)} declare cross-batch `op_state`, which would accumulate over one rank's share only."
-            " Merging op state across ranks is not yet supported (interpretune#803): run this op under 'single' or"
-            " 'tp'."
+            f"Replaying {plan.replay_op!r} after the shares are merged needs one row per batch, but some batches"
+            " yielded another number."
         )
+    recorded = {key: value for _, _, rank_recorded in reports for key, value in rank_recorded.items()}
+    order = [(epoch, batch_idx) for epoch, batch_idx, _ in entries]
+    rows = replay_rows(module, module.analysis_cfg, plan, recorded, order)
+
+    def rewrite(row: dict, index: int) -> dict:
+        return {**row, **rows[order[index]]}
+
+    return merged.with_format(None).map(rewrite, with_indices=True, features=merged.features)
+
+
+def _prefix_pass(module: Any, datamodule: Any, plan: ShareExecution, dist_run: DistributedRun, kwargs: dict) -> None:
+    """Run the composition up to its last consumed stateful op over the whole batch sequence, in one-process order,
+    keeping the outputs of the batches this rank takes (:func:`~interpretune.analysis.share_exec.prefix_pass`).
+
+    Every rank runs it alike, so no rank sends another its prefix outputs; the prefix is the cheap part when it reads
+    an input store, as ``concept_direction`` does. State starts fresh, resets at epoch boundaries as the op asks, and
+    is cleared again afterwards, so generation starts from fresh state as it would without a prefix.
+    """
+    from interpretune.analysis.execution import execute_analysis_op
+    from interpretune.analysis.share_exec import prefix_pass
+
+    cfg = module.analysis_cfg
+    loader = distributed_dataloader(datamodule.test_dataloader(), dist_run, share_batches=True, whole_sequence=True)
+    limit = int(kwargs.get("limit_analysis_batches", -1))
+    cfg.reset_op_state()
+    with prefix_pass(plan):
+        for epoch_idx in range(int(kwargs.get("max_epochs", 1))):
+            module.current_epoch = epoch_idx
+            if (set_epoch := getattr(getattr(loader, "batch_sampler", None), "set_epoch", None)) is not None:
+                set_epoch(epoch_idx)
+            for batch_idx, batch in enumerate(loader):
+                if batch_idx >= limit >= 0:
+                    break
+                prefix = execute_analysis_op(module, module.batch_to_device(batch), batch_idx, analysis_cfg=cfg)
+                if batch_idx % dist_run.data_shares == dist_run.data_index:
+                    plan.prefix_outputs[(epoch_idx, batch_idx)] = prefix
+            cfg.reset_op_state(epoch_boundary=True)
+    cfg.reset_op_state()
 
 
 def core_analysis_loop(
@@ -878,13 +920,27 @@ def core_analysis_loop(
     # the end hook restores it, but an op raising inside dataset generation used to skip the end hook and leak the
     # state into whatever ran next. Restoring in a `finally` leaves the process as the run found it on every exit.
     shared_out = dist_run is not None and dist_run.data_shares > 1
+    plan = None
     if dist_run is not None and shared_out:
-        _refuse_op_state(module, dist_run)
+        op = getattr(getattr(module, "analysis_cfg", None), "op", None)
+        plan = plan_share_execution(op) if op is not None else None
     share_log = ShareLog() if shared_out else None
     grad_enabled_before = torch.is_grad_enabled()
     _call_itmodule_hook(module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
     try:
-        with gathered_weights(), gradient_sync_off(module) if shared_out else contextlib.nullcontext():
+        with (
+            gathered_weights(),
+            gradient_sync_off(module) if shared_out else contextlib.nullcontext(),
+            share_execution(plan),
+        ):
+            if plan is not None and plan.prefix_end is not None and dist_run is not None:
+                _prefix_pass(
+                    module,
+                    datamodule,
+                    plan,
+                    dist_run,
+                    {"limit_analysis_batches": limit_analysis_batches, "max_epochs": max_epochs},
+                )
             # Generate features and format parameters
             features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
 
@@ -906,7 +962,7 @@ def core_analysis_loop(
 
             save_dir = Path(module.analysis_cfg.output_store.save_dir)  # protocol provides output_store
             if dist_run is not None and share_log is not None:
-                dataset = _merge_shares(dataset, save_dir, it_format_kwargs, dist_run, share_log)
+                dataset = _merge_shares(dataset, save_dir, it_format_kwargs, dist_run, share_log, module, plan)
             else:
                 dataset = _share_store(dataset, save_dir, it_format_kwargs, dist_run)
             # Assign dataset to analysis store

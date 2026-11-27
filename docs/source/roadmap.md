@@ -94,7 +94,7 @@ tracked in [#1008](https://github.com/interpretune/interpretune/issues/1008). Th
   to assess counterfactuals via their own latent states.
 - **Meta-latent interfaces**: SAE meta-latents (and successors) as decomposition levels in a
   human/machine world model interface.
-- **Multimodal world models**: extending beyond the LLM-focused MVP.
+- **Multimodal model support**: extending beyond the LLM-focused MVP.
 
 ## Considered (not MVP-blocking)
 

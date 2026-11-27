@@ -23,7 +23,7 @@ class TestComponentManifest:
     def test_in_repo_manifest_validates(self):
         manifest = load_component_manifest(rte_component_source() / "it_component.yaml")
         assert manifest["kinds"] == ["module", "datamodule"]
-        assert len(manifest["module"]["configs"]) == 16
+        assert len(manifest["module"]["configs"]) == 17
 
     def test_schema_version_is_mandatory(self):
         with pytest.raises(ComponentManifestError, match="it_schema_version"):
