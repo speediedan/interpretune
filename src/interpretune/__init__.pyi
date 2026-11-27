@@ -462,6 +462,13 @@ def head_loadings(
         head_loading_bypass_shares (float32)
         head_loading_total (float32)
         head_loading_partition_errors (float32)
+        head_loading_feature_nodes (int64)
+        head_loading_feature_edges (float32)
+        head_loading_error_edges (float32)
+        head_loading_embedding_edges (float32)
+        head_loading_head_edges (float32)
+        head_loading_bypass_edges (float32)
+        head_loading_regime_json (string)
     """
     ...
 
