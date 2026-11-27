@@ -560,6 +560,7 @@ def place_module(
     fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None,
     fsdp_default_kwargs: Mapping[str, Any] | None = None,
     tp_plan: Mapping[str, Mapping[str, Any]] | None = None,
+    shard_latents: bool = False,
 ) -> None:
     """Agree on each rank's device, build the mesh and shard or parallelize ``module`` in place as
     ``run.placement`` asks.
@@ -574,7 +575,8 @@ def place_module(
     sharded (or, under ``tp``, split) as it is, materialized on each rank's device with ``to_empty``, and then loaded
     from rank 0's CPU copy of the checkpoint (see :func:`_load_from_rank0`) or from its files, so no rank ever holds
     the whole model on its accelerator. What is attached beside the model (a latent model, an intervention) is built
-    with its values, which are kept across the materialization, rank 0's on every rank.
+    with its values, which are kept across the materialization, rank 0's on every rank. Under ``tp`` it stays whole
+    on every rank unless ``shard_latents`` shards it across them (see :func:`_shard_latent_storage`).
 
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
@@ -593,6 +595,8 @@ def place_module(
     run.devices = _check_devices(per_rank, run.placement)
     if run.placement == "tp":
         _place_tensor_parallel(module, run, tp_plan, on_meta)
+        if shard_latents:
+            _shard_latent_storage(module, run.mesh)
         _refresh_tensor_references(module)
         return
     _refuse_unshardable(module, run.placement)
@@ -924,6 +928,53 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
             " than through its forward, so FSDP2 gathers their parameters only if each is its own unit. Add"
             f" {', '.join(f'`class:{cls}`' for cls in sorted(missing))} to `fsdp_plan`."
         )
+
+
+def _shard_latent_storage(module: torch.nn.Module, mesh: Any) -> list[str]:
+    """Shard the latent models the ``tp`` plan left whole across its ranks as FSDP2 storage, each gathered whole
+    around every call that reads it.
+
+    A unit is each submodule the composition calls directly (``fsdp_direct_calls()``: a circuit-tracer transcoder
+    set's per-layer transcoders) and each attached latent model (``latent_models``), when it holds parameters and the
+    plan split none of them; the base model, whose layers the plan splits, is left as it is. Every rank of a ``tp`` run
+    makes every call together, so each call's all-gather is collective, as the split layers' are. Each unit reshards
+    when its outermost call returns (``reshard_after_forward=True``: FSDP2 would otherwise keep a unit with no sharded
+    parent whole after its first call), so a rank holds its shard of every unit and, during a call, one unit whole. A
+    declared unit inside another (a transcoder's activation function, which the set also calls directly) is left
+    whole on every rank, and so are its parameters: it is small, and a nested unit initialized first would stop its
+    parent's lazy initialization. A unit's gradients are averaged over the ranks, which computed them alike.
+
+    Returns:
+        The units sharded, by name.
+    """
+    from torch.distributed.fsdp import fully_shard, register_fsdp_forward_method
+    from torch.distributed.tensor import DTensor
+
+    declare = getattr(module, "fsdp_direct_calls", None)
+    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # pyright: ignore[reportArgumentType]
+    held: Mapping[str, torch.nn.Module] = getattr(module, "latent_models", None) or {}
+    entries += [(name, latent, ("encode", "decode")) for name, latent in held.items()]
+    units: dict[int, tuple[str, torch.nn.Module, tuple[str, ...]]] = {}
+    for name, submodule, methods in entries:
+        params = list(submodule.parameters())
+        if params and not any(isinstance(param, DTensor) for param in params) and id(submodule) not in units:
+            units[id(submodule)] = (name, submodule, methods)
+    inner = {
+        id(child)
+        for _, submodule, _ in units.values()
+        for child in submodule.modules()
+        if child is not submodule and id(child) in units
+    }
+    sharded = []
+    for key, (name, submodule, methods) in units.items():
+        if key in inner:
+            continue
+        nested = [child for child in submodule.modules() if child is not submodule and id(child) in units]
+        ignored = {param for child in nested for param in child.parameters()}
+        fully_shard(submodule, mesh=mesh, reshard_after_forward=True, ignored_params=ignored or None)
+        _register_forward_methods(submodule, methods, register_fsdp_forward_method)
+        sharded.append(name)
+    return sharded
 
 
 def _register_forward_methods(submodule: torch.nn.Module, methods: Sequence[str], register: Any) -> None:

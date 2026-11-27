@@ -125,6 +125,11 @@ def register_addressed_model(frozen: bool) -> None:
     TestITModule.register_tunable_modules = register_tunable_modules
 
 
+def whole(param: torch.Tensor) -> torch.Tensor:
+    """A parameter's whole value, gathered when it is sharded across the ranks."""
+    return (param.full_tensor() if hasattr(param, "full_tensor") else param).detach()
+
+
 def full_probe_params(module: nn.Module) -> dict[str, list[float]]:
     """The attached latent model's parameters, gathered: each rank holds a shard of a split one."""
     return {
@@ -178,6 +183,7 @@ def main() -> None:
     parser.add_argument("--out-name", default=None, help="output record stem (default: <placement>)")
     parser.add_argument("--latent-site", default=None, help="splice a latent model at this module path")
     parser.add_argument("--transcoder-site", default=None, help="splice a transcoder over this module")
+    parser.add_argument("--shard-latents", action="store_true", help="under 'tp', shard latent models across ranks")
     parser.add_argument("--intervention-site", default=None, help="add a learned vector to this block's output")
     parser.add_argument(
         "--addressed",
@@ -294,6 +300,7 @@ def main() -> None:
         fsdp_plan=args.fsdp_plan,
         fsdp_default_kwargs=args.fsdp_default_kwargs,
         tp_plan=args.tp_plan,
+        shard_latents=args.shard_latents,
         resume_from=args.resume_from,
     )
     out_path = out_dir / f"{args.out_name or args.placement}_rank{rank}.json"
@@ -308,7 +315,11 @@ def main() -> None:
 
     module = it_session.module
     # after placement, so every rank holds rank 0's broadcast weights
-    latent_init = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()} if latent else None
+    latent_init = {n: whole(p).flatten().tolist() for n, p in latent.named_parameters()} if latent else None
+    # this rank's shard of each latent parameter `shard_latents` shards, by shape
+    latent_shards = (
+        {n: list(p.to_local().shape) for n, p in latent.named_parameters() if hasattr(p, "to_local")} if latent else {}
+    )
     param_types = sorted({type(p).__name__ for p in module.parameters()})
     fsdp_units = [name for name, sub in module.named_modules() if isinstance(sub, FSDPModule)]
     unit_policies = unit_settings(module) if args.fsdp_default_kwargs else {}
@@ -337,9 +348,10 @@ def main() -> None:
     }
     if args.device_type == "cuda":
         record["peak_allocated_gb"] = torch.cuda.max_memory_allocated() / 2**30
-    if latent is not None:  # whole on every rank: a latent model is never split
-        record["latent_params"] = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()}
+    if latent is not None:  # whole on every rank, or gathered from the shards `shard_latents` gives each rank
+        record["latent_params"] = {n: whole(p).flatten().tolist() for n, p in latent.named_parameters()}
         record["latent_init"] = latent_init
+        record["latent_shards"] = latent_shards
     if intervention is not None:  # gathered: each rank holds a shard of a split operand
         record["intervention_params"] = {
             n: (p.full_tensor() if hasattr(p, "full_tensor") else p).detach().flatten().tolist()

@@ -133,6 +133,12 @@ class TestResolvePlacement:
         session = MagicMock()
         assert AnalysisRunnerCfg(it_session=session, placement=placement).placement == placement
 
+    @pytest.mark.parametrize("placement", ["single", "ddp", "fsdp2"])
+    def test_shard_latents_is_for_tp_only(self, placement):
+        with pytest.raises(MisconfigurationException, match=f"but the placement is '{placement}'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement, shard_latents=True)
+        assert AnalysisRunnerCfg(it_session=MagicMock(), placement="tp", shard_latents=True).shard_latents
+
 
 class TestDistributedDataloader:
     def test_sequential_loader_is_strided_by_rank(self):
@@ -949,11 +955,13 @@ def test_two_rank_phased_tp_resume_across_the_transition_matches(phased_shared_b
 TRANSCODER = ("--transcoder-site", "model.layers.0.feed_forward")
 
 
-def _phased_transcoder_records(out_dir: Path, devices: tuple[str, str] = ("", "")) -> tuple[dict, list[dict]]:
+def _phased_transcoder_records(
+    out_dir: Path, devices: tuple[str, str] = ("", ""), *extra: str
+) -> tuple[dict, list[dict]]:
     """The one-process reference (on ``devices[0]``) and the two tensor-parallel ranks (on ``devices[1]``) of a
     phased run that tunes the transcoder first, then everything else."""
     _launch("single", out_dir, "--world-size", "1", "--phased", *TRANSCODER, devices=devices[0])
-    _launch("tp", out_dir, *FFN_TP_PLAN, "--phased", *TRANSCODER, devices=devices[1])
+    _launch("tp", out_dir, *FFN_TP_PLAN, "--phased", *TRANSCODER, *extra, devices=devices[1])
     reference = json.loads((out_dir / "single_rank0.json").read_text(encoding="utf-8"))
     return reference, [json.loads((out_dir / f"tp_rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
 
@@ -978,10 +986,23 @@ def _check_phased_transcoder(reference: dict, records: list[dict]) -> None:
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
-def test_two_rank_tp_tunes_a_spliced_transcoder_in_phases_like_one_process(tmp_path):
+@pytest.mark.parametrize("shard_latents", [False, True], ids=["whole_latents", "sharded_latents"])
+def test_two_rank_tp_tunes_a_spliced_transcoder_in_phases_like_one_process(tmp_path, shard_latents):
     """Two tensor-parallel ranks tune a transcoder spliced over a split feed-forward, then the whole model, and
-    match one process step for step, with the same transcoder weights on every rank."""
-    _check_phased_transcoder(*_phased_transcoder_records(tmp_path))
+    match one process step for step, with the same transcoder weights on every rank.
+
+    With ``shard_latents`` each rank holds half of each transcoder weight, gathered around every call, and its
+    gradients are averaged over the ranks, which computed them alike: the run still matches one process.
+    """
+    reference, records = _phased_transcoder_records(
+        tmp_path, ("", ""), *(("--shard-latents",) if shard_latents else ())
+    )
+    _check_phased_transcoder(reference, records)
+    for record in records:
+        shards = record["latent_shards"]
+        assert bool(shards) == shard_latents
+        for name, shape in shards.items():
+            assert shape[0] * 2 == len(reference["latent_params"][name]) // math.prod(shape[1:]), name
 
 
 @RunIf(min_cuda_gpus=2, min_gpu_mem_gb=1.5)
@@ -1534,8 +1555,10 @@ def _launch_tp_ct(out_dir: Path, *extra: str) -> list[dict]:
         ((), "model.layers"),
         (("--meta",), "model.layers"),
         (("--arch", "gemma3"), "model.language_model.layers"),
+        (("--shard-latents",), "model.layers"),
+        (("--meta", "--shard-latents"), "model.layers"),
     ],
-    ids=["loaded", "meta_init", "gemma3"],
+    ids=["loaded", "meta_init", "gemma3", "sharded_transcoders", "meta_init_sharded_transcoders"],
 )
 def test_two_rank_tp_attributes_like_one_process(tmp_path, extra, layers):
     """A circuit-tracer composition whose base model ``tp`` split by its declared plan gives the graph, and the
@@ -1543,9 +1566,19 @@ def test_two_rank_tp_attributes_like_one_process(tmp_path, extra, layers):
 
     The calls that read inside a split layer or a split weight are refused before they start. A model built on the meta
     device gives the same, which needs the unembedding circuit-tracer resolved at its build to be refreshed. So does a
-    multimodal Gemma 3, whose query and key norms the plan leaves whole.
+    multimodal Gemma 3, whose query and key norms the plan leaves whole. So do transcoders sharded across the ranks
+    (``shard_latents``), each rank holding half of every transcoder parameter once the readings are done.
     """
+    sharded = "--shard-latents" in extra
     for record in _launch_tp_ct(tmp_path / "placed", *extra):
+        shards = record["sharded_transcoder_params"]
+        assert bool(shards) == sharded
+        if sharded:
+            # every transcoder weight and bias, resharded after the calls that gathered it; the toy's are 32 wide
+            assert {name.rsplit(".", 1)[1] for name in shards} == {"W_enc", "W_dec", "b_enc", "b_dec"}
+            assert all(shape[0] == (16 if name.rsplit(".", 1)[1] != "b_dec" else 4) for name, shape in shards.items())
+            # one rank's shard of a transcoder decoder changes every rank's graph: the gathered decoder is read
+            assert record["transcoder_control_differs"]
         assert record["split_params"] == sorted(
             f"hf_model.{layers}.{i}.{proj}.weight"
             for i in range(3)

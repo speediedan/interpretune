@@ -889,6 +889,7 @@ class SessionRunner:
             self.run_cfg.fsdp_plan,
             self.run_cfg.fsdp_default_kwargs,
             tp_plan=self.run_cfg.tp_plan,
+            shard_latents=self.run_cfg.shard_latents,
         )
         it_configure_optimizers(self.run_cfg.module)
         step_per_tensor(self.run_cfg.module.optimizers or (), self.dist_run)

@@ -149,12 +149,44 @@ gets the same graph. Every rank makes every call, since the forward and backward
 
 - Set `circuit_tracer_cfg.tune_base: true`. It registers the base model, whose layers the plan selects; a composition
   without it is refused.
-- Every rank holds the whole transcoders. A composition over nnsight can build the base model on the meta device
+- Every rank holds the whole transcoders, unless `shard_latents: true` shards them across the ranks (next
+  subsection). A composition over nnsight can build the base model on the meta device
   (`hf_from_pretrained_cfg.meta_init`), so that no rank holds the whole model on its accelerator; its transcoders are
   then loaded eagerly, and rank 0 loads both on its host.
 - `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
   weight, or a head inside a split layer.
-- The analysis runner takes `placement: tp` too (next section), so an analysis op can attribute a split model.
+- The analysis runner takes `placement: tp` too (below), so an analysis op can attribute a split model.
+
+### Sharding latent models under `tp`
+
+A plan splits the base model's layers, and leaves whole what it does not select: a circuit-tracer composition's
+transcoders, and latent models attached with `tuning.latents`. Their size can rival the base model's (a per-layer
+transcoder set holds two weights of `d_transcoder` by `d_model` per layer), so `shard_latents: true` shards them across
+the ranks as FSDP2 storage instead:
+
+```yaml
+run_cfg:
+  placement: tp
+  shard_latents: true
+```
+
+- Each unit is one per-layer transcoder, or one attached latent model, sharded along its first dimension over the
+  plan's mesh. A rank holds its share of every unit, and gathers a unit whole around each call that reads it: the
+  methods circuit-tracer calls directly (`encode`, `decode`, `encode_sparse`, `decode_sparse`, `compute_skip`,
+  `_get_decoder_vectors`) and a latent model's `encode` and `decode`. The unit is resharded as the outermost call
+  returns, so at most one unit is whole at a time.
+- Every rank makes every call, as it does for the split layers, so each gather is collective and the readings equal the
+  unsharded run's: an attribution graph, with `offload='cpu'` and live attention, and feature interventions.
+- A transcoder's activation function (a JumpReLU's threshold) stays whole on every rank: it is small, and circuit-tracer
+  calls it on its own.
+- Under training, a sharded unit's gradients are averaged over the ranks, which computed them alike, so tuning a
+  sharded transcoder matches one process step for step.
+- Each rank still builds or loads the whole latent models before they are sharded; the saving holds from placement
+  on. A lazily loaded transcoder weight is read from its file rather than held, so only the parameters it does hold
+  are sharded.
+
+`shard_latents` is refused under any other placement: `fsdp2` shards latent models through `fsdp_plan`, and `ddp`
+replicates by design.
 
 ### The analysis runner under `tp`
 
@@ -174,7 +206,7 @@ runner places the module as the core loops do, and then:
   inside split attention layers.
 
 Every rank must take the same data-dependent branches, so seed every rank alike. Transcoders and other latent models
-are whole on every rank, as in the core loops.
+are whole on every rank, as in the core loops, unless `shard_latents` shards them (above).
 
 ### The analysis runner under `ddp`
 
@@ -508,7 +540,6 @@ its tensors are artifacts until then).
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
   (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
-The design, and the work that remains for the analysis runner (sharded transcoders and latent models, and FSDP2 shard
-dimensions above one), is tracked in
+The design, and the work that remains for the analysis runner (FSDP2 shard dimensions above one), is tracked in
 [interpretune#803](https://github.com/interpretune/interpretune/issues/803). Splitting one prompt's attribution across
 ranks is [interpretune#1274](https://github.com/interpretune/interpretune/issues/1274).
