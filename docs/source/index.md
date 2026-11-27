@@ -12,7 +12,7 @@ Interpretune is a (pre-MVP) AI latent model analysis framework. It strives to pr
 
 By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative latent model analysis and tuning with PyTorch.
 
-Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. Today it works with **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them. They are the route to world model analysis rather than the same thing.
+Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. As a step toward that, it today operates over **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them.
 
 That composability and shareability serve one aim: to **broaden the shoulders of giants**. An analysis operation, an intervention op or a component that one researcher writes and registers (in a federated registry such as venngram's ops, or as a Hub collection) is one any other researcher, or agent, can compose, rerun and extend.
 
