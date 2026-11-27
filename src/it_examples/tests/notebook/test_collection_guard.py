@@ -29,10 +29,11 @@ def test_relocated_notebook_test_count_pinned():
         for line in result.stdout.splitlines()
         if line.startswith(prefix) and "::" in line and "test_collection_guard" not in line
     ]
-    # 4 local-graph-cleanup tests: the concept-direction experiment tests moved out with
+    # 5 local-graph-cleanup tests: the concept-direction experiment tests moved out with
     # src/it_examples/experiments/ (the experiment is Hub-published now), leaving only the
-    # graph-cleanup tests under this root. This guard file's own additions excluded.
-    assert len(collected) == 4, (
-        f"relocated notebook test count changed: {len(collected)} != 4 — if deliberate, update this pin; "
+    # graph-cleanup tests under this root, which gained the database-resolution test. This guard file's own
+    # additions excluded.
+    assert len(collected) == 5, (
+        f"relocated notebook test count changed: {len(collected)} != 5 — if deliberate, update this pin; "
         f"if not, a move or conftest change silently dropped tests.\n" + "\n".join(collected[:10])
     )
