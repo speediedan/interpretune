@@ -176,6 +176,25 @@ runner places the module as the core loops do, and then:
 Every rank must take the same data-dependent branches, so seed every rank alike. Transcoders and other latent models
 are whole on every rank, as in the core loops.
 
+### The analysis runner under `ddp`
+
+`placement: ddp` (FSDP2 replication: `fully_shard` over a `(replicate, shard)` mesh whose shard dimension has size one)
+spreads an analysis over the ranks when the model fits each of them. It adds throughput rather than memory:
+
+- every rank forms the batch sequence one process would (the same order, shuffled from a shared seed each epoch), and
+  takes every second, third, ... batch of it, so the shares may differ by one batch and nothing is padded. Steps see
+  each batch's index in the whole sequence, and `limit_analysis_batches` counts the whole sequence's batches;
+- FSDP2's gradient reduction is off for the run, so a backward pass (attribution, gradient readouts) makes no collective
+  and the ranks never wait on each other between batches. A gradient an op reads is its own rank's;
+- each rank writes its share, and rank 0 merges the shares by batch into the store one process would write, row for
+  row, which every rank then loads. Ranks on several hosts need a filesystem they share;
+- an op whose state accumulates across batches (`op_state`, as `concept_direction` declares) is refused, since each
+  rank's state would see only its own batches, and so is a deterministic `dataset_fingerprint` (or
+  `case_key_target_part`): a share served from the generator cache would not say which batches its rows came from.
+
+A module whose submodules the analysis calls directly needs them as units of their own in `fsdp_plan`, as under the
+core loops.
+
 ## Models larger than one rank's accelerator
 
 By default every rank builds the whole model before it is sharded or split, so each rank must fit it once. For a model
@@ -442,7 +461,8 @@ else:
 - A loader that cannot be rebuilt faithfully: not a `DataLoader`, an `IterableDataset`, or a sampler other than
   PyTorch's sequential sampler and its random sampler without replacement (shard such data by rank in the datamodule).
 - Ranks that logged different metric names in an epoch.
-- A data-parallel placement (`ddp` or `fsdp2`) on the analysis runner: only `single` and `tp` place it so far.
+- `fsdp2` on the analysis runner (`single`, `tp` and `ddp` place it), and under `ddp` an op declaring `op_state` or a
+  deterministic generator-cache key.
 
 ## Compositions under `fsdp2`
 
@@ -481,7 +501,7 @@ its tensors are artifacts until then).
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
   (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
-The design, and the work that remains for the analysis runner (FSDP2 replication across data shares, sharded
+The design, and the work that remains for the analysis runner (merging cross-batch op state across data shares, sharded
 transcoders and latent models, and FSDP2 shard dimensions above one), is tracked in
 [interpretune#803](https://github.com/interpretune/interpretune/issues/803). Splitting one prompt's attribution across
 ranks is [interpretune#1274](https://github.com/interpretune/interpretune/issues/1274).

@@ -47,6 +47,7 @@ TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
 TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
 TP_CT_WORKER = Path(__file__).with_name("distributed_tp_ct_worker.py")
 TP_ANALYSIS_WORKER = Path(__file__).with_name("distributed_tp_analysis_worker.py")
+DDP_ANALYSIS_WORKER = Path(__file__).with_name("distributed_ddp_analysis_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -120,16 +121,16 @@ class TestResolvePlacement:
         with pytest.raises(MisconfigurationException, match="which is a distributed checkpoint, but the"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="single", resume_from=checkpoint_dir)
 
-    @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
-    def test_analysis_runner_refuses_data_parallel(self, placement):
+    def test_analysis_runner_refuses_fsdp2(self):
         with pytest.raises(
-            MisconfigurationException, match=f"supports placements 'single' and 'tp', not '{placement}'"
+            MisconfigurationException, match="supports placements 'single', 'tp' and 'ddp', not 'fsdp2'"
         ):
-            AnalysisRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement)
+            AnalysisRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="fsdp2")
 
-    def test_analysis_runner_takes_tp(self):
+    @pytest.mark.parametrize("placement", ["tp", "ddp"])
+    def test_analysis_runner_takes_tp_and_ddp(self, placement):
         session = MagicMock()
-        assert AnalysisRunnerCfg(it_session=session, placement="tp").placement == "tp"
+        assert AnalysisRunnerCfg(it_session=session, placement=placement).placement == placement
 
 
 class TestDistributedDataloader:
@@ -1841,3 +1842,64 @@ def test_two_rank_tp_analysis_shares_every_step_and_writes_one_store(tmp_path):
         assert weights["unembed_whole"] and weights["embedding_whole"] and weights["unembed_type"] == "Tensor"
         assert weights["norm_scale_equal"] and weights["norm_kind"] == "rmsnorm" and weights["readout_equal"]
         assert weights["gathered_once"] and weights["gathers_outside"] == 2 and weights["outside_fresh"]
+
+
+def test_merged_row_order_interleaves_shares_by_batch():
+    """Rows are put back by epoch, then batch index, then their place in the batch, whichever rank yielded them."""
+    from interpretune.runners.analysis import merged_row_order
+
+    rank0 = [(0, 0, 1), (0, 2, 2), (1, 0, 1)]  # rank 0's shard rows: b0 | b2, b2 | epoch 1 b0
+    rank1 = [(0, 1, 1), (1, 1, 1)]  # rank 1's shard rows (laid after rank 0's): b1 | epoch 1 b1
+    assert merged_row_order([rank0, rank1]) == [0, 4, 1, 2, 3, 5]
+
+
+def test_batch_share_takes_every_nth_batch_without_padding():
+    from torch.utils.data import BatchSampler, SequentialSampler
+
+    from interpretune.runners.distributed import BatchShare
+
+    batches = BatchSampler(SequentialSampler(range(10)), batch_size=2, drop_last=False)
+    shares = [list(BatchShare(batches, index, 2)) for index in range(2)]
+    assert shares == [[[0, 1], [4, 5], [8, 9]], [[2, 3], [6, 7]]]
+    assert [len(BatchShare(batches, index, 2)) for index in range(2)] == [3, 2]
+
+
+def _launch_ddp_analysis(out_dir: Path) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(DDP_ANALYSIS_WORKER), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, f"ddp analysis run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_two_rank_ddp_analysis_merges_shares_into_the_one_process_store(tmp_path):
+    """Under FSDP2 replication ('ddp') each rank analyzes its own batches of the shared sequence, and the shares
+    merge into the store one process writes, row for row, which every rank returns.
+
+    The step runs a backward pass through a replicated layer, and the five batches split three and two, so FSDP2's
+    gradient reduction (off for the run) would leave a rank waiting forever. An op declaring cross-batch state and a
+    deterministic generator-cache key are refused.
+    """
+    records = _launch_ddp_analysis(tmp_path / "run")
+    reference = records[0]["reference"]
+    assert reference["batch_idx"] == [0, 1, 2, 3, 4]
+    for record in records:
+        assert record["param_types"] == ["DTensor"]
+        assert record["ordered"] == reference, "the merged store is the one-process store"
+        assert record["share_dirs_left"] == []
+        assert record["shuffled"] == records[0]["shuffled"]
+        assert record["shuffled"]["batch_idx"] == [0, 1, 2, 3, 4] * 2
+        for epoch in range(2):
+            examples = sum(record["shuffled"]["examples"][epoch * 5 : (epoch + 1) * 5], [])
+            assert sorted(examples) == list(range(10))
+        assert record["shuffled"]["examples"][:5] != record["shuffled"]["examples"][5:]
+        assert record["limited"]["batch_idx"] == [0, 1, 2]
+        assert "running_mean declare cross-batch `op_state`" in record["refusals"]["op_state"]
+        assert "Leave `dataset_fingerprint`" in record["refusals"]["fingerprint"]

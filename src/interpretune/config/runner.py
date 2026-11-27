@@ -348,11 +348,12 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.placement not in ("single", "tp"):
+        if self.placement not in ("single", "tp", "ddp"):
             raise MisconfigurationException(
-                f"The analysis runner supports placements 'single' and 'tp', not '{self.placement}'. Under 'tp' every"
-                " rank makes every call on the same batches, so a model too large for one device can be analyzed;"
-                " placing the analysis runner's data across ranks is not yet supported (interpretune#803)."
+                f"The analysis runner supports placements 'single', 'tp' and 'ddp', not '{self.placement}'. Under 'tp'"
+                " every rank makes every call on the same batches, so a model too large for one device can be"
+                " analyzed; under 'ddp' (FSDP2 replication) each rank analyzes its own share of the batches. FSDP2"
+                " sharding of the analysis runner's module is not yet supported (interpretune#803)."
             )
         assert self.it_session is not None and self.it_session.module is not None
         # Adapters read this back through AnalysisRunnerProtocol; the module surface that carries it
