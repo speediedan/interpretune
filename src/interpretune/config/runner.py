@@ -218,6 +218,11 @@ class SessionRunnerCfg:
     # assignment along a `DTensor`'s sharded dimension without an error (an nnsight edit like `x[..., :8] = 0` inside a
     # split MLP computes the unedited model). Activations between layers are whole tensors and edit as usual
     tp_plan: Mapping[str, Mapping[str, Any]] | None = None
+    # under 'tp', shard the latent models the plan leaves whole (a circuit-tracer composition's transcoders, attached
+    # latent models) across the ranks as FSDP2 storage, each gathered whole around every call that reads it, rather
+    # than holding them whole on every rank. Refused under any other placement: 'fsdp2' shards them through
+    # `fsdp_plan`, and 'ddp' replicates by design
+    shard_latents: bool = False
     # resume training from a core-loop checkpoint taken at the end of an epoch (training continues at the next
     # epoch): under 'single', a `interpretune.runners.core.checkpoint_state` or a path to one saved with
     # `torch.save`; under 'ddp'/'fsdp2', the distributed checkpoint's directory (`save_checkpoint`)
@@ -260,6 +265,12 @@ class SessionRunnerCfg:
             raise MisconfigurationException(
                 "`fsdp_plan` and `fsdp_default_kwargs` shard the module across data-parallel ranks, but the placement"
                 " is 'tp', which splits the layers `tp_plan` selects instead. Drop them, or use 'fsdp2'."
+            )
+        if self.shard_latents and self.placement != "tp":
+            raise MisconfigurationException(
+                f"`shard_latents` shards latent models across the ranks of placement 'tp', but the placement is"
+                f" '{self.placement}'. Under 'fsdp2' name them in `fsdp_plan` instead; 'ddp' and 'single' hold them"
+                " whole."
             )
         if self.tp_plan is not None and self.placement != "tp":
             raise MisconfigurationException(

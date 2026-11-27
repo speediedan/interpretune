@@ -109,12 +109,24 @@ def refusals(module) -> dict[str, str]:
     return record
 
 
+def sharded_transcoders(module) -> dict[str, list[int]]:
+    """Each transcoder parameter sharded across the ranks, with the shape of this rank's shard."""
+    from torch.distributed.tensor import DTensor
+
+    return {
+        n: list(p.to_local().shape)
+        for n, p in module.named_parameters()
+        if "transcoders." in n and isinstance(p, DTensor)
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--attribution-only", action="store_true")
     parser.add_argument("--arch", choices=("gemma2", "gemma3"), default="gemma2")
     parser.add_argument("--meta", action="store_true", help="build on the meta device and load from rank 0")
+    parser.add_argument("--shard-latents", action="store_true", help="shard the transcoders across the ranks")
     args = parser.parse_args()
 
     import torch.distributed as dist
@@ -135,14 +147,15 @@ def main() -> None:
                 param.add_(0.1)
     out = Path(args.out_dir, f"rank{run.rank}.json")
     try:
-        place_module(placed, run)
+        place_module(placed, run, shard_latents=args.shard_latents)
     except MisconfigurationException as err:
         out.write_text(json.dumps({"refused": str(err)}), encoding="utf-8")
         return
     split = {n: p for n, p in placed.named_parameters() if type(p.data).__name__ == "DTensor"}
     ref, got = readings(reference), readings(placed)
     record: dict = {
-        "split_params": sorted(split),
+        "split_params": sorted(n for n in split if "transcoders." not in n),
+        "sharded_transcoder_params": sharded_transcoders(placed),
         "n_features": len(ref["features"]),
         "same_nodes": all(torch.equal(ref[k], got[k]) for k in ("features", "selected")),
         # relative: the live graph's edges are an order larger than the frozen graph's
@@ -156,6 +169,15 @@ def main() -> None:
     dist.all_gather(per_rank, whole)
     record["ranks_equal"] = torch.equal(*per_rank)
     record["refusals"] = refusals(placed)
+    if args.shard_latents:
+        # one rank's shard of one transcoder's decoder changes the graph only if the gathered decoder is the one read
+        if run.rank:
+            with torch.no_grad():
+                next(p for n, p in placed.named_parameters() if n.endswith("transcoders.1.W_dec")).to_local().add_(0.5)
+        perturbed = graph(placed).adjacency_matrix
+        record["transcoder_control_differs"] = perturbed.shape != ref["graph"].shape or not torch.allclose(
+            perturbed, ref["graph"], rtol=1e-2
+        )
     if run.rank:
         with torch.no_grad():
             next(p for n, p in split.items() if n.endswith("layers.1.self_attn.o_proj.weight")).to_local().add_(0.5)

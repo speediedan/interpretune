@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- `shard_latents` (`SessionRunnerCfg`, and so the analysis runner) shards the latent models a `tp` plan leaves whole across its ranks as FSDP2 storage: each per-layer circuit-tracer transcoder and each attached latent model is its own unit, gathered around every call that reads it and resharded after. Attribution graphs and feature interventions equal the unsharded run's, and tuning a sharded transcoder matches one process ([#803](https://github.com/interpretune/interpretune/issues/803))
+
 - Ops with cross-batch `op_state` run under the analysis runner's `ddp` with every row's one-process value: a stateful last op is replayed after the shares are merged, over the inputs each rank recorded, and a stateful op whose output a later op reads runs in a serial prefix pass over the whole batch sequence before the rest runs on the shares (`interpretune.analysis.share_exec`). `concept_direction` and the `attribution_from_concept` and `intervention_from_concept` composites are no longer refused under `ddp` ([#803](https://github.com/interpretune/interpretune/issues/803))
 
 - The analysis runner takes `placement: ddp` (FSDP2 replication): each rank analyzes every N-th batch of the one-process batch sequence with FSDP2's gradient reduction off, and the shares merge by batch into the store one process would write, row for row. A deterministic `dataset_fingerprint` is refused under it ([#803](https://github.com/interpretune/interpretune/issues/803))
