@@ -341,7 +341,7 @@ if _LIGHTNING_AVAILABLE:
             """Refuse a multi-process predict whose rows the merged store could not account for."""
             from torch.utils.data import DistributedSampler
 
-            from interpretune.runners.analysis import declared_op_states
+            from interpretune.analysis.share_exec import stateful_op_names
 
             loaders = trainer.predict_dataloaders
             loaders = list(loaders) if isinstance(loaders, (list, tuple)) else [loaders]
@@ -360,11 +360,12 @@ if _LIGHTNING_AVAILABLE:
                     f" ({type(sampler).__name__}), so the store would repeat or miss examples. Keep"
                     " `use_distributed_sampler=True` and a strategy that splits the data across every process."
                 )
-            if names := declared_op_states(analysis_cfg.op):
+            if names := stateful_op_names(analysis_cfg.op):
                 raise MisconfigurationException(
                     f"Under a multi-process Trainer each process analyzes its own share of the examples, but"
                     f" {', '.join(names)} declare cross-batch `op_state`, which would accumulate over one process's"
-                    " share only. Run this op's predict on one device."
+                    " share only. Run this op's predict on one device, or run it with the analysis runner under"
+                    " placement 'ddp', which keeps cross-batch state exact."
                 )
 
         def on_predict_epoch_end(self, trainer: Any, pl_module: Any) -> None:
