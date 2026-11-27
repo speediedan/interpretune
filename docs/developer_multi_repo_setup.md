@@ -137,7 +137,7 @@ environment with portable defaults:
 | `SAEDASHBOARD_REPO_ROOT` | `~/repos/SAEDashboard` | Local SAEDashboard checkout used by pipeline tooling. |
 | `SAELENS_REPO_ROOT` | `~/repos/SAELens` | Local SAELens checkout the benchmark tooling records lineage from and branches preserved-baseline worktrees off. The dashboard pipeline imports the installed sae-lens release and never puts this checkout on its `PYTHONPATH`. |
 | `NEURONPEDIA_UTILS_ROOT` | `~/repos/neuronpedia/utils/neuronpedia-utils` | neuronpedia-utils checkout (columnar import tooling). |
-| `IT_ENV_FILE` | repo-local `.env` when present | Overrides the Neuronpedia env-file path used to resolve the local DB URL for imports. |
+| `IT_ENV_FILE` | repo-local `.env` when present | Overrides the interpretune env file the pipeline reads the local DB URL (`LOCAL_NEURONPEDIA_DB_URL`) from. |
 
 See `docs/neuronpedia_dashboard_pipeline.md` ("Required environment") for how the pipeline consumes these.
 
@@ -180,9 +180,9 @@ environment built here.
 use it — those tests skip cleanly when it is absent. The production columnar lane uses pyarrow.)
 
 Neuronpedia subproject tooling note (upstream `b6156f70`, 2026-07): `apps/inference` is **uv-managed**
-(PEP-621 `pyproject.toml` + `uv.lock`; the old `poetry.lock` is gone — `uv sync` / `uv run pytest` from
-`apps/inference`, with our sae-lens fork pin under `[tool.uv.sources]`). `utils/neuronpedia-utils`
-remains Poetry-managed; the SAELens Poetry-legacy notes above are unchanged.
+(PEP-621 `pyproject.toml` + `uv.lock`; the old `poetry.lock` is gone: `uv sync` / `uv run pytest` from
+`apps/inference`) and depends on the released `sae-lens`, with no `[tool.uv.sources]` override.
+`utils/neuronpedia-utils` remains Poetry-managed; the SAELens Poetry-legacy notes above are unchanged.
 
 ## Minimal quickstart (reduced from-source set)
 

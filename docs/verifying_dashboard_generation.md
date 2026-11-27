@@ -42,8 +42,8 @@ The completion summary prints the exact `source ...` lines to activate the envir
 source /tmp/it_baseline_trees_YYYYMMDD/benchmark_env.sh && source <venv>/bin/activate
 ```
 
-Prerequisites the script checks itself: `git` and `uv` on PATH, `docker` if the local Neuronpedia DB
-needs bringing up, bash >= 4.3, and HuggingFace access to the gated `google/gemma-3-1b-it`.
+Prerequisites the script checks itself: `git` and `uv` on PATH, bash >= 4.3, and HuggingFace access to the gated
+`google/gemma-3-1b-it`. It checks that Postgres is reachable at `--local-db-url` but does not start it.
 
 ---
 
@@ -63,14 +63,18 @@ If you have an existing Neuronpedia local dev stack up and running, just make su
 reachable and note the ports, then set `LOCAL_WEBAPP_URL` / `LOCAL_DB_URL` in the notebook to match.
 Nothing below is required if your stack is already up otherwise.
 
-The commands below are for a fresh setup. `make init-env` overwrites `.env` (it prompts
-first and aborts unless you confirm), so do not run it against a Neuronpedia env you have
-already configured and don't want to overwrite:
+The commands below are for a fresh setup. First install Postgres 16+ with the pgvector extension (see
+[Neuronpedia's database setup](https://github.com/hijohnnylin/neuronpedia#i-want-to-use-a-local-database--import-more-neuronpedia-data)); its connection details live in `apps/webapp/.env.localhost` and default to
+`postgres://postgres:postgres@127.0.0.1:5432/postgres`. No Make target starts a database server. `make init-env`
+overwrites `.env` (it prompts first and aborts unless you confirm), so do not run it against a Neuronpedia env you
+have already configured and don't want to overwrite:
 
 ```bash
 cd neuronpedia
-make init-env        # OVERWRITES .env, prompts first; skip it if yours is already configured
-make webapp-install  # required on a fresh checkout: the build fails with `env-cmd: not found` without it
+make db-check                    # Neuronpedia can reach Postgres and pgvector is installed
+make db-status && make db-init   # create and seed the schema; db-status fails on a populated database
+make init-env                    # OVERWRITES .env, prompts first; skip it if yours is already configured
+make webapp-install              # required on a fresh checkout: the build fails with `env-cmd: not found` without it
 make webapp-build && make webapp-run
 ```
 
@@ -196,8 +200,9 @@ DETAIL: Key (creatorId)=(...) is not present in table "User".
 ```
 
 That names the symptom rather than the cause. `make db-init` in the neuronpedia checkout supplies
-what is missing: it applies migrations, runs `prisma db seed`, and installs the pgvector tuning. A
-stack brought up through **(b)** has already done this; a database created any other way has not.
+what is missing: it applies migrations, runs `prisma db seed`, and installs the pgvector tuning. Run
+`make db-status && make db-init` once per new database: `db-status` exits non-zero on a populated database, so the
+pair will not re-seed one. Step 1 of **(b)** does this; a database created any other way may not have.
 
 **Check the buckets from an authenticated session, not anonymously.** The unauthenticated Hub API has
 been observed reporting a bucket as empty while it was in fact full, and serving a stale manifest for
@@ -207,8 +212,8 @@ auth login`, or pass a token, before concluding anything about bucket contents. 
 plan without moving anything or `--dest <dir>` to choose where the corpus lands (default:
 `$IT_NP_CACHE/hub_downloads`, else `$HF_HOME/interpretune/neuronpedia/hub_downloads`).
 
-Needs a running local Neuronpedia Postgres — see the
-[pipeline guide](neuronpedia_dashboard_pipeline.md). Expect 425,984 `Neuron` rows per corpus
+Needs a running, initialised local Neuronpedia Postgres: see step 1 of **(b)** and
+[Neuronpedia's database setup](https://github.com/hijohnnylin/neuronpedia#i-want-to-use-a-local-database--import-more-neuronpedia-data). Expect 425,984 `Neuron` rows per corpus
 (26 layers × 16384 feats) plus activations (~16.2M monology, ~10.4M RTE), 40–60 minutes.
 
 ---
@@ -367,4 +372,4 @@ being on.** A branch name describes what was checked out, not what is in the fil
   the [pretokenization CLI](neuronpedia_dashboard_pipeline.md#pretokenize-dashboard-datasets)
 - [Developer multi-repo setup](developer_multi_repo_setup.md) — the environment-variable
   contract and build steps
-- [Roadmap](../roadmap.md) — Wave 1 / Wave 2 framing
+- [Roadmap](source/roadmap.md): in-flight upstream dashboard PRs and the hub-dashboard direction
