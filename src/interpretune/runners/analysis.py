@@ -1,5 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 
+import contextlib
 import torch
 from typing import Any, TYPE_CHECKING
 import logging
@@ -15,7 +16,13 @@ from interpretune.analysis import schema_to_features
 from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners.core import SessionRunner, profiling, run_step
-from interpretune.runners.distributed import DistributedRun, distributed_dataloader, gathered_weights
+from interpretune.runners.distributed import (
+    DistributedRun,
+    distributed_dataloader,
+    gathered_weights,
+    gradient_sync_off,
+)
+from interpretune.utils import MisconfigurationException
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol, TestLoadable
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
 from interpretune.utils.exceptions import handle_exception_with_debug_dump
@@ -28,6 +35,38 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class ShareLog:
+    """The rows each of a rank's batches yielded, as ``(epoch, batch index, rows)``, in the order it yielded them.
+
+    An object rather than a list: ``datasets`` splits list-valued generator kwargs into shards.
+    """
+
+    def __init__(self) -> None:
+        self.batches: list[tuple[int, int, int]] = []
+
+
+def merged_row_order(logs: list[list[tuple[int, int, int]]]) -> list[int]:
+    """Row positions, in the ranks' shards laid end to end, that put every row in single-process order.
+
+    ``logs`` holds each rank's :class:`ShareLog` entries, by rank. A row's single-process position is set by its
+    batch's epoch and index in the whole batch sequence, then its place among that batch's rows.
+    """
+    keyed, offset = [], 0
+    for log_entries in logs:
+        for epoch, batch_idx, rows in log_entries:
+            keyed.extend(((epoch, batch_idx, i), offset + i) for i in range(rows))
+            offset += rows
+    return [position for _, position in sorted(keyed)]
+
+
+def declared_op_states(op: Any) -> list[str]:
+    """The names of ``op`` and its member ops (a composite's) that declare cross-batch ``op_state``."""
+    if op is None:
+        return []
+    members = getattr(op, "composition", None) or [op]
+    return [getattr(member, "name", str(member)) for member in members if getattr(member, "op_state", None) is not None]
+
+
 def analysis_store_generator(
     module: ITModule,
     datamodule: TestLoadable,
@@ -36,6 +75,7 @@ def analysis_store_generator(
     max_epochs: int = 1,
     *args,
     dist_run: DistributedRun | None = None,
+    share_log: ShareLog | None = None,
     **kwargs,
 ):
     """Yield analysis results batch by batch, so a store can be written incrementally.
@@ -44,7 +84,11 @@ def analysis_store_generator(
     that materializing every batch before writing is what exhausts memory on a long run.
 
     Under a ``dist_run`` (placement ``tp``) the loader is rebuilt so that every rank takes the same batches in the
-    same order, shuffled alike from a shared seed each epoch: the ranks make every call on each batch together.
+    same order, shuffled alike from a shared seed each epoch: the ranks make every call on each batch together. Under a
+    data-parallel ``dist_run`` (``ddp``) each rank takes its own batches of that shared sequence instead
+    (:class:`~interpretune.runners.distributed.BatchShare`). Steps see each batch's index in the whole sequence, as one
+    process would, and ``limit_analysis_batches`` counts the whole sequence's batches. ``share_log`` records the rows
+    each batch yielded, which is what puts the ranks' rows back in order.
     """
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
@@ -57,18 +101,27 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()
     if dist_run is not None:
-        dataloader = distributed_dataloader(dataloader, dist_run)
+        dataloader = distributed_dataloader(dataloader, dist_run, share_batches=True)
+    shares, index = (dist_run.data_shares, dist_run.data_index) if dist_run is not None else (1, 0)
     test_ctx = {"module": module, "as_generator": True}
     with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
-            if (set_epoch := getattr(getattr(dataloader, "sampler", None), "set_epoch", None)) is not None:
-                set_epoch(epoch_idx)
-            for batch_idx, batch in tqdm(enumerate(dataloader)):
+            for sampler in (getattr(dataloader, "batch_sampler", None), getattr(dataloader, "sampler", None)):
+                if (set_epoch := getattr(sampler, "set_epoch", None)) is not None:
+                    set_epoch(epoch_idx)
+                    break
+            for local_idx, batch in tqdm(enumerate(dataloader)):
+                batch_idx = local_idx * shares + index  # the batch's index in the whole sequence
                 if batch_idx >= limit_analysis_batches >= 0:
                     break
                 # TODO: move previous inference_mode toggle to IT dispatch logic
-                yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
+                rows = 0
+                for row in run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx):
+                    rows += 1
+                    yield row
+                if share_log is not None:
+                    share_log.batches.append((epoch_idx, batch_idx, rows))
                 if prof is not None:
                     prof.step()
             _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
@@ -232,11 +285,20 @@ def generate_analysis_dataset(
     # None passes nothing, so the datasets default stays in place
     writer_kwargs: dict[str, Any] = {} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}
     if dist_run is not None:
-        _require_one_lockstep_group(dist_run)
+        _require_supported_groups(dist_run)
+        if dist_run.data_shares > 1 and dataset_fingerprint is not None:
+            raise MisconfigurationException(
+                f"Under placement {dist_run.placement!r} each rank generates its own share of the store's rows, and"
+                " a share served from the generator cache would not say which batches its rows came from, so the"
+                " shares could not be put back in order. Leave `dataset_fingerprint` (and `case_key_target_part`)"
+                " unset under a data-parallel placement."
+            )
         if not dist_run.writes_outputs:
             _follow_generation(gen_kwargs, dist_run)
             return None
-    generator, announce = _announcing_generator(dist_run)
+    # only a lockstep group's ranks wait on each other's generation; a data share's rank generates alone
+    lockstep = dist_run if dist_run is not None and dist_run.lockstep_size > 1 else None
+    generator, announce = _announcing_generator(lockstep)
     try:
         dataset = Dataset.from_generator(
             generator,
@@ -616,11 +678,13 @@ def _leader(dist_run: DistributedRun) -> int:
     return dist_run.rank - dist_run.rank % dist_run.lockstep_size
 
 
-def _require_one_lockstep_group(dist_run: DistributedRun) -> None:
-    if dist_run.lockstep_size != dist_run.world_size:
+def _require_supported_groups(dist_run: DistributedRun) -> None:
+    """One lockstep group of every rank (``tp``), or one rank per data share (``ddp``): not groups of several ranks
+    that each take a share, which FSDP2 shard dimensions above one would make."""
+    if dist_run.lockstep_size not in (1, dist_run.world_size):
         raise NotImplementedError(
-            f"The analysis runner places one lockstep group (placement 'tp'), not {dist_run.placement!r}, whose"
-            f" {dist_run.data_shares} ranks each take their own share of the data."
+            f"The analysis runner places one lockstep group ('tp') or one rank per data share ('ddp'), not"
+            f" {dist_run.data_shares} groups of {dist_run.lockstep_size} ranks ({dist_run.placement!r})."
         )
 
 
@@ -703,6 +767,57 @@ def _share_store(
     return loaded.with_format("interpretune", **it_format_kwargs)
 
 
+def _merge_shares(
+    dataset: Dataset | None,
+    save_dir: Path,
+    it_format_kwargs: dict,
+    dist_run: DistributedRun,
+    share_log: ShareLog,
+) -> Dataset:
+    """Put the ranks' shares of the store back in single-process order, and give every rank the merged store.
+
+    Each rank saves its share beside the store's directory and reports it with its :class:`ShareLog`; rank 0 lays the
+    shares end to end, orders the rows by their batches (:func:`merged_row_order`) and saves the merged store, which
+    every rank then loads. Each rank removes its share once the merged store is saved. Ranks on several hosts need a
+    filesystem they share.
+    """
+    import shutil
+
+    import torch.distributed as dist
+    from datasets import concatenate_datasets, load_from_disk
+
+    assert dataset is not None
+    share_dir = save_dir.with_name(f"{save_dir.name}.share{dist_run.data_index}")
+    dataset.save_to_disk(share_dir)
+    reports: list[Any] = [None] * dist_run.world_size
+    dist.all_gather_object(reports, (str(share_dir), share_log.batches))
+    if dist_run.rank == 0:
+        shares = [load_from_disk(path) for path, _ in reports]
+        assert all(isinstance(share, Dataset) for share in shares)
+        laid = concatenate_datasets(shares)  # pyright: ignore[reportArgumentType]  # Datasets, checked above
+        laid.select(merged_row_order([entries for _, entries in reports])).save_to_disk(save_dir)
+    shared = [str(save_dir)]
+    dist.broadcast_object_list(shared, src=0, device=torch.device("cpu"))
+    dist.barrier()
+    merged = load_from_disk(shared[0])
+    assert isinstance(merged, Dataset)
+    shutil.rmtree(share_dir, ignore_errors=True)
+    return merged.with_format("interpretune", **it_format_kwargs)
+
+
+def _refuse_op_state(module: Any, dist_run: DistributedRun) -> None:
+    """Refuse an op whose state accumulates across batches under a placement that shares the batches out: each
+    rank's state would see only its own batches."""
+    op = getattr(getattr(module, "analysis_cfg", None), "op", None)
+    if names := declared_op_states(op):
+        raise MisconfigurationException(
+            f"Under placement {dist_run.placement!r} each rank analyzes its own share of the batches, but"
+            f" {', '.join(names)} declare cross-batch `op_state`, which would accumulate over one rank's share only."
+            " Merging op state across ranks is not yet supported (interpretune#803): run this op under 'single' or"
+            " 'tp'."
+        )
+
+
 def core_analysis_loop(
     module: ITModule,
     datamodule: ITDataModule,
@@ -717,7 +832,9 @@ def core_analysis_loop(
     """Create dataset using the ITAnalysisFormatter for optimal handling of analysis data.
 
     Under a ``dist_run`` (placement ``tp``) every rank runs every step, one rank writes the store, and every rank
-    returns it. Weights an op reads directly are gathered whole once for the run (:func:`gathered_weights`).
+    returns it. Under a data-parallel ``dist_run`` (``ddp``, FSDP2 replication) each rank analyzes its own batches with
+    FSDP2's gradient reduction off, and the shares are merged into the store one process would write, which every rank
+    returns. Weights an op reads directly are gathered whole once for the run (:func:`gathered_weights`).
     """
     # Initialize analysis configuration if needed
     kwargs = maybe_init_analysis_cfg(module, analysis_cfg, **kwargs)
@@ -727,10 +844,14 @@ def core_analysis_loop(
     # The runner owns the process-global grad state for the whole run: the start hook sets it from the active op and
     # the end hook restores it, but an op raising inside dataset generation used to skip the end hook and leak the
     # state into whatever ran next. Restoring in a `finally` leaves the process as the run found it on every exit.
+    shared_out = dist_run is not None and dist_run.data_shares > 1
+    if dist_run is not None and shared_out:
+        _refuse_op_state(module, dist_run)
+    share_log = ShareLog() if shared_out else None
     grad_enabled_before = torch.is_grad_enabled()
     _call_itmodule_hook(module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
     try:
-        with gathered_weights():
+        with gathered_weights(), gradient_sync_off(module) if shared_out else contextlib.nullcontext():
             # Generate features and format parameters
             features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
 
@@ -742,6 +863,7 @@ def core_analysis_loop(
                 step_fn=step_fn,
                 max_epochs=max_epochs,
                 dist_run=dist_run,
+                share_log=share_log,
             )
 
             # Generate the dataset (None on a rank of a 'tp' run that does not write it)
@@ -750,7 +872,10 @@ def core_analysis_loop(
             )
 
             save_dir = Path(module.analysis_cfg.output_store.save_dir)  # protocol provides output_store
-            dataset = _share_store(dataset, save_dir, it_format_kwargs, dist_run)
+            if dist_run is not None and share_log is not None:
+                dataset = _merge_shares(dataset, save_dir, it_format_kwargs, dist_run, share_log)
+            else:
+                dataset = _share_store(dataset, save_dir, it_format_kwargs, dist_run)
             # Assign dataset to analysis store
             module.analysis_cfg.output_store.dataset = dataset  # protocol provides output_store
 

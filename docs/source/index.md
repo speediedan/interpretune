@@ -12,7 +12,7 @@ Interpretune is a (pre-MVP) AI latent model analysis framework. It strives to pr
 
 By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative latent model analysis and tuning with PyTorch.
 
-Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. Today it works with **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them. They are the route to world model analysis rather than the same thing.
+Interpretune ultimately aspires to make AI *world model* analysis and tuning possible at a level of abstraction mutually intelligible to humans and agents. As a step toward that, it today operates over **latent models**: models of a network's latent space, such as the features an SAE or transcoder learns, concept directions, and the attribution graphs built from them.
 
 That composability and shareability serve one aim: to **broaden the shoulders of giants**. An analysis operation, an intervention op or a component that one researcher writes and registers (in a federated registry such as venngram's ops, or as a Hub collection) is one any other researcher, or agent, can compose, rerun and extend.
 
@@ -48,7 +48,7 @@ the path to the initial alpha release.
 A note on terminology: when these docs say "world model" they mean it in the **epistemic/semantic**
 sense: the internal representations and beliefs a model encodes about the world, as studied in
 interpretability, rather than the (related but distinct) predictive **visual world models** of
-embodied-agent and model-based-RL research. It names where the project is heading. The initial MVP focuses on LLMs; fuller multimodal
+embodied-agent and model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal
 support is planned (see the {doc}`roadmap <roadmap>`).
 
 ## Quickstart
