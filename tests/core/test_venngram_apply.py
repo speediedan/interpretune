@@ -302,25 +302,92 @@ def test_a_doses_table_on_a_composed_target_doses_only_its_members():
     assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
 
 
-def test_an_evidence_value_on_a_composed_target_reads_its_column_for_every_member():
+def test_a_table_value_on_a_composed_target_reads_its_column_for_every_member():
     """``@a - @b`` is units 1 and 2: each takes its own value from the column, and a row for unit 4 (in ``b``) is not a
     member, so nothing doses it. It was refused before venngram listed a composition's members (venngram#131)."""
-    value = {"from": {"evidence": "scores", "column": "score"}}
-    evidence = {"scores": {"score": {(12, 1): 0.5, (12, 2): -0.25, (12, 4): 9.0}}}
-    payload = recipe_interventions(
-        _composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence
-    )
+    value = {"from": {"table": "scores", "column": "score"}}
+    tables = {"scores": {"score": {(12, 1): 0.5, (12, 2): -0.25, (12, 4): 9.0}}}
+    payload = recipe_interventions(_composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, tables=tables)
     (spec,) = payload["blocks.12.mlp.out.hook_in"]
     assert spec.intervention_tensor[1] == 0.5 and spec.intervention_tensor[2] == -0.25
     assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
 
 
-def test_an_evidence_value_on_a_composed_target_lists_the_members_its_column_misses():
+def test_a_table_value_on_a_composed_target_lists_the_members_its_column_misses():
     """A composed target's member the column has no row for is refused rather than dropped, as for a single set."""
-    value = {"from": {"evidence": "scores", "column": "score"}}
-    evidence = {"scores": {"score": {(12, 1): 0.5}}}
+    value = {"from": {"table": "scores", "column": "score"}}
+    tables = {"scores": {"score": {(12, 1): 0.5}}}
     with pytest.raises(MisconfigurationException, match=r"no value for \(layer, unit\) \[\(12, 2\)\]"):
-        recipe_interventions(_composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, evidence=evidence)
+        recipe_interventions(_composed_recipe("rest", value), site_widths={"mlp.out.hook_in": 16}, tables=tables)
+
+
+def _book_with_tables(value, *, tables=True, sets=None, site="mlp.out.hook_in"):
+    """A schema 13 book whose treatment reads ``value`` and whose ``tables`` section carries ``finding`` (#905)."""
+    model = {"id": "m", "revision": "r1"}
+    finding = {
+        "model": model,
+        "source": {"name": "finder", "commit": "0f3a9c1", "license": "MIT"},
+        "columns": {"dose": {"description": "signed steering dose"}, "score": {"description": "a finder score"}},
+        "rows": [{"layer": 12, "unit": u, "dose": d, "score": -d} for u, d in ((1, 1.5), (2, -0.5), (4, 9.0))],
+    }
+    book = {
+        "schema_version": 13,
+        "name": "book-tables",
+        "portability": "checkpoint",
+        "applies_to": {"models": [model]},
+        "sets": sets or {"a": {"point": "mlp.out.hook_in", "units": {12: [1, 2]}}},
+        "treatments": {
+            "steer": {
+                "model": model,
+                "stages": [{"site": site, "ops": [{"op": "add", "target": {"set": "a"}, "value": value}]}],
+            }
+        },
+    }
+    if tables:
+        book["tables"] = {"finding": finding}
+    return load_recipe(book).recipe
+
+
+def test_a_table_value_reads_the_books_own_table_when_the_caller_supplies_none():
+    """The book names the table its treatment reads, so the caller passes no ``tables`` at all (#905)."""
+    recipe = _book_with_tables({"from": {"table": "finding", "column": "dose"}})
+    (spec,) = recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 16})["blocks.12.mlp.out.hook_in"]
+    assert spec.intervention_tensor[1] == 1.5 and spec.intervention_tensor[2] == -0.5
+    assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
+
+
+def test_a_book_tables_transform_reads_a_second_column_of_the_same_table():
+    """``sign_of`` reads its column from the book's table as the value does."""
+    value = {"from": {"table": "finding", "column": "dose"}, "transform": [{"sign_of": {"column": "score"}}]}
+    (spec,) = recipe_interventions(_book_with_tables(value), site_widths={"mlp.out.hook_in": 16})[
+        "blocks.12.mlp.out.hook_in"
+    ]
+    assert spec.intervention_tensor[1] == -1.5 and spec.intervention_tensor[2] == 0.5
+
+
+def test_a_caller_table_replaces_the_books_table_of_that_name():
+    recipe = _book_with_tables({"from": {"table": "finding", "column": "dose"}})
+    tables = {"finding": {"dose": {(12, 1): 3.0, (12, 2): 4.0}}}
+    (spec,) = recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 16}, tables=tables)[
+        "blocks.12.mlp.out.hook_in"
+    ]
+    assert spec.intervention_tensor[1] == 3.0 and spec.intervention_tensor[2] == 4.0
+
+
+def test_a_table_neither_the_book_nor_the_caller_supplies_is_refused_by_name():
+    recipe = _book_with_tables({"from": {"table": "finding", "column": "dose"}}, tables=False)
+    with pytest.raises(MisconfigurationException, match="reads table `finding`, which neither the book"):
+        recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 16})
+
+
+def test_a_feature_target_reads_the_books_table_as_a_unit_target_does():
+    """A feature set's members are ``(layer, feature)`` pairs, and the book's table is read for them the same
+    way."""
+    from interpretune.analysis.venngram.values import member_values
+
+    sets = {"a": {"features": "1,2", "layers": [12]}}
+    recipe = _book_with_tables({"from": {"table": "finding", "column": "dose"}}, sets=sets, site="hook_resid_post")
+    assert member_values(recipe, recipe.stages[0].ops[0]) == {(12, 1): 1.5, (12, 2): -0.5}
 
 
 def test_a_composed_gradient_target_is_refused_like_a_single_one():

@@ -400,11 +400,14 @@ unit at or past it is refused rather than dropped. A feature set takes the same 
 sub-hook (`blocks.<layer>.<site>.hook_sae_acts_post`), or becomes circuit-tracer's feature tuples on the analysis
 backend (`recipe_feature_interventions`), as the [table above](#current-surfaces) describes.
 
-A value is a `dose` (every member takes it), a `doses` table, or a column of evidence the caller supplies, through
-venngram's transforms. On a composed target, as on a single set, a `dose` doses every member of the composition, a
-`doses` table only the members it lists, and an evidence-sourced value reads its column for every member: a table entry
-or evidence row for a unit outside the composition (unit 4 in `only_a` above) doses nothing, and a member the column has
-no row for is refused.
+A value is a `dose` (every member takes it), a `doses` table, or a column of a unit table (`from: {table, column}`),
+through venngram's transforms. The table is the book's own (its `tables` section, venngram's `UnitTable`, carrying the
+values a finder measured and their provenance), read for the stack the target sits in, so a book that carries its
+tables needs nothing more from the caller. A caller can still pass `tables={name: {column: {(layer, unit): value}}}` to
+`recipe_interventions`, which replaces the book's table of that name. On a composed target, as on a single set, a `dose`
+doses every member of the composition, a `doses` table only the members it lists, and a table-sourced value reads its
+column for every member: a `doses` entry or table row for a unit outside the composition (unit 4 in `only_a` above)
+doses nothing, and a member the column has no row for is refused.
 
 ### What bounds what runs
 
@@ -421,7 +424,8 @@ a silently narrowed treatment. The refusals a unit-set treatment can meet:
 | a unit-targeted recipe op other than `add`, `scale` and `replace` | venngram's op registry or `op_refusal` |
 | an operand on a unit-targeted op (it takes a value) | `op_refusal` |
 | a site with no supplied width, or a unit at or past it | `recipe_interventions` |
-| an evidence-sourced value whose column has no row for one of the target's members | `recipe_interventions` |
+| a table-sourced value whose column has no row for one of the target's members | venngram for the book's tables, reading the book; `recipe_interventions` for a table the caller supplies |
+| a value reading a table neither the book nor the caller supplies | `recipe_interventions` |
 | a target addressing the gradient (`of: grad`), composed or not, in a translation for values | `op_refusal` |
 
 `add` and `scale` use dense vectors with their identity values elsewhere; `replace` uses a selected-coordinate spec.
