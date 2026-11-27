@@ -15,6 +15,7 @@ from interpretune.analysis import schema_to_features
 from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners.core import SessionRunner, profiling, run_step
+from interpretune.runners.distributed import DistributedRun, distributed_dataloader, gathered_weights
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol, TestLoadable
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
 from interpretune.utils.exceptions import handle_exception_with_debug_dump
@@ -34,12 +35,16 @@ def analysis_store_generator(
     step_fn: str = "analysis_step",
     max_epochs: int = 1,
     *args,
+    dist_run: DistributedRun | None = None,
     **kwargs,
 ):
     """Yield analysis results batch by batch, so a store can be written incrementally.
 
     A generator rather than a list: analysis outputs (caches, graphs, attributions) are large enough
     that materializing every batch before writing is what exhausts memory on a long run.
+
+    Under a ``dist_run`` (placement ``tp``) the loader is rebuilt so that every rank takes the same batches in the
+    same order, shuffled alike from a shared seed each epoch: the ranks make every call on each batch together.
     """
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
@@ -51,10 +56,14 @@ def analysis_store_generator(
             f"analysis requires max_epochs >= 1 (got {max_epochs}); pass max_epochs=1 to the analysis runner config"
         )
     dataloader = datamodule.test_dataloader()
+    if dist_run is not None:
+        dataloader = distributed_dataloader(dataloader, dist_run)
     test_ctx = {"module": module, "as_generator": True}
     with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
+            if (set_epoch := getattr(getattr(dataloader, "sampler", None), "set_epoch", None)) is not None:
+                set_epoch(epoch_idx)
             for batch_idx, batch in tqdm(enumerate(dataloader)):
                 if batch_idx >= limit_analysis_batches >= 0:
                     break
@@ -147,8 +156,9 @@ def generate_analysis_dataset(
     dataset_fingerprint: str | None = None,
     generator_cache_dir: str | Path | None = None,
     writer_batch_size: int | None = None,
+    dist_run: DistributedRun | None = None,
     **kwargs,
-) -> Dataset:
+) -> Dataset | None:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
 
     Args:
@@ -168,10 +178,14 @@ def generate_analysis_dataset(
         writer_batch_size: How many records the writer buffers before each flush to the cache file. Peak host
             memory during generation follows this times the record size, not the number of records. None (default)
             keeps the `datasets` default.
+        dist_run: This rank's place in a run under placement ``tp``, or None for one process. The ranks compute
+            every batch together, and only the rank that writes outputs (:attr:`DistributedRun.writes_outputs`)
+            writes the dataset; the others run the same steps and discard their rows (see
+            :func:`_follow_generation`).
         **kwargs: Additional arguments for error context
 
     Returns:
-        Dataset: The generated dataset with interpretune format
+        Dataset: The generated dataset with interpretune format, or None on a rank that does not write outputs
 
     Raises:
         Exception: If dataset generation fails, with detailed debug information
@@ -217,9 +231,15 @@ def generate_analysis_dataset(
         resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
     # None passes nothing, so the datasets default stays in place
     writer_kwargs: dict[str, Any] = {} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}
+    if dist_run is not None:
+        _require_one_lockstep_group(dist_run)
+        if not dist_run.writes_outputs:
+            _follow_generation(gen_kwargs, dist_run)
+            return None
+    generator, announce = _announcing_generator(dist_run)
     try:
         dataset = Dataset.from_generator(
-            analysis_store_generator,
+            generator,
             features=features,
             cache_dir=str(
                 generator_cache_dir
@@ -231,8 +251,10 @@ def generate_analysis_dataset(
             fingerprint=resolved_fingerprint,
             **writer_kwargs,
         ).with_format("interpretune", **it_format_kwargs)
+        announce(False)  # a cache hit never started the generator, so the other ranks must not start it either
         return dataset  # datasets compatibility
     except Exception as e:
+        announce(False)  # releases the other ranks when the failure came before generation started
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
             features,  # Features derived from schema
@@ -589,6 +611,98 @@ def prune_generator_cache(cache_dir: str | Path, *, max_bytes: int) -> dict[str,
     return stats
 
 
+def _leader(dist_run: DistributedRun) -> int:
+    """The rank that writes the outputs of ``dist_run``'s lockstep group."""
+    return dist_run.rank - dist_run.rank % dist_run.lockstep_size
+
+
+def _require_one_lockstep_group(dist_run: DistributedRun) -> None:
+    if dist_run.lockstep_size != dist_run.world_size:
+        raise NotImplementedError(
+            f"The analysis runner places one lockstep group (placement 'tp'), not {dist_run.placement!r}, whose"
+            f" {dist_run.data_shares} ranks each take their own share of the data."
+        )
+
+
+def _broadcast_flag(value: int, dist_run: DistributedRun) -> int:
+    """``value`` from the leader, on every rank.
+
+    A CPU tensor, so a ``cpu:gloo,cuda:nccl`` group sends it by gloo.
+    """
+    import torch.distributed as dist
+
+    flag = torch.tensor([value], dtype=torch.long)
+    dist.broadcast(flag, src=_leader(dist_run))
+    return int(flag.item())
+
+
+def _announcing_generator(dist_run: DistributedRun | None) -> tuple[Any, Any]:
+    """The generator the writing rank hands ``datasets``, and the function that tells the other ranks whether it
+    ran.
+
+    ``Dataset.from_generator`` does not call the generator when its cache already holds the fingerprint's rows, so
+    under placement ``tp`` the other ranks cannot know in advance whether to run the shared steps: running them alone
+    would wait forever on a collective the writing rank never makes. The generator announces that it started before
+    its first step, and a generation that ends without starting announces that it did not. Each run announces once.
+    """
+    if dist_run is None:
+        return analysis_store_generator, lambda started: None
+    announced = False
+
+    def announce(started: bool) -> None:
+        nonlocal announced
+        if not announced:
+            announced = True
+            _broadcast_flag(int(started), dist_run)
+
+    def generator(**gen_kwargs: Any):
+        announce(True)
+        yield from analysis_store_generator(**gen_kwargs)
+
+    return generator, announce
+
+
+def _follow_generation(gen_kwargs: dict, dist_run: DistributedRun) -> None:
+    """Run the steps of the writing rank's generation alongside it, discarding the rows.
+
+    Under placement ``tp`` each step is computed by all ranks together (the split layers' collectives), so a rank
+    that writes nothing still runs every step. It waits for the writing rank's announcement first, and runs nothing
+    when the writing rank's cache served the rows without generating them.
+    """
+    if _broadcast_flag(0, dist_run):
+        for _ in analysis_store_generator(**gen_kwargs):
+            pass
+
+
+def _share_store(
+    dataset: Dataset | None, save_dir: Path, it_format_kwargs: dict, dist_run: DistributedRun | None
+) -> Dataset:
+    """Save the writing rank's dataset, and give every rank the saved store.
+
+    Under placement ``tp`` the writing rank saves it and the other ranks load the same files once it has: ranks on
+    several hosts need a filesystem they share. The writing rank's directory is used on every rank, since each
+    rank's own session may name another.
+    """
+    if dist_run is None:
+        assert dataset is not None
+        dataset.save_to_disk(save_dir)
+        return dataset
+    import torch.distributed as dist
+    from datasets import load_from_disk
+
+    if dist_run.writes_outputs:
+        assert dataset is not None
+        dataset.save_to_disk(save_dir)
+    shared = [str(save_dir)]
+    dist.broadcast_object_list(shared, src=_leader(dist_run), device=torch.device("cpu"))
+    dist.barrier()
+    if dataset is not None:
+        return dataset
+    loaded = load_from_disk(shared[0])
+    assert isinstance(loaded, Dataset)
+    return loaded.with_format("interpretune", **it_format_kwargs)
+
+
 def core_analysis_loop(
     module: ITModule,
     datamodule: ITDataModule,
@@ -597,9 +711,14 @@ def core_analysis_loop(
     max_epochs: int = 1,
     analysis_cfg: AnalysisCfg | None = None,
     *args,
+    dist_run: DistributedRun | None = None,
     **kwargs,
 ):
-    """Create dataset using the ITAnalysisFormatter for optimal handling of analysis data."""
+    """Create dataset using the ITAnalysisFormatter for optimal handling of analysis data.
+
+    Under a ``dist_run`` (placement ``tp``) every rank runs every step, one rank writes the store, and every rank
+    returns it. Weights an op reads directly are gathered whole once for the run (:func:`gathered_weights`).
+    """
     # Initialize analysis configuration if needed
     kwargs = maybe_init_analysis_cfg(module, analysis_cfg, **kwargs)
     if analysis_cfg is not None:
@@ -611,28 +730,32 @@ def core_analysis_loop(
     grad_enabled_before = torch.is_grad_enabled()
     _call_itmodule_hook(module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
     try:
-        # Generate features and format parameters
-        features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
+        with gathered_weights():
+            # Generate features and format parameters
+            features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
 
-        # Create generator kwargs dictionary
-        gen_kwargs = dict(
-            module=module,
-            datamodule=datamodule,
-            limit_analysis_batches=limit_analysis_batches,
-            step_fn=step_fn,
-            max_epochs=max_epochs,
-        )
+            # Create generator kwargs dictionary
+            gen_kwargs = dict(
+                module=module,
+                datamodule=datamodule,
+                limit_analysis_batches=limit_analysis_batches,
+                step_fn=step_fn,
+                max_epochs=max_epochs,
+                dist_run=dist_run,
+            )
 
-        # Generate the dataset
-        dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
+            # Generate the dataset (None on a rank of a 'tp' run that does not write it)
+            dataset = generate_analysis_dataset(
+                module, features, it_format_kwargs, gen_kwargs, dist_run=dist_run, **kwargs
+            )
 
-        save_dir = Path(module.analysis_cfg.output_store.save_dir)  # protocol provides output_store
-        dataset.save_to_disk(save_dir)
-        # Assign dataset to analysis store
-        module.analysis_cfg.output_store.dataset = dataset  # protocol provides output_store
+            save_dir = Path(module.analysis_cfg.output_store.save_dir)  # protocol provides output_store
+            dataset = _share_store(dataset, save_dir, it_format_kwargs, dist_run)
+            # Assign dataset to analysis store
+            module.analysis_cfg.output_store.dataset = dataset  # protocol provides output_store
 
-        # Run analysis end hooks
-        _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
+            # Run analysis end hooks
+            _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
     finally:
         torch.set_grad_enabled(grad_enabled_before)
     return module.analysis_cfg.output_store  # protocol provides output_store
@@ -653,7 +776,7 @@ class AnalysisRunner(SessionRunner):
 
     def _run(self, phase, loop_fn, step_fn: str | None = None, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = AllPhases[phase]
-        phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
+        phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__, dist_run=getattr(self, "dist_run", None))
         self.it_session_end()
         return phase_artifacts
 

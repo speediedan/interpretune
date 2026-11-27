@@ -1356,16 +1356,10 @@ broken one. Use the flag when validating the generation path end to end.
 
 When generating explanations against locally imported custom source sets, pass `local_db_url=` explicitly to the explanation helper in this environment. The layer-`0` `gemmascope-2-transcoder-262k-rte` and `gemmascope-2-clt-262k-rte` dashboards both now support `np_moe-max-act-logits`, but that required one helper-side fix: if cached activation batches are missing for a local custom source set, `interpretune.utils.neuronpedia_explanations` now falls back to the feature API payload's embedded `activations` rows instead of hard-failing.
 
-**Planned direction (Wave 2)**: the current locally generated explanations (and the custom dashboards
-they annotate) are local-Neuronpedia-DB resident, so sharing them requires either central Neuronpedia
-DB modification or a full local-DB import on the consumer side. Wave 2 of this workstream intends to
-migrate these artifacts to **user Hugging Face Hub uploaded/cached streamable dashboards** so custom
-source-set dashboards + explanations become easily shareable (stream-on-demand from a user's HF Hub
-repo) rather than dependent on central Neuronpedia database changes. The same hub-artifact
-direction is planned to carry **Jacobian-space (J-lens) artifacts** (readouts, sparse concept
-inventories, patched-run records) once J-lens support lands — scoped and tracked in
-[interpretune#225](https://github.com/interpretune/interpretune/issues/225), co-designed with
-AnalysisStore hub upload/download ([interpretune#124](https://github.com/interpretune/interpretune/issues/124)).
+**Sharing dashboards.** Locally generated dashboards are shared as Hugging Face Hub buckets: publish a corpus with
+`scripts/publish_dashboards_to_hub.py` (see [Publishing generated dashboards to the Hub](#publishing-generated-dashboards-to-the-hub)),
+and a consumer finds it through the trusted-publisher discovery below and imports it into their own local database.
+Explanations generated locally live in that database and are not part of a published corpus.
 
 <a id="hub-dashboard-discovery"></a>
 ### Finding a published corpus: trusted publishers
@@ -1410,8 +1404,7 @@ a `Model` row that broke `/graph` even though graph upload itself was fine.
 Current supported fix:
 
 1. the converter now requires `--model-layers` and writes both `defaultSourceSetName` and `defaultGraphSourceSetName`
-2. the checked-in `gemma-3-1b-it` export examples under `neuronpedia_utils/exports/` have been refreshed to match
-   `gemmascope-2-transcoder-16k`
+2. regenerated `gemma-3-1b-it` bundles carry both fields; re-export an older local bundle rather than importing it
 
 If your local DB was already seeded from a pre-fix bundle, repair that `Model` row once in the live DB. After that, stick
 to regenerated or refreshed bundles rather than re-importing older `model.jsonl` and `release.jsonl` artifacts.
@@ -1476,10 +1469,10 @@ python - <<'PY'
 from pathlib import Path
 from interpretune.utils import import_neuronpedia_export_bundle_local_db
 
-bundle = Path(
-  '${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/'
-    'gemma-3-1b-it/23-gemmascope-2-transcoder-16k'
-)
+import os
+
+export_root = os.environ.get("NEURONPEDIA_EXPORT_ROOT") or Path(os.environ["IT_NP_CACHE"]) / "exports"
+bundle = Path(export_root) / "gemma-3-1b-it/23-gemmascope-2-transcoder-16k"
 summary = import_neuronpedia_export_bundle_local_db(
     bundle,
     local_db_url='postgres://postgres:postgres@127.0.0.1:5432/postgres',
@@ -1511,7 +1504,7 @@ The explanation path now behaves like a layered cache hierarchy:
 
 1. `Explanation` rows in the local Neuronpedia DB
 2. feature-specific Interpretune cache under `IT_NP_CACHE/.../feature-activations/feature-<index>.jsonl.gz`
-3. local Neuronpedia export batches under `<neuronpedia_repo>/.../exports/<model>/<layer-source-set>/activations/batch-*.jsonl.gz`
+3. local Neuronpedia export batches under `${NEURONPEDIA_EXPORT_ROOT:-$IT_NP_CACHE/exports}/<model>/<layer-source-set>/activations/batch-*.jsonl.gz`
 4. remote public activation-batch fallback downloaded into `IT_NP_CACHE/.../activations/batch-<n>.jsonl.gz`
 
 That layering matters because the notebook uses different recovery steps depending on what already exists.
@@ -1572,7 +1565,7 @@ Important detail:
 The relevant pieces are:
 
 1. dashboard generation creates Neuronpedia export bundles under:
-  - `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/<model>/<layer-source-set>`
+  - `${NEURONPEDIA_EXPORT_ROOT:-$IT_NP_CACHE/exports}/<model>/<layer-source-set>`
 2. each bundle includes `activations/batch-*.jsonl.gz`
 3. the localhost concept-direction notebook calls `prepare_local_explanation_backfill(...)` before `ensure_local_feature_explanations(...)`
 4. that helper searches the local export `activations/` batches for the exact feature index and writes a feature-specific Interpretune cache artifact under:
@@ -1607,10 +1600,10 @@ If a localhost notebook reports explanation cache misses:
 4. inspect the notebook’s `local_explanation_prefetch` JSON block
 5. confirm the derived `feature-activations/feature-<index>.jsonl.gz` file exists under `IT_NP_CACHE`
 
-For manual inspection on this host:
+For manual inspection:
 
 ```bash
-find "${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations" -maxdepth 1 -name 'batch-*.jsonl.gz' | head
+find "${NEURONPEDIA_EXPORT_ROOT:-$IT_NP_CACHE/exports}/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations" -maxdepth 1 -name 'batch-*.jsonl.gz' | head
 
 ls -l ${IT_NP_CACHE}/v1/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/feature-activations/
 ```

@@ -348,10 +348,11 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.placement != "single":
+        if self.placement not in ("single", "tp"):
             raise MisconfigurationException(
-                f"The analysis runner supports placement 'single' only, not '{self.placement}': attribution and"
-                " analysis ops read activations and weights in ways not yet designed for data-parallel placement."
+                f"The analysis runner supports placements 'single' and 'tp', not '{self.placement}'. Under 'tp' every"
+                " rank makes every call on the same batches, so a model too large for one device can be analyzed;"
+                " placing the analysis runner's data across ranks is not yet supported (interpretune#803)."
             )
         assert self.it_session is not None and self.it_session.module is not None
         # Adapters read this back through AnalysisRunnerProtocol; the module surface that carries it

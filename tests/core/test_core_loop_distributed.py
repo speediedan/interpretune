@@ -46,6 +46,7 @@ TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
 TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
 TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
 TP_CT_WORKER = Path(__file__).with_name("distributed_tp_ct_worker.py")
+TP_ANALYSIS_WORKER = Path(__file__).with_name("distributed_tp_analysis_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -119,9 +120,16 @@ class TestResolvePlacement:
         with pytest.raises(MisconfigurationException, match="which is a distributed checkpoint, but the"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="single", resume_from=checkpoint_dir)
 
-    def test_analysis_runner_refuses_data_parallel(self):
-        with pytest.raises(MisconfigurationException, match="supports placement 'single' only, not 'ddp'"):
-            AnalysisRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="ddp")
+    @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
+    def test_analysis_runner_refuses_data_parallel(self, placement):
+        with pytest.raises(
+            MisconfigurationException, match=f"supports placements 'single' and 'tp', not '{placement}'"
+        ):
+            AnalysisRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement)
+
+    def test_analysis_runner_takes_tp(self):
+        session = MagicMock()
+        assert AnalysisRunnerCfg(it_session=session, placement="tp").placement == "tp"
 
 
 class TestDistributedDataloader:
@@ -1789,3 +1797,47 @@ def test_transcoder_direct_calls_refuse_an_unenumerated_transcoder_type():
     other.weight = nn.Parameter(torch.zeros(2))
     with pytest.raises(MisconfigurationException, match="only `SingleLayerTranscoder` sets are"):
         transcoder_direct_calls(other)
+
+
+def _launch_tp_analysis(out_dir: Path) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_ANALYSIS_WORKER), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, f"tp analysis run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text(encoding="utf-8")) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+def test_two_rank_tp_analysis_shares_every_step_and_writes_one_store(tmp_path):
+    """Under placement 'tp' the analysis runner's ranks run every step together, in one shared (shuffled) order,
+    and only rank 0 writes the store, which every rank returns.
+
+    The worker's step makes a collective per batch, so a rank running a step alone would hang the run. A second run with
+    the same deterministic fingerprint is served from rank 0's cache: its generator never starts, and the other rank
+    must not start it either. J-lens readouts read the unembedding, the final norm and the embedding whole on split
+    weights, gathering each once per run.
+    """
+    records = _launch_tp_analysis(tmp_path / "run")
+    assert records[0]["fresh"]["rows"] == records[1]["fresh"]["rows"]
+    rows = records[0]["fresh"]["rows"]
+    assert sorted(rows["row"]) == sorted(list(range(10)) * 2)  # two epochs over ten rows
+    assert rows["row"][:10] != rows["row"][10:], "each epoch reshuffles, alike on both ranks"
+    for record in records:
+        assert record["fresh"]["steps"] == 8  # four batches per epoch, on every rank
+    assert records[0]["fresh"]["store_written"] and records[0]["fresh"]["cache_files"]
+    assert not records[1]["fresh"]["store_written"] and not records[1]["fresh"]["cache_files"]
+    for record in records:
+        assert record["keyed_first"]["steps"] == 4
+        assert record["keyed_second"]["steps"] == 0, "a cache hit runs no step on any rank"
+        assert record["keyed_second"]["rows"] == record["keyed_first"]["rows"] == records[0]["keyed_first"]["rows"]
+        weights = record["weights"]
+        assert weights["split_params"] == ["lm_head.weight", "model.embed_tokens.weight"]
+        assert weights["lm_head_local_rows"] == 32  # each rank holds half the vocabulary
+        assert weights["unembed_whole"] and weights["embedding_whole"] and weights["unembed_type"] == "Tensor"
+        assert weights["norm_scale_equal"] and weights["norm_kind"] == "rmsnorm" and weights["readout_equal"]
+        assert weights["gathered_once"] and weights["gathers_outside"] == 2 and weights["outside_fresh"]

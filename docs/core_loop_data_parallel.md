@@ -154,8 +154,27 @@ gets the same graph. Every rank makes every call, since the forward and backward
   then loaded eagerly, and rank 0 loads both on its host.
 - `offload='disk'`, head loading reports and head conductance reports are refused on a split model: they read a whole
   weight, or a head inside a split layer.
-- The attribution runner itself takes one process (`AnalysisRunnerCfg` accepts `placement: single` only), so attribute
-  from a module a core-loop runner has placed.
+- The analysis runner takes `placement: tp` too (next section), so an analysis op can attribute a split model.
+
+### The analysis runner under `tp`
+
+`AnalysisRunnerCfg` accepts `placement: tp` beside `single`, so a model too large for one device can be analyzed. The
+runner places the module as the core loops do, and then:
+
+- every rank runs every step on the same batches, in the same order (a shuffled loader shuffles alike on every rank,
+  and again each epoch), since the split layers' forward and backward passes are shared;
+- only rank 0 writes the store, its generator cache and its files; the other ranks run the same steps, discard their
+  rows, and then load rank 0's saved store, so every rank returns the same store. Ranks on several hosts need a
+  filesystem they share;
+- a store served from the generator cache (a deterministic `dataset_fingerprint`) runs no step on any rank: rank 0
+  tells the others whether its generation started, so none of them runs a step alone;
+- weights an op reads directly rather than through a module call (the J-lens readouts read the unembedding, the final
+  norm and the embedding) are gathered whole when the plan splits them, once per run, so a readout on a split model
+  equals one process's. Head loading and head conductance reports stay refused on a split model, since they read
+  inside split attention layers.
+
+Every rank must take the same data-dependent branches, so seed every rank alike. Transcoders and other latent models
+are whole on every rank, as in the core loops.
 
 ## Models larger than one rank's accelerator
 
@@ -423,7 +442,7 @@ else:
 - A loader that cannot be rebuilt faithfully: not a `DataLoader`, an `IterableDataset`, or a sampler other than
   PyTorch's sequential sampler and its random sampler without replacement (shard such data by rank in the datamodule).
 - Ranks that logged different metric names in an epoch.
-- A data-parallel placement on the analysis runner, since attribution and analysis ops are not yet designed for it.
+- A data-parallel placement (`ddp` or `fsdp2`) on the analysis runner: only `single` and `tp` place it so far.
 
 ## Compositions under `fsdp2`
 
@@ -462,5 +481,7 @@ its tensors are artifacts until then).
   only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
   (tracked in [interpretune#882](https://github.com/interpretune/interpretune/issues/882)).
 
-The design, and the work that remains for attribution and J++ ops, is tracked in
-[interpretune#803](https://github.com/interpretune/interpretune/issues/803).
+The design, and the work that remains for the analysis runner (FSDP2 replication across data shares, sharded
+transcoders and latent models, and FSDP2 shard dimensions above one), is tracked in
+[interpretune#803](https://github.com/interpretune/interpretune/issues/803). Splitting one prompt's attribution across
+ranks is [interpretune#1274](https://github.com/interpretune/interpretune/issues/1274).
