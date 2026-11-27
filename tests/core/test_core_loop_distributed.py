@@ -48,6 +48,7 @@ TP_NNSIGHT_WORKER = Path(__file__).with_name("distributed_tp_nnsight_worker.py")
 TP_CT_WORKER = Path(__file__).with_name("distributed_tp_ct_worker.py")
 TP_ANALYSIS_WORKER = Path(__file__).with_name("distributed_tp_analysis_worker.py")
 DDP_ANALYSIS_WORKER = Path(__file__).with_name("distributed_ddp_analysis_worker.py")
+DDP_OP_STATE_WORKER = Path(__file__).with_name("distributed_ddp_op_state_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -1864,12 +1865,12 @@ def test_batch_share_takes_every_nth_batch_without_padding():
     assert [len(BatchShare(batches, index, 2)) for index in range(2)] == [3, 2]
 
 
-def _launch_ddp_analysis(out_dir: Path) -> list[dict]:
+def _launch_ddp_analysis(out_dir: Path, worker_path: Path = DDP_ANALYSIS_WORKER) -> list[dict]:
     out_dir.mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
     env["CUDA_VISIBLE_DEVICES"] = ""
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
-    worker = [str(DDP_ANALYSIS_WORKER), "--out-dir", str(out_dir)]
+    worker = [str(worker_path), "--out-dir", str(out_dir)]
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
     assert proc.returncode == 0, f"ddp analysis run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
@@ -1884,8 +1885,8 @@ def test_two_rank_ddp_analysis_merges_shares_into_the_one_process_store(tmp_path
     merge into the store one process writes, row for row, which every rank returns.
 
     The step runs a backward pass through a replicated layer, and the five batches split three and two, so FSDP2's
-    gradient reduction (off for the run) would leave a rank waiting forever. An op declaring cross-batch state and a
-    deterministic generator-cache key are refused.
+    gradient reduction (off for the run) would leave a rank waiting forever. A deterministic generator-cache key is
+    refused.
     """
     records = _launch_ddp_analysis(tmp_path / "run")
     reference = records[0]["reference"]
@@ -1901,5 +1902,46 @@ def test_two_rank_ddp_analysis_merges_shares_into_the_one_process_store(tmp_path
             assert sorted(examples) == list(range(10))
         assert record["shuffled"]["examples"][:5] != record["shuffled"]["examples"][5:]
         assert record["limited"]["batch_idx"] == [0, 1, 2]
-        assert "running_mean declare cross-batch `op_state`" in record["refusals"]["op_state"]
         assert "Leave `dataset_fingerprint`" in record["refusals"]["fingerprint"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_two_rank_ddp_keeps_cross_batch_op_state_exact(tmp_path):
+    """An op whose state runs across batches gives every row its one-process value under 'ddp': replayed after the
+    merge when it is the composition's last op, and run in a serial prefix pass when a later op reads its output.
+
+    Each rank's own running total differs from one process's after the first batch (3 and 2 of 5 batches), so neither
+    store could match without the mechanism.
+    """
+    records = _launch_ddp_analysis(tmp_path / "run", DDP_OP_STATE_WORKER)
+    for name in ("terminal", "consumed"):
+        reference = records[0][f"{name}_reference"]
+        assert len(reference["running"]) == 5
+        assert reference["running"] == sorted(reference["running"]), "a running total over positive outputs"
+        for record in records:
+            assert record[name] == reference, f"{name}: the merged store is the one-process store"
+    assert records[0]["consumed"]["scaled"] == records[0]["consumed_reference"]["scaled"]
+
+
+def test_share_execution_plans_replay_for_a_last_stateful_op_and_a_prefix_for_a_consumed_one():
+    from types import SimpleNamespace
+
+    from interpretune.analysis.share_exec import plan_share_execution
+
+    def op(name, stateful=False):
+        return SimpleNamespace(name=name, op_state=object() if stateful else None)
+
+    def composite(*members):
+        return SimpleNamespace(name=".".join(m.name for m in members), op_state=None, composition=list(members))
+
+    assert plan_share_execution(composite(op("a"), op("b"))) is None
+    terminal = plan_share_execution(composite(op("a"), op("s", True)))
+    assert terminal is not None and (terminal.replay_op, terminal.prefix_end) == ("s", None)
+    consumed = plan_share_execution(composite(op("a"), op("s", True), op("b")))
+    assert consumed is not None and (consumed.replay_op, consumed.prefix_end) == (None, 1)
+    both = plan_share_execution(composite(op("s", True), op("b"), op("t", True)))
+    assert both is not None and (both.replay_op, both.prefix_end) == ("t", 0)
+    single = plan_share_execution(op("s", True))
+    assert single is not None and (single.replay_op, single.prefix_end) == ("s", None)
