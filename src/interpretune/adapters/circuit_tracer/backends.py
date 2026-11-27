@@ -36,6 +36,58 @@ def _require_single_prompt(batch_size: int) -> None:
         )
 
 
+_SOURCE_EDGE_ATOL = 1e-5
+_SOURCE_EDGE_RTOL = 1e-5
+# Units of the edges' own machine epsilon, at the largest edge, added to the absolute floor. Each layer's cut recomputes
+# the same edges in a different accumulation order, so in a low precision they differ by about one rounding step at
+# the scale of the whole vector: gemma-2-2b in bfloat16 on an RTX 4090 differed by 0.0215 with a largest edge of 5.12,
+# under one bfloat16 step there (0.03125). In float32 the term is negligible and the fixed floor governs.
+_SOURCE_EDGE_EPS_UNITS = 2.0
+
+
+def _head_source_report(parts: list[Any]) -> dict[str, Any]:
+    """Retain the raw source partition and verify that every attention cut attributes the same sources."""
+    reference = parts[0]
+    nodes = reference.active_features.detach().cpu()
+    edges = reference.total.detach().cpu()
+    n_features = nodes.shape[0]
+    n_errors = reference.n_layers * reference.n_pos
+    if nodes.ndim != 2 or nodes.shape[1] != 3 or edges.shape != (n_features + n_errors + reference.n_pos,):
+        raise ValueError("head_loadings returned an incomplete source-node layout")
+    for part in parts:
+        if (
+            (part.n_layers, part.n_pos) != (reference.n_layers, reference.n_pos)
+            or not torch.equal(part.active_features.detach().cpu(), nodes)
+            or part.total.shape != edges.shape
+        ):
+            raise ValueError(f"head_loadings layer {part.layer} attributes different source nodes")
+    if not torch.isfinite(edges).all():
+        raise ValueError("head_loadings returned nonfinite source edges")
+    # Compared in float32 so the comparison adds no rounding of its own; the tolerance follows the edges' precision.
+    ref = edges.float()
+    scale = float(ref.abs().max())
+    atol = _SOURCE_EDGE_ATOL + _SOURCE_EDGE_EPS_UNITS * torch.finfo(edges.dtype).eps * scale
+    bound = atol + _SOURCE_EDGE_RTOL * ref.abs()
+    worst = max(parts, key=lambda part: float(((part.total.detach().cpu().float() - ref).abs() - bound).max()))
+    gap = (worst.total.detach().cpu().float() - ref).abs()
+    if bool((gap > bound).any()):
+        raise ValueError(
+            f"head_loadings layer {worst.layer} attributes different source edges than layer {reference.layer}: "
+            f"largest difference {float(gap.max()):.3g} against atol {atol:.3g} + rtol {_SOURCE_EDGE_RTOL:g} times "
+            f"the edge (largest edge {scale:.3g}, {edges.dtype})"
+        )
+    return {
+        "head_loading_feature_nodes": nodes,
+        "head_loading_feature_edges": edges[:n_features],
+        "head_loading_error_edges": edges[n_features : n_features + n_errors].reshape(
+            reference.n_layers, reference.n_pos
+        ),
+        "head_loading_embedding_edges": edges[n_features + n_errors :],
+        "head_loading_head_edges": torch.stack([part.per_head.sum(1) for part in parts]).detach().cpu(),
+        "head_loading_bypass_edges": torch.stack([part.bypass.sum() for part in parts]).detach().cpu(),
+    }
+
+
 class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
 
@@ -762,8 +814,10 @@ class CircuitTracerAnalysisBackend:
         """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
 
         A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
-        same way as the edges together. Circuit-tracer selects the backend's implementation and refuses unsupported
-        backends, along with a layer no path into the target passes.
+        same way as the edges together. Raw source edges and head/bypass sums are retained so a multi-prompt report can
+        normalize once against measured decisions. The edge total excludes constant offsets and is not the decision
+        itself. Circuit-tracer selects the backend's implementation and refuses unsupported backends, along with a layer
+        no path into the target passes.
         """
         from circuit_tracer.attribution.head_loadings import head_loadings
 
@@ -782,6 +836,7 @@ class CircuitTracerAnalysisBackend:
                 )
         if not parts:
             raise ValueError("head_loadings was given no layers to report")
+        sources = _head_source_report(parts)
         total = float(parts[0].total.sum())
         if total == 0.0:
             raise ValueError("the edges into this target sum to zero, so no head has a share of them")
@@ -791,6 +846,10 @@ class CircuitTracerAnalysisBackend:
             "head_loading_bypass_shares": torch.stack([part.bypass.sum() / total for part in parts]).detach().cpu(),
             "head_loading_total": total,
             "head_loading_partition_errors": torch.tensor([part.partition_error for part in parts]),
+            "head_loading_regime_json": json.dumps(
+                {"freeze_attention": freeze_attention, "freeze_norms": freeze_norms}, sort_keys=True
+            ),
+            **sources,
         }
 
     def head_conductance_report(
