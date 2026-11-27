@@ -1073,6 +1073,10 @@ class AnalysisOp:
                 analysis_inputs=kwargs.get("analysis_inputs"),
             )
 
+            from interpretune.analysis.share_exec import active_share
+
+            if (share := active_share()) is not None:  # under data shares, keep what a replay needs
+                share.record(module, self, analysis_batch, batch, batch_idx)
             # Use unified call interface
             result = self._call_with_resolved_params(module, analysis_batch, batch, batch_idx, **kwargs)
             return result
@@ -1148,7 +1152,21 @@ class CompositeAnalysisOp(AnalysisOp):
             self._validate_intervention_axes(module)
             self._validate_techniques(module)
 
-        for op in self.composition:
+        from interpretune.analysis.share_exec import active_share
+
+        # Under data shares (the analysis runner's 'ddp'), a stateful op a later op consumes runs in a serial prefix
+        # pass, and a stateful last op is replayed after the merge (`interpretune.analysis.share_exec`).
+        share = active_share()
+        first = 0
+        if share is not None:
+            current_batch, first = share.start(module, current_batch, batch_idx)
+        for index, op in enumerate(self.composition):
+            if index < first:
+                continue
+            if share is not None:
+                if share.stops_before(index):
+                    break
+                share.record(module, op, current_batch, batch, batch_idx)
             with op.active_ctx_key(self.name):
                 with op._bound_analysis_batch_context(
                     module,

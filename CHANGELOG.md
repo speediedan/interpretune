@@ -44,7 +44,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
-- The analysis runner takes `placement: ddp` (FSDP2 replication): each rank analyzes every N-th batch of the one-process batch sequence with FSDP2's gradient reduction off, and the shares merge by batch into the store one process would write, row for row. Ops declaring `op_state` and a deterministic `dataset_fingerprint` are refused under it for now ([#803](https://github.com/interpretune/interpretune/issues/803))
+- Ops with cross-batch `op_state` run under the analysis runner's `ddp` with every row's one-process value: a stateful last op is replayed after the shares are merged, over the inputs each rank recorded, and a stateful op whose output a later op reads runs in a serial prefix pass over the whole batch sequence before the rest runs on the shares (`interpretune.analysis.share_exec`). `concept_direction` and the `attribution_from_concept` and `intervention_from_concept` composites are no longer refused under `ddp` ([#803](https://github.com/interpretune/interpretune/issues/803))
+
+- The analysis runner takes `placement: ddp` (FSDP2 replication): each rank analyzes every N-th batch of the one-process batch sequence with FSDP2's gradient reduction off, and the shares merge by batch into the store one process would write, row for row. A deterministic `dataset_fingerprint` is refused under it ([#803](https://github.com/interpretune/interpretune/issues/803))
 
 - The analysis runner takes `placement: tp`, so a model split across ranks can be analyzed: every rank runs every step on the same batches, rank 0 writes the store and every rank returns it, and a store served from the generator cache runs no step on any rank. The J-lens readouts read a split unembedding, final norm and embedding whole, gathered once per run ([#803](https://github.com/interpretune/interpretune/issues/803))
 
