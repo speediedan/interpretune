@@ -11,7 +11,7 @@ metadata:
 
 ## Overview
 
-Registry entries live in TWO places split by consumer: shipping example entries live in decomposed component trees under `src/it_examples/examples/<task>/` (an `it_component.yaml` manifest + self-contained `configs/<key>.yaml` files with derived keys `<task_variant>.<model>.<composition>[.<descriptor>]`, composition `+`-joined in canonical order; hydrated per-key by `MODULE_EXAMPLE_REGISTRY`, no `tests` dependencies allowed), while `tests/test_module_registry.yaml` holds the pytest-scale entries whose classes live in `tests.modules` (hydrated — together with the example entries — by `TEST_MODULE_REGISTRY` in `tests/module_registry.py`). Session fixtures resolve base configurations through `TEST_MODULE_REGISTRY`, so both families remain addressable in tests. Register test-only entries in the tests YAML; add a new example configuration file (plus its manifest `configs:` row) only if every `class_path` it references ships — the loader parity-checks filename == manifest key == key derived from the config's structured fields.
+Registry entries live in TWO places split by consumer: shipping example entries live in decomposed component trees under `components/<task>/` in interpretune/examples (an `it_component.yaml` manifest + self-contained `configs/<key>.yaml` files with derived keys `<task_variant>.<model>.<composition>[.<descriptor>]`, composition `+`-joined in canonical order; hydrated per-key by `MODULE_EXAMPLE_REGISTRY`, no `tests` dependencies allowed), while `tests/test_module_registry.yaml` holds the pytest-scale entries whose classes live in `tests.modules` (hydrated — together with the example entries — by `TEST_MODULE_REGISTRY` in `tests/module_registry.py`). Session fixtures resolve base configurations through `TEST_MODULE_REGISTRY`, so both families remain addressable in tests. Register test-only entries in the tests YAML; add a new example configuration file (plus its manifest `configs:` row) only if every `class_path` it references ships — the loader parity-checks filename == manifest key == key derived from the config's structured fields.
 
 ## Why Register Example Modules?
 
@@ -247,7 +247,7 @@ gpt2.rte.nnsight:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -261,7 +261,7 @@ gpt2.rte.nnsight:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
             target_adapters: nnsight
         hf_from_pretrained_cfg:
@@ -317,7 +317,7 @@ If tests require `@RunIf(standalone=True)` despite registry entry:
 
 ## Related Files
 
-- `src/it_examples/examples/<task>/` - Component trees (`it_component.yaml` manifest + `configs/<key>.yaml`)
+- `components/<task>/` in interpretune/examples - Component trees (`it_component.yaml` manifest + `configs/<key>.yaml`)
 - `tests/test_module_registry.yaml` - Test-only registry entries
 - `tests/module_registry.py` - Hydrates both families into `TEST_MODULE_REGISTRY`
 - `tests/configuration.py` - `gen_session_cfg()` function

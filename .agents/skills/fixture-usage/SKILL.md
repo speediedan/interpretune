@@ -22,7 +22,7 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 
 ## Critical: TEST_MODULE_REGISTRY Dependency
 
-**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/test_module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/examples/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/test_module_registry.yaml`; the example components (`speediedan/rte`, `speediedan/prompt-configs`) resolve from the warmed components cache. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
 
 ### How Fixture Resolution Works
  - session fixture factory example
@@ -413,7 +413,7 @@ gemma2.rte.circuit_tracer_tl:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -427,10 +427,10 @@ gemma2.rte.circuit_tracer_tl:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:

@@ -105,7 +105,7 @@ result = it.intervention_from_concept(session.module, ...)
 ### Where to go next
 
 - New to the framework? Start with {doc}`concepts` — sessions, protocols, ops, and `AnalysisStore`.
-- Want something runnable? The {doc}`examples` are executable notebooks.
+- Want something runnable? The {doc}`examples` are executable notebooks, in the interpretune/examples repository.
 - Building your own analysis? See {doc}`usage/custom_ops_composition_guide`.
 - Adding a backend? See {doc}`usage/adapter_development_guide`.
 
@@ -198,10 +198,8 @@ usage/verifying_dashboard_generation
 :caption: Examples
 :maxdepth: 1
 :hidden:
-:glob:
 
 examples
-notebooks/**
 ```
 
 ```{toctree}

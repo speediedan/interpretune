@@ -1,6 +1,6 @@
 """Run the doctests that used to be collected from ``src/interpretune`` (Phase 4 two-root migration).
 
-The suite invocation dropped ``src/interpretune`` as a collection root (`pytest tests src/it_examples/tests`),
+The suite invocation dropped ``src/interpretune`` as a collection root (`pytest tests`),
 which would have silently retired the five docstring examples ``--doctest-modules`` collected there. They stay
 in the docstrings (documentation stays with the code); this module keeps them executing from the main test
 root.

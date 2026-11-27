@@ -108,7 +108,7 @@ Use the local Azure reproduction flow in `distributed-insight` to recreate the c
 Useful commands:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --reruns 2 --reruns-delay 5
+CUDA_VISIBLE_DEVICES='' python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --reruns 2 --reruns-delay 5
 IT_RUN_CUDA_TESTS=1 python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --durations=50 --reruns 2 --reruns-delay 5
 python -m gpu_epsilon.special_tests --lease --mark_type=standalone
 python -m gpu_epsilon.special_tests --lease --mark_type=profile_ci

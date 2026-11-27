@@ -3,8 +3,8 @@ static notebook-form cases.
 
 nbpress (a git-deps pin) publishes and renders the notebooks and is tested in its own repository. The published library
 keeps a small reader of nbpress's configuration and hashes so it does not depend on nbpress; these tests hold the two to
-the same answers, keep the three places nbpress is pinned at one commit, and run the notebook-form cases against
-interpretune's own published notebooks.
+the same answers and keep the three places nbpress is pinned at one commit. Interpretune's example notebooks live in
+interpretune/examples, so these cases read synthetic repositories.
 """
 
 from __future__ import annotations
@@ -69,9 +69,10 @@ class TestReaderAgreesWithNbpress:
             assert compute_file_hash(tmp_path / name) == nbpress_publish.compute_file_hash(tmp_path / name), name
         assert compute_file_hash(tmp_path / "lf.py") == compute_file_hash(tmp_path / "crlf.py")
 
-    def test_both_read_interpretunes_table_to_the_same_inputs_and_keys(self):
-        ours = PublisherConfig.from_pyproject(REPO_ROOT)
-        theirs = nbpress_publish.PublisherConfig.from_pyproject(REPO_ROOT)
+    def test_both_read_a_table_to_the_same_inputs_and_keys(self, tmp_path):
+        root = _repo(tmp_path, table='hash_key_base = "examples"\n')
+        ours = PublisherConfig.from_pyproject(root)
+        theirs = nbpress_publish.PublisherConfig.from_pyproject(root)
         assert (ours.dev_dir, ours.publish_dir, ours.colab_repo, ours.colab_branch) == (
             theirs.dev_dir,
             theirs.publish_dir,
@@ -81,7 +82,7 @@ class TestReaderAgreesWithNbpress:
         files = publishable_files(ours.dev_dir)
         assert files == nbpress_publish.publishable_files(theirs.dev_dir)
         assert [ours.hash_key(p) for p in files] == [theirs.hash_key(p) for p in files]
-        assert ours.hash_key(files[0]).startswith("notebooks/dev/"), "the stored hash keys must keep resolving"
+        assert ours.hash_key(files[0]) == "dev/demo.ipynb", "keys are relative to hash_key_base"
 
     def test_a_file_nbpress_just_published_reads_as_current_and_an_edit_as_stale(self, tmp_path):
         root = _repo(tmp_path)
@@ -154,12 +155,3 @@ class TestForbiddenImportsPositiveControl:
 
         with pytest.raises(AssertionError, match="import the pip form directly"):
             Real().test_published_notebooks_avoid_the_forbidden_imports(published)
-
-
-class TestInterpretuneNotebookForm(NotebookFormConformance):
-    """The notebook-form cases, run against interpretune's own published notebooks."""
-
-    root = REPO_ROOT
-    # `exp` is the concept-direction component's package: the latent-dynamics notebook imports it from the snapshot it
-    # fetches, after the reader opts into that component's code, so no environment has it installed
-    ignored_imports = ("exp",)

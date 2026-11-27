@@ -71,7 +71,7 @@ components:
   - repo_id: speediedan/rte
     revision: 4e58126454837a6572b13c9d53c1af15e0605478
   # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
-  # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
+  # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache.
   - repo_id: speediedan/prompt-configs
     revision: 3d8b9710061283dd14c86a46f0c0649b5e262db0
   # The task-neutral prompt-analysis component the circuit-tracer notebooks load (free-form prompts, no task head).

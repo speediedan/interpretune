@@ -24,7 +24,6 @@ def _collect(**env_overrides: str) -> subprocess.CompletedProcess:
             "-m",
             "pytest",
             "tests",
-            "src/it_examples/tests",
             "-q",
             "--collect-only",
             "-p",

@@ -82,16 +82,6 @@ PY
         set -e
         bash .azure-pipelines/assert_surface.sh /tmp/cli_out.txt 45 0 "CLI instantiation" "$rc"
         ;;
-    notebooks)
-        # 5 expected skips, measured from a real run: see readme-flow-gpu.yml.
-        set +e
-        env -u PYTHONPATH PATH="${VENV}/bin:${PATH}" PYTHONPATH="${PWD}/src:${PWD}" "$PY" -m pytest \
-            src/it_examples/tests/test_notebooks.py -v -rs --durations=25 2>&1 | tee /tmp/nb_out.txt
-        rc=${PIPESTATUS[0]}
-        set -e
-        rm -rf .pytest_cache || true
-        bash .azure-pipelines/assert_surface.sh /tmp/nb_out.txt 16 5 "published notebooks" "$rc"
-        ;;
     *)
         echo "unknown command ${1}" >&2; exit 2 ;;
 esac

@@ -65,7 +65,7 @@ def test_the_gpu_phases_run_configured_marks():
 
 
 def test_both_roots_are_collected_under_package_coverage():
-    assert CONFIG.collect_dirs == ("tests", "src/it_examples/tests")
+    assert CONFIG.collect_dirs == ("tests",)
     assert {"--cov=src/interpretune", "--cov-append"} <= set(CONFIG.exec)
     (override,) = CONFIG.exec_overrides
     assert override["env"] == "COVERAGE_ANALYSIS_CONFIG_FILE" and "--cov-config={value}" in override["exec"]

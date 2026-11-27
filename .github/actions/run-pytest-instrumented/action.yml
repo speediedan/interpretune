@@ -110,11 +110,11 @@ runs:
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
           echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-          PYTEST_CMD="pytest tests src/it_examples/tests -v --durations=50 --reruns 2 --reruns-delay 10 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="pytest tests -v --durations=50 --reruns 2 --reruns-delay 10 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         else
           # Using pytest-cov ensures coverage starts before test collection imports
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
-          PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --durations=50 --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --durations=50 --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         if [ "$HUB_OFFLINE" = "1" ] && [ -z "$PYTEST_FILTER_PATTERN" ]; then
           # The matrix jobs run concurrently and the Hub rate limit is shared across them, so the suite runs
@@ -123,7 +123,7 @@ runs:
           echo "Running the suite with HF_HUB_OFFLINE=1 against the warmed Hub cache."
           HF_HUB_OFFLINE=1 eval $PYTEST_CMD
           echo "Running the hf_live tests online."
-          python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v -m hf_live --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}-live.xml
+          python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v -m hf_live --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}-live.xml
         else
           eval $PYTEST_CMD
         fi

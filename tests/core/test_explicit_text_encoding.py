@@ -21,13 +21,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCANNED_ROOTS = ("src", "tests", "scripts", "requirements")
 
-# Trees this repository does not own the text of: imported research code, vendored skills, and one component published
-# from its own lane (its reads change with its next publish).
+# Trees this repository does not own the text of: imported research code.
 EXEMPT_PREFIXES = (
     "tests/ioi_parity/",
     "tests/mech_interp_parity/",
     "tests/concept_direction_approach_parity/",
-    "src/it_examples/examples/looped_lens/",
 )
 
 

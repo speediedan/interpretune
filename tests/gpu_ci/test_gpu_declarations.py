@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -107,37 +106,6 @@ def test_an_empty_special_phase_fails():
 def test_an_empty_special_phase_passes_when_declared():
     proc = _special_tests("--filter_pattern=no_test_matches_this_pattern_xyz", "--allow-empty")
     assert proc.returncode == 0, proc.stdout[-2000:]
-
-
-def test_the_special_phases_collect_the_example_tests():
-    """Special-tier tests under src/it_examples/tests were never collected by the special-test harness."""
-    env = {**os.environ, "IT_RUN_OPTIONAL_TESTS": "1", "CUDA_VISIBLE_DEVICES": ""}
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "tests",
-            "src/it_examples/tests",
-            "-q",
-            "--collect-only",
-            "-p",
-            "no:cacheprovider",
-            "-k",
-            "test_sae_lens_notebooks",
-        ],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert "test_sae_lens_notebooks" in proc.stdout, proc.stdout[-2000:]
-    # the special-test runner collects both roots (configured in pyproject.toml)
-    runner = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["gpu-epsilon"][
-        "special-tests"
-    ]
-    assert runner["collect-dirs"] == ["tests", "src/it_examples/tests"]
 
 
 @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0)

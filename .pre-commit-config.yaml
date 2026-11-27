@@ -51,12 +51,6 @@ repos:
             (?x)^(
                 docs/source/_static/images/fts/fts_explicit_loss_anim.gif
                 |docs/benchmark_artifacts/.*\.html
-                # Executed notebooks rendered on the docs site. Outputs are base64 blobs (plots,
-                # rendered HTML tables), so these exceed the limit by construction -- that payload is
-                # the entire point of the artifact lane. They are excluded from the sdist by
-                # `prune docs` in MANIFEST.in, so they never ship to a `pip install`, and the
-                # notebooks users actually clone stay stripped in src/it_examples/notebooks/publish.
-                |docs/notebook_artifacts/.*\.ipynb
             )$
       - id: detect-private-key
 
@@ -101,12 +95,6 @@ repos:
     rev: b4a62204ac84578baaa1d7373d39f2d8a9090de5  # frozen: v0.1.0
     hooks:
       - id: nbpress-strip
-        # docs/notebook_artifacts holds EXECUTED copies whose outputs are the entire point --
-        # they are what the docs site renders. Stripping them would silently empty every
-        # example page. They are excluded from the sdist via `prune docs` in MANIFEST.in.
-        exclude: ^docs/notebook_artifacts/
-      - id: nbpress-publish
-        files: ^src/it_examples/notebooks/dev/.*\.ipynb$
 
   - repo: local
     hooks:

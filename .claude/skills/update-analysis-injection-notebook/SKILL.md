@@ -8,6 +8,9 @@ metadata:
 compatibility: Requires bash, git, Python 3.11+, uv, and access to the Interpretune repository. GPU required for notebook test execution (standalone tests).
 ---
 
+> The notebooks this skill updates live in the [interpretune/examples](https://github.com/interpretune/examples)
+> repository: every path below is relative to a checkout of it.
+
 # Update Analysis Injection Notebook Skill
 
 This skill guides the process of updating an Interpretune analysis injection notebook and its supporting files when an upstream target package (e.g., `circuit-tracer`) changes versions. It covers identifying breaking changes, fixing hook regex patterns, updating documentation, and validating everything end-to-end.
@@ -36,7 +39,7 @@ Before running this skill, gather the following:
 2. **Target package name** — The upstream package being updated (e.g., `circuit-tracer`)
 3. **Old version/SHA** — The previous package version and git commit SHA (e.g., `0.1.0` / `fe1743f`)
 4. **New version/SHA** — The new package version and git commit SHA (e.g., `0.4.0` / `14cc3e8`)
-5. **Test path and parameterization** — The pytest path to the notebook test (e.g., `src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]`)
+5. **Test path and parameterization** — The pytest path to the notebook test (e.g., `tests/tutorials/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]`)
 6. **Venv name** — The development environment to use (e.g., `it_latest`)
 7. **Local package repo path** — Path to the local clone of the target package (e.g., `~/repos/circuit-tracer`)
 8. **[Optional] Report output location** — Defaults to `~/repos/distributed-insight/project_admin/interpretune/handoff_docs/` or `/tmp/`
@@ -60,7 +63,7 @@ Before running this skill, gather the following:
    Read the notebook's `analysis_injection_config.yaml` and extract the unique `file_path` values from `file_hooks`:
 
    ```bash
-   grep 'file_path:' src/it_examples/notebooks/dev/<notebook>/analysis_injection_config.yaml | sort -u
+   grep 'file_path:' tutorials/dev/<notebook>/analysis_injection_config.yaml | sort -u
    ```
 
 2. **Diff the target package between old and new versions**:
@@ -92,7 +95,7 @@ Before running this skill, gather the following:
    ```python
    import re, yaml, inspect, importlib
 
-   with open('src/it_examples/notebooks/dev/<notebook>/analysis_injection_config.yaml') as f:
+   with open('tutorials/dev/<notebook>/analysis_injection_config.yaml') as f:
        config = yaml.safe_load(f)
 
    package_root = "<package_import_name>"  # e.g., "circuit_tracer"
@@ -130,7 +133,7 @@ Before running this skill, gather the following:
 3. **Also check notebook inline overrides** — some notebooks define `config_overrides` dicts in code cells that contain additional regex patterns. Search for these:
 
    ```bash
-   grep -n "regex_pattern\|config_overrides" src/it_examples/notebooks/dev/<notebook>/<notebook>.ipynb
+   grep -n "regex_pattern\|config_overrides" tutorials/dev/<notebook>/<notebook>.ipynb
    ```
 
 ### Phase 3: Update Configuration Files
@@ -151,7 +154,7 @@ Before running this skill, gather the following:
 
    ```python
    # Check what variables the analysis point function accesses
-   grep "local_keys\|context_keys" src/it_examples/notebooks/dev/<notebook>/analysis_points.py
+   grep "local_keys\|context_keys" tutorials/dev/<notebook>/analysis_points.py
    ```
 
    - If using `insert_after: true`, variables computed on the matched line ARE available
@@ -160,7 +163,7 @@ Before running this skill, gather the following:
 
 3. **Update the dev config**:
 
-   Edit `src/it_examples/notebooks/dev/<notebook>/analysis_injection_config.yaml`:
+   Edit `tutorials/dev/<notebook>/analysis_injection_config.yaml`:
    - Update `settings.target_package_version` to the new version
    - Update broken `regex_pattern` values
    - Flip `insert_after` if the insertion semantics changed
@@ -171,11 +174,11 @@ Before running this skill, gather the following:
 
 5. **Update the publish config**:
 
-   Edit `src/it_examples/notebooks/publish/<notebook>/analysis_injection_config.yaml` with the same changes. Verify dev and publish configs are consistent:
+   Edit `tutorials/publish/<notebook>/analysis_injection_config.yaml` with the same changes. Verify dev and publish configs are consistent:
 
    ```bash
-   diff src/it_examples/notebooks/dev/<notebook>/analysis_injection_config.yaml \
-        src/it_examples/notebooks/publish/<notebook>/analysis_injection_config.yaml
+   diff tutorials/dev/<notebook>/analysis_injection_config.yaml \
+        tutorials/publish/<notebook>/analysis_injection_config.yaml
    ```
 
    The only expected differences should be notebook-specific (e.g., Colab-specific overrides). Version numbers and regex patterns should match.
@@ -189,7 +192,7 @@ Before running this skill, gather the following:
    Search for old API patterns in the notebook:
 
    ```bash
-   grep -n "<old_function_signature>" src/it_examples/notebooks/dev/<notebook>/<notebook>.ipynb
+   grep -n "<old_function_signature>" tutorials/dev/<notebook>/<notebook>.ipynb
    ```
 
    For each match in a markdown cell, update the code snippet to reflect the new API. Since notebooks are JSON, use a Python script for reliable editing:
@@ -198,7 +201,7 @@ Before running this skill, gather the following:
    import json
 
    for nb_path in ['dev/<notebook>/<notebook>.ipynb', 'publish/<notebook>/<notebook>.ipynb']:
-       full_path = f'src/it_examples/notebooks/{nb_path}'
+       full_path = f'tutorials/{nb_path}'
        with open(full_path) as f:
            nb = json.load(f)
 
@@ -217,7 +220,7 @@ Before running this skill, gather the following:
    ```python
    import json
 
-   nb_path = 'src/it_examples/notebooks/dev/<notebook>/<notebook>.ipynb'
+   nb_path = 'tutorials/dev/<notebook>/<notebook>.ipynb'
    with open(nb_path) as f:
        nb = json.load(f)
 
@@ -238,7 +241,7 @@ Before running this skill, gather the following:
    ```python
    import json
 
-   nb_path = 'src/it_examples/notebooks/publish/<notebook>/<notebook>.ipynb'
+   nb_path = 'tutorials/publish/<notebook>/<notebook>.ipynb'
    with open(nb_path) as f:
        nb = json.load(f)
 
@@ -261,8 +264,8 @@ Before running this skill, gather the following:
 2. **If variable names changed**, update the corresponding entries in `analysis_points.py` and verify in both dev and publish copies:
 
    ```bash
-   diff src/it_examples/notebooks/dev/<notebook>/analysis_points.py \
-        src/it_examples/notebooks/publish/<notebook>/analysis_points.py
+   diff tutorials/dev/<notebook>/analysis_points.py \
+        tutorials/publish/<notebook>/analysis_points.py
    ```
 
    These files should be identical (the publish pipeline copies them as-is).
@@ -284,13 +287,13 @@ Before running this skill, gather the following:
 
    ```bash
    IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-     "src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook" -v
+     "tests/tutorials/test_notebooks.py::test_attribution_analysis_notebook" -v
    ```
 
 2. **Run the basic test suite** to ensure no regressions:
 
    ```bash
-   python -m pytest tests src/it_examples/tests --tb=short -q
+   python -m pytest tests --tb=short -q
    ```
 
 3. **If tests fail**, debug using the analysis injection debugging workflow:
@@ -333,7 +336,7 @@ This section documents a concrete application of this skill.
 | Target package | `circuit-tracer` |
 | Old version/SHA | `0.1.0` / `fe1743f` |
 | New version/SHA | `0.4.0` / `14cc3e8` |
-| Test path | `src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]` |
+| Test path | `tests/tutorials/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]` |
 | Venv | `it_latest` |
 | Local repo | `~/repos/circuit-tracer` |
 
@@ -355,10 +358,10 @@ The old regex targeted the single-line `compute_attribution_components(mlp_in_ca
 
 ### Files Modified
 
-1. `src/it_examples/notebooks/dev/attribution_analysis/analysis_injection_config.yaml` — regex + insert_after for `ap_compute_attribution_end`
-2. `src/it_examples/notebooks/publish/attribution_analysis/analysis_injection_config.yaml` — same regex fix + version bump (`0.1.0` → `0.4.0`)
-3. `src/it_examples/notebooks/dev/attribution_analysis/attribution_analysis.ipynb` — markdown doc update (`compute_attribution_components(mlp_in_cache)` → `compute_attribution_components(mlp_in_cache, self.zero_positions)`), cleared stale error output from cell 18
-4. `src/it_examples/notebooks/publish/attribution_analysis/attribution_analysis.ipynb` — same markdown doc update
+1. `tutorials/dev/attribution_analysis/analysis_injection_config.yaml` — regex + insert_after for `ap_compute_attribution_end`
+2. `tutorials/publish/attribution_analysis/analysis_injection_config.yaml` — same regex fix + version bump (`0.1.0` → `0.4.0`)
+3. `tutorials/dev/attribution_analysis/attribution_analysis.ipynb` — markdown doc update (`compute_attribution_components(mlp_in_cache)` → `compute_attribution_components(mlp_in_cache, self.zero_positions)`), cleared stale error output from cell 18
+4. `tutorials/publish/attribution_analysis/attribution_analysis.ipynb` — same markdown doc update
 
 ### Test Results
 
@@ -374,7 +377,7 @@ When upstream code refactors a single-line expression to multi-line (e.g., addin
 
 ### Forgetting the publish config
 
-The publish directory (`src/it_examples/notebooks/publish/<notebook>/`) contains its own copy of `analysis_injection_config.yaml`. Both dev and publish configs must be updated. The `analysis_points.py` file is shared between dev and publish (identical copies).
+The publish directory (`tutorials/publish/<notebook>/`) contains its own copy of `analysis_injection_config.yaml`. Both dev and publish configs must be updated. The `analysis_points.py` file is shared between dev and publish (identical copies).
 
 ### Variable availability at new insertion points
 

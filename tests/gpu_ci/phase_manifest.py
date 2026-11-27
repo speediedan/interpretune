@@ -64,7 +64,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-COLLECT_DIRS = ("tests", "src/it_examples/tests")
+COLLECT_DIRS = ("tests",)
 
 # phase name -> the env selector tests/conftest.py keys on (empty dict: the baseline suite).
 # Keep in step with tests/conftest.py::pytest_collection_modifyitems and gpu_phase.sh.

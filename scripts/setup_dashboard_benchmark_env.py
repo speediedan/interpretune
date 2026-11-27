@@ -175,7 +175,7 @@ def dataset_build_groups(cache: Path) -> tuple[dict, ...]:
                 "--context-size",
                 "128",
                 "--custom-dataset-module",
-                "it_examples.utils.dashboard_pretokenization_rte",
+                "dashboard_pretokenization_rte",
                 "--windowing-mode",
                 "max-prompt-pad",
                 "--no-shuffle",
@@ -902,6 +902,17 @@ class Setup:
                 "see the PREREQUISITES section of --help."
             )
 
+    def _examples_dashboards_dir(self) -> Path:
+        """The interpretune/examples checkout's ``dashboards/``, which holds the RTE pretokenization module."""
+        examples = os.environ.get("IT_EXAMPLES_DIR")
+        dashboards = Path(examples).expanduser() / "dashboards" if examples else None
+        if dashboards is None or not (dashboards / "dashboard_pretokenization_rte.py").is_file():
+            self.fail(
+                "the RTE prompt dataset is built with dashboard_pretokenization_rte.py from an interpretune/examples "
+                f"checkout: set IT_EXAMPLES_DIR to one (got {examples!r})"
+            )
+        return dashboards
+
     def ensure_datasets(self, venv_path: Path) -> None:
         self.say("\n=== Step 6/7: benchmark prompt datasets ===")
         cache = Path(self.args.np_cache).expanduser()
@@ -949,12 +960,15 @@ class Setup:
         }
         for group in groups:
             cmd = [str(venv_python), *group["args"]]
+            group_env = env
+            if "dashboard_pretokenization_rte" in group["args"]:
+                group_env = {**env, "PYTHONPATH": str(self._examples_dashboards_dir())}
             self.say(f"  $ {' '.join(cmd)}")
             if self.args.dry_run:
                 self.actions_taken.append(f"[dry-run] dataset build: {group['name']}")
                 continue
             self.actions_taken.append(f"dataset build: {group['name']}")
-            rc = self._run_streamed(cmd, cwd=self.repo_paths["interpretune"], env=env)
+            rc = self._run_streamed(cmd, cwd=self.repo_paths["interpretune"], env=group_env)
             if rc != 0:
                 self.fail(f"dataset build failed ({rc}): {group['name']}")
             still_missing = [p for p in group["produces"] if not (cache / p).is_dir()]

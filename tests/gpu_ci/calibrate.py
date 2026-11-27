@@ -59,7 +59,6 @@ def collect_gpu_items(extra: list[str] | None = None) -> list[dict]:
             "-m",
             "pytest",
             "tests",
-            "src/it_examples/tests",
             "-q",
             "--collect-only",
             "-p",

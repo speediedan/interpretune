@@ -48,7 +48,21 @@ log = logging.getLogger(__name__)
 #: Self-description carried at the root of every published corpus.
 CORPUS_MANIFEST = "dashboards.json"
 
-CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/neuronpedia_dashboard"
+#: The dashboard pipeline configurations live in the interpretune/examples repository's ``dashboards/``. A corpus import
+#: that is not handed a config reads them from the checkout ``IT_DASHBOARD_CONFIG_DIR`` names.
+CONFIG_DIR_ENV = "IT_DASHBOARD_CONFIG_DIR"
+
+
+def dashboard_config_dir() -> Path:
+    """The directory of committed dashboard configurations, named by ``IT_DASHBOARD_CONFIG_DIR``; refused if
+    unset."""
+    named = os.environ.get(CONFIG_DIR_ENV)
+    if not named or not Path(named).expanduser().is_dir():
+        raise LookupError(
+            f"no dashboard config directory: pass the config explicitly, or set {CONFIG_DIR_ENV} to the dashboards/ "
+            f"directory of an interpretune/examples checkout (got {named!r})"
+        )
+    return Path(named).expanduser()
 
 
 @dataclass(frozen=True)
@@ -263,7 +277,8 @@ def resolve_corpus_config(manifest: dict[str, Any], explicit: Path | None = None
     want_prompts = (manifest.get("prompt_corpus") or {}).get("n_prompts")
 
     resolved: dict[Path, dict] = {}
-    for candidate in sorted(CONFIG_DIR.glob("*.yaml")):
+    config_dir = dashboard_config_dir()
+    for candidate in sorted(config_dir.glob("*.yaml")):
         try:
             payload = load_dashboard_pipeline_config_payload(candidate) or {}
         except Exception as exc:  # a malformed sibling must not block a valid match
@@ -277,7 +292,7 @@ def resolve_corpus_config(manifest: dict[str, Any], explicit: Path | None = None
         if p.get("model_name") == want_model and p.get("neuronpedia_source_set_id") == want_set
     ]
     if not matches:
-        raise LookupError(f"no committed config matches model={want_model!r} source_set={want_set!r} in {CONFIG_DIR}")
+        raise LookupError(f"no committed config matches model={want_model!r} source_set={want_set!r} in {config_dir}")
     if len(matches) > 1:
         # Several configs can share a source set (different prompt counts); the corpus knows which.
         narrowed = [c for c in matches if resolved[c].get("n_prompts_total") == want_prompts]

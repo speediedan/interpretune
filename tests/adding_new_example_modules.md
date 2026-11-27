@@ -1,7 +1,7 @@
 # Adding new test/example modules to Interpretune
 
 0. New test/example modules are registered in
-   `~/repos/interpretune/tests/test_module_registry.yaml` (test-only entries) or the component tree under `~/repos/interpretune/src/it_examples/examples/<task>/`
+   `~/repos/interpretune/tests/test_module_registry.yaml` (test-only entries) or a component tree under `components/<task>/` in the interpretune/examples repository
 
    ```yaml
     gpt2.rte.transformer_lens:
@@ -55,7 +55,7 @@
    ```
 
    - if the new model requires a custom prompt (most instruction tuned models will), add the relevant example model
-     prompt config dataclass to `~/repos/interpretune/src/it_examples/examples/prompt_configs/prompt_configs.py`, e.g.
+     prompt config dataclass to `components/prompt-configs/prompt_configs.py` in interpretune/examples, e.g.
 
    ```python
    ####################################

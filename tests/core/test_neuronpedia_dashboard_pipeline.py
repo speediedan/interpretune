@@ -4482,35 +4482,6 @@ def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
     assert manifest["artifacts"]["parquet_row_group_size"] == SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
 
 
-def test_shipped_gemmascope_configs_name_the_capture_hook():
-    """Every shipped gemma-scope-2 transcoder config must capture at the trained tensor.
-
-    Without this, a config that simply omits `capture_hook_name` falls back to the hook the SAE
-    declares, which for these releases is the residual BEFORE the block norm rather than the tensor
-    the transcoder was trained on. That produces a plausible-looking corpus with no error to notice,
-    so the guard is a forcing function rather than a style check.
-
-    Resolved through the loader rather than grepped, because these configs use `EXTENDS:` and only
-    four of the nine set the value directly.
-    """
-    from interpretune.utils.neuronpedia_hub_fetch import CONFIG_DIR
-
-    configs = sorted(CONFIG_DIR.glob("*.yaml"))
-    assert configs, "no dashboard configs found; this guard would silently pass"
-
-    for config_path in configs:
-        values = dashboard_pipeline._normalize_pipeline_overrides(
-            dashboard_pipeline._extract_dashboard_pipeline_values(
-                dashboard_pipeline.load_dashboard_pipeline_config_payload(config_path),
-                config_path=config_path,
-            )
-        )
-        assert values.get("capture_hook_name") == "blocks.{layer}.ln2.hook_out", (
-            f"{config_path.name} does not name the capture hook, so it would capture at the hook the "
-            "SAE declares, which is not the tensor these transcoders were trained on"
-        )
-
-
 def _legacy_capture_hook_config(tmp_path: Path) -> NeuronpediaDashboardPipelineConfig:
     return NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
@@ -4706,16 +4677,6 @@ def test_an_import_with_no_db_url_anywhere_is_refused_before_generation(tmp_path
     monkeypatch.setattr(dashboard_pipeline, "_layer_runner_command", _unexpected_command)
     with pytest.raises(RuntimeError, match="DATABASE_URL in the environment.*--skip-local-db-import"):
         dashboard_pipeline.run_dashboard_pipeline(_db_url_config(tmp_path))
-
-
-def test_committed_dashboard_configs_name_no_database():
-    """A URL in a committed config is right for one machine and cannot be corrected from the environment."""
-    config_dir = Path(dashboard_pipeline.__file__).resolve().parents[2] / "it_examples" / "neuronpedia_dashboard"
-    configs = sorted(config_dir.glob("*.yaml"))
-    assert configs, f"no dashboard configs found in {config_dir}"
-    for path in configs:
-        assert "local_db_url" not in path.read_text(encoding="utf-8"), path.name
-        assert yaml.safe_load(path.read_text(encoding="utf-8")), path.name
 
 
 @pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="reads the runner's memory from /proc")

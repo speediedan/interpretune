@@ -117,27 +117,17 @@
 - changed-files:
   - any-glob-to-any-file: 'src/interpretune/session.py'
 
-# Examples and experiments
+# Examples
 "area: examples":
 - changed-files:
   - any-glob-to-any-file:
-    - 'src/it_examples/**'
     - 'examples/**'
     - '**/example*.py'
-
-"area: experiments":
-- changed-files:
-  - any-glob-to-any-file: 'src/it_examples/experiments/**'
 
 "area: notebooks":
 - changed-files:
   - any-glob-to-any-file:
-    - 'src/it_examples/notebooks/**'
     - '**/*.ipynb'
-
-"area: patching":
-- changed-files:
-  - any-glob-to-any-file: 'src/it_examples/patching/**'
 
 # Testing
 "area: tests":

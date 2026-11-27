@@ -1,8 +1,9 @@
-"""Assemble and publish component repos from in-repo component trees.
+"""Assemble and publish component repos from component source trees.
 
-The in-repo tree (``src/it_examples/examples/<task>/``) mirrors the Hub tree by construction, so publishing is
-a copy plus two generated additions: the entrypoint module file and the card. A parity test walks the built
-tree against the source tree so the mirror is enforced rather than aspirational.
+A component's source tree (the interpretune/examples repository keeps one per component under ``components/``)
+mirrors the Hub tree by construction, so publishing is a copy plus two generated additions: the entrypoint module file
+and the card. A parity test walks the built tree against the source tree so the mirror is enforced rather than
+aspirational.
 """
 
 from __future__ import annotations
@@ -367,10 +368,9 @@ def _module_level_it_examples_refs(path: Path) -> list[str]:
     return found
 
 
-#: Import roots no staged snapshot file may reference at any nesting level: the
-#: deleted experiments tree, the wheel-excluded test tree, and bare `tests`
-#: (same tree, top-level form). Other `it_examples.*` subpackages ship in the
-#: wheel and stay importable, so they are not refused.
+#: Import roots no staged snapshot file may reference at any nesting level: interpretune's former in-repo examples
+#: trees, which no installed interpretune carries, and bare `tests`. A module-level import of any other `it_examples.*`
+#: name is refused by `_module_level_it_examples_refs`.
 _BLOCKED_NESTED_ROOTS = ("tests.", "it_examples.tests", "it_examples.experiments")
 
 

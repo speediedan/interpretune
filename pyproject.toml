@@ -270,9 +270,11 @@ git-deps = [
     # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
     # Per-call cache-only lookup lets a pulled hook map check for registry collisions locally.
     "venngram @ git+https://github.com/speediedan/venngram@2625825254671a46bc98c9eb9355fbbb6574f56a",
-    # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
-    # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
-    # requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the three differ.
+    # nbpress publishes and renders notebooks (#778); the example notebooks it publishes live in interpretune/examples
+    # now, and here it holds `interpretune.utils.notebook_config` to the same answers and strips notebooks at commit.
+    # A development dependency only, never package metadata. The same commit is the `rev` of its hooks in
+    # .pre-commit-config.yaml and a line in requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the
+    # three differ.
     "nbpress @ git+https://github.com/speediedan/nbpress@b4a62204ac84578baaa1d7373d39f2d8a9090de5",
 ]
 
@@ -400,13 +402,8 @@ zip-safe = false
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = true
-# example/notebook tests are repo-only: they may import test helpers (tests.runif) and must not ship
-exclude = ["it_examples.tests*"]
 
 [tool.setuptools.package-data]
-# registry/** must ship: the example registry hydrates from these component trees at runtime
-# (MANIFEST.in's recursive-include also covers them today; this glob is the belt to that braces)
-"it_examples" = ["*.yaml", "examples/**/*.yaml"]
 "interpretune" = ["*.yaml"]
 # bundled op-family definitions must ship in the wheel (belt to MANIFEST.in's recursive-include)
 "interpretune.analysis.ops.bundled" = ["*.yaml"]
@@ -459,9 +456,6 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 
 
 [tool.ruff.lint.per-file-ignores]
-#"src/fts_examples/stable/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
-#"src/fts_examples/legacy/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
-"src/it_examples/notebooks/publish/**/*.ipynb" = ["E501"]
 
 # ==== #139 docstring rules: PERMANENT scope exemptions ====================================
 # Not debt and not baselined -- these surfaces are deliberately outside the public-API docstring
@@ -469,7 +463,6 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 "tests/**" = ["D101", "D102", "D103"]            # test code; CLAUDE.md already exempts tests from type checks
 "scripts/**" = ["D101", "D102", "D103"]          # maintainer tooling, not a published API
 "requirements/utils/**" = ["D101", "D102", "D103"]  # env-collection tooling; same class as scripts/
-"src/it_examples/**" = ["D101", "D102", "D103"]  # examples/research trees (type-exempt for the same reason)
 
 # ==== #139 docstring ratchet BASELINE (src/interpretune only) =============================
 # Generated from ruff 0.12.10 (the pre-commit pin) at the time of the ratchet PR. Each entry is a
@@ -546,28 +539,19 @@ norecursedirs = [
     "docs",
 ]
 #addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='src/fts_examples/*/ipynb_src/*.py' --ignore='.actions/assistant.py'"
-addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='tests/*_parity/*.py' --ignore-glob='src/it_examples/notebooks/**/*.py'"
+addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='tests/*_parity/*.py'"
 markers = [
     "hf_live: the test must reach the live Hugging Face Hub (skipped when HF_HUB_OFFLINE=1; hosted CI runs these in a separate online pass)",
 ]
 junit_duration_report = "call"
 tmp_path_retention_count = 30  # allow retention of more successful runs during profiling result generation (default 3)
 
-
-# [tool.jupytext] removed 2026-08-25 with the jupytext dependency (#287). It paired
-# `"notebooks/" = "ipynb"` with `"scripts/" = "py"`, a layout this repo does not use: the notebook
-# lane is dev/*.ipynb -> publish/*.ipynb via nbpress-publish, and the .py files under
-# notebooks/ are helper modules the notebooks import, not paired sources (none carries a jupytext
-# header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
-# with the dependency rather than after it.
-
 [tool.gpu-epsilon.special-tests]
 # gpu-epsilon's shared runner (python -m gpu_epsilon.special_tests) reads this table: one process per
 # node id, each outcome read from per-rank records. Change the marks, the selection variables or the coverage command
 # here.
 name = "IT"
-# Both roots: special-marked tests also live under src/it_examples/tests (the example notebooks).
-collect-dirs = ["tests", "src/it_examples/tests"]
+collect-dirs = ["tests"]
 # Every selection variable tests/conftest.py reads, not only the ones a mark sets: conftest checks IT_RUN_CUDA_TESTS
 # before the profiling levels, so one inherited from the caller's shell would turn `--mark_type=profile_ci` into the
 # cuda-marked selection.
@@ -669,7 +653,7 @@ env = { CUDA_VISIBLE_DEVICES = "" }
 # pytest-cov rather than `coverage run`, so coverage starts before collection imports
 run = [
     "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
-    "tests", "src/it_examples/tests", "-v",
+    "tests", "-v",
 ]
 
 [[tool.gpu-epsilon.phases.phase]]
@@ -680,7 +664,7 @@ unset = ["CUDA_VISIBLE_DEVICES"]
 skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
 run = [
     "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
-    "tests", "src/it_examples/tests", "-v",
+    "tests", "-v",
 ]
 
 [[tool.gpu-epsilon.phases.phase]]
@@ -745,48 +729,18 @@ select-file-env = "IT_GPU_SELECTION_FILE"
 
 [[tool.gpu-epsilon.phase-evidence.phase]]
 name = "cuda"
-paths = ["tests", "src/it_examples/tests"]
+paths = ["tests"]
 selection-env = { IT_RUN_CUDA_TESTS = "1" }
-command = "python -m pytest --cov=src/interpretune tests src/it_examples/tests -v --reruns 2"
+command = "python -m pytest --cov=src/interpretune tests -v --reruns 2"
 
 [[tool.gpu-epsilon.phase-evidence.phase]]
 name = "standalone"
-paths = ["tests", "src/it_examples/tests"]
+paths = ["tests"]
 selection-env = { IT_RUN_STANDALONE_TESTS = "1" }
 command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=standalone --allow-failures --allow-empty"
 
 [[tool.gpu-epsilon.phase-evidence.phase]]
 name = "profile_ci"
-paths = ["tests", "src/it_examples/tests"]
+paths = ["tests"]
 selection-env = { IT_RUN_PROFILING_TESTS = "1" }
 command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=profile_ci --allow-failures --allow-empty"
-
-[tool.nbpress]
-# interpretune's own example notebooks, read by nbpress (the git-deps pin): nbpress-publish publishes the dev lane,
-# nbpress-render executes the published notebooks into docs artifacts, and nbpress-render --check-stale gates them.
-dev_dir = "src/it_examples/notebooks/dev"
-publish_dir = "src/it_examples/notebooks/publish"
-colab_repo = "speediedan/interpretune"
-colab_branch = "main"
-# the stored .notebook_hashes.json keys are relative to the examples package, as they always have been
-hash_key_base = "src/it_examples"
-install_cell = [
-    "# Uncomment to run installation steps if you do not have a development",
-    "# editable install and want to run this notebook in a fresh environment.",
-    "# %pip install uv",
-    '# %uv pip install --upgrade pip setuptools wheel && \',
-    "# %uv pip install 'git+https://github.com/speediedan/interpretune.git@main[examples]'",
-    "# %uv pip install --group git-deps",
-    "#",
-    "# NOTE: This cell is intentionally commented out. We will uncomment these",
-    "# install commands once we no longer need to preserve editable installs",
-    "# for active developer venvs.",
-]
-docs_artifact_dir = "docs/notebook_artifacts"
-# interpretune's op-surface stamping and output-drift checks, which the renderer runs as repository hooks
-docs_hooks = "scripts/notebook_docs_hooks.py"
-docs_render_command = "nbpress-render"
-
-[tool.nbpress.import_rewrites]
-"it_examples.notebooks.dev." = "it_examples.notebooks.publish."
-'"notebooks" / "dev"' = '"notebooks" / "publish"'
