@@ -48,7 +48,7 @@ the path to the initial alpha release.
 A note on terminology: when these docs say "world model" they mean it in the **epistemic/semantic**
 sense: the internal representations and beliefs a model encodes about the world, as studied in
 interpretability, rather than the (related but distinct) predictive **visual world models** of
-embodied-agent and model-based-RL research. It names where the project is heading. The initial MVP focuses on LLMs; fuller multimodal
+embodied-agent and model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal
 support is planned (see the {doc}`roadmap <roadmap>`).
 
 ## Quickstart

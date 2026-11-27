@@ -51,7 +51,7 @@ analysis operations (e.g. `extract_top_features`, `gradient_attribution`, `ablat
 A note on terminology: when we say "world model" we mean it in the **epistemic/semantic** sense: the
 internal representations, concepts, and beliefs a model encodes about the world, as studied in AI
 interpretability, which is related to but distinct from the predictive *visual world models* of
-embodied-agent/model-based-RL research. It names where the project is heading. The initial MVP focuses on LLMs; fuller multimodal support
+embodied-agent/model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal support
 is planned.
 
 ## Core constructs (60-second tour)
@@ -192,7 +192,7 @@ have shipped; J-space attribution graphs are [#683](https://github.com/interpret
 (interpretability that accelerates model advancement via self-reflection, including internal
 reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
 reflective cognition for counterfactuals via latent-state evaluation, meta-latent world model
-interfaces, and multimodal world model support — see the
+interfaces, and multimodal model support — see the
 [roadmap docs](https://interpretune.org/en/latest/roadmap.html).
 
 ## Documentation
