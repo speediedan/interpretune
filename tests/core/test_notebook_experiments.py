@@ -227,3 +227,33 @@ class TestExperimentHooks:
         cfg = _gemma_prompt_config(cache_dir=cache)
         assert cfg.B_TEXT == "<bos>"
         assert callable(cfg.apply_chat_template_fn) and callable(cfg.model_chat_template_fn)
+
+
+class TestLocalExportRootDefault:
+    """The harness reads local exports from the root the dashboard pipeline writes, not a separate setting."""
+
+    def test_the_pipeline_export_root_is_the_default(self, tmp_path, monkeypatch):
+        from interpretune.harness.nb_harness_utils import _resolve_local_export_roots
+
+        monkeypatch.setenv("NEURONPEDIA_EXPORT_ROOT", str(tmp_path))
+        assert _resolve_local_export_roots() == (tmp_path,)
+
+    def test_the_np_cache_exports_directory_is_the_fallback(self, tmp_path, monkeypatch):
+        from interpretune.harness.nb_harness_utils import _resolve_local_export_roots
+
+        monkeypatch.delenv("NEURONPEDIA_EXPORT_ROOT", raising=False)
+        monkeypatch.setenv("IT_NP_CACHE", str(tmp_path))
+        (tmp_path / "exports").mkdir()
+        assert _resolve_local_export_roots() == (tmp_path / "exports",)
+
+    def test_a_missing_default_root_is_refused(self, tmp_path, monkeypatch):
+        from interpretune.harness.nb_harness_utils import _resolve_local_export_roots
+
+        monkeypatch.setenv("NEURONPEDIA_EXPORT_ROOT", str(tmp_path / "absent"))
+        with pytest.raises(ValueError, match="does not exist"):
+            _resolve_local_export_roots()
+
+    def test_explicit_roots_keep_only_those_that_exist(self, tmp_path):
+        from interpretune.harness.nb_harness_utils import _resolve_local_export_roots
+
+        assert _resolve_local_export_roots([tmp_path, tmp_path / "absent"]) == (tmp_path,)

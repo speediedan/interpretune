@@ -1886,14 +1886,22 @@ def test_two_rank_ddp_analysis_merges_shares_into_the_one_process_store(tmp_path
 
     The step runs a backward pass through a replicated layer, and the five batches split three and two, so FSDP2's
     gradient reduction (off for the run) would leave a rank waiting forever. A deterministic generator-cache key is
-    refused.
+    refused. Each epoch's ``log_analysis`` averages pool every rank's batches, so they are the one-process averages on
+    every rank (a rank's own share alone averages three batches or two).
     """
     records = _launch_ddp_analysis(tmp_path / "run")
     reference = records[0]["reference"]
     assert reference["batch_idx"] == [0, 1, 2, 3, 4]
+    reference_metrics = records[0]["reference_metrics"]
+    assert len(reference_metrics) == 1 and set(reference_metrics[0]) == {"out"}
+    reference_out = reference_metrics[0]["out"]
     for record in records:
         assert record["param_types"] == ["DTensor"]
         assert record["ordered"] == reference, "the merged store is the one-process store"
+        assert [m["out"] for m in record["ordered_metrics"]] == pytest.approx([reference_out]), "pools every share"
+        assert record["shuffled_metrics"] == records[0]["shuffled_metrics"]
+        # each epoch sees every example once, in another pairing, and a batch's output sums over its examples
+        assert [m["out"] for m in record["shuffled_metrics"]] == pytest.approx([reference_out] * 2)
         assert record["share_dirs_left"] == []
         assert record["shuffled"] == records[0]["shuffled"]
         assert record["shuffled"]["batch_idx"] == [0, 1, 2, 3, 4] * 2

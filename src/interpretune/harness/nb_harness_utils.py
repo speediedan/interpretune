@@ -21,7 +21,6 @@ from urllib.request import Request, urlopen
 import psycopg
 import requests
 import torch
-from dotenv import load_dotenv
 
 import interpretune as it
 from interpretune.analysis.backends import (
@@ -277,14 +276,6 @@ def _gemma_prompt_config(cache_dir: Any = None) -> Any:
     from interpretune.hub.promptconfigs import resolve_prompt_config_class
 
     return resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig", cache_dir=cache_dir)()
-
-
-# No default, deliberately. This used to fall back to an absolute path under one contributor's home
-# directory, which is unreachable on every other machine and is shipped source in a public repository.
-# A default that cannot exist is worse than none: it turns a missing setting into a confusing empty
-# result instead of an error naming what to set.
-_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV = "LOCAL_NEURONPEDIA_EXPORT_ROOT"
-DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(raw) if (raw := os.getenv(_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV)) else None
 
 
 @dataclass
@@ -875,8 +866,6 @@ def sync_graph_metadata_to_local_dev(
     normalized_username = str(username).strip()
     if not normalized_username:
         raise ValueError("username is required for local graph metadata sync")
-
-    load_dotenv(".env.localhost_np")
 
     if graph_metadata is None:
         if not model_id or not slug:
@@ -1635,12 +1624,17 @@ class LocalExplanationPreparationResult:
 
 def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
     if local_export_roots is None:
-        if DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
+        # The root the dashboard pipeline writes to, so the harness reads what a local run produced. A missing
+        # default is refused rather than filtered to an empty tuple, which would read as "no exports".
+        from interpretune.utils.neuronpedia_dashboard_pipeline import _default_dashboard_export_root
+
+        default_root = _default_dashboard_export_root()
+        if not default_root.exists():
             raise ValueError(
-                "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
-                f"${_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV} to the directory holding the exports."
+                f"the default Neuronpedia export root {default_root} does not exist: pass `local_export_roots=`, "
+                "or set $NEURONPEDIA_EXPORT_ROOT (else $IT_NP_CACHE/exports is used) to where the pipeline wrote."
             )
-        local_export_roots = (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)
+        local_export_roots = (default_root,)
     candidate_roots = tuple(Path(root) for root in local_export_roots)
     return tuple(root for root in candidate_roots if root.exists())
 

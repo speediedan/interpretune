@@ -16,6 +16,9 @@ Runs of ``core_analysis_loop``:
 - Refusal: a deterministic ``dataset_fingerprint``. Ops declaring ``op_state`` are checked in
   ``distributed_ddp_op_state_worker.py``.
 
+The step records its output with ``log_analysis``, so each run's ``analysis_metrics`` (per epoch) are recorded too:
+every rank's equal the one-process run's, although each rank analyzed only its own batches.
+
 Writes ``<out_dir>/rank<rank>.json``.
 """
 
@@ -29,6 +32,8 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+
+from interpretune.base.components.mixins import AnalysisStepMixin
 
 
 class _Store:
@@ -46,6 +51,12 @@ class _Module(nn.Module):
         self.it_cfg = SimpleNamespace(profiler_cfg=SimpleNamespace(which=None))
         self.global_step, self.current_epoch, self.dtype = 1, 0, torch.float32
 
+    # the analysis-metric accumulator the loop resets, flushes and reports, as every analysis module has it
+    log_analysis = AnalysisStepMixin.log_analysis
+    reset_analysis_metrics = AnalysisStepMixin.reset_analysis_metrics
+    flush_analysis_metrics = AnalysisStepMixin.flush_analysis_metrics
+    analysis_metrics = AnalysisStepMixin.analysis_metrics
+
     def batch_to_device(self, batch):
         return batch
 
@@ -54,6 +65,7 @@ class _Module(nn.Module):
             x = batch.to(torch.float32).unsqueeze(-1).repeat(1, 3)
             out = self.net(x).pow(2).sum()
             out.backward()  # FSDP2 would reduce these gradients across the replicas with its sync on
+        self.log_analysis("out", out)
         yield {"examples": batch.tolist(), "out": float(out.detach()), "batch_idx": batch_idx}
 
     def on_analysis_start(self):
@@ -103,15 +115,18 @@ def main() -> None:
     record: dict = {"param_types": sorted({type(p.data).__name__ for p in module.parameters()})}
     store = analysis.core_analysis_loop(module, _DataModule(shuffle=False), dist_run=run)
     record["ordered"] = _rows(store)
+    record["ordered_metrics"] = module.analysis_metrics
     record["share_dirs_left"] = sorted(p.name for p in (root / "ordered").iterdir() if ".share" in p.name)
     if run.rank == 0:
         reference = _Module(root / "reference")
         reference.load_state_dict(reference_weights)
         record["reference"] = _rows(analysis.core_analysis_loop(reference, _DataModule(shuffle=False)))
+        record["reference_metrics"] = reference.analysis_metrics
     module.analysis_cfg.output_store = _Store(root / "shuffled")
     record["shuffled"] = _rows(
         analysis.core_analysis_loop(module, _DataModule(shuffle=True), max_epochs=2, dist_run=run)
     )
+    record["shuffled_metrics"] = module.analysis_metrics
     module.analysis_cfg.output_store = _Store(root / "limited")
     limited = analysis.core_analysis_loop(module, _DataModule(shuffle=False), limit_analysis_batches=3, dist_run=run)
     record["limited"] = _rows(limited)

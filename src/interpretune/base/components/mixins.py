@@ -125,6 +125,48 @@ class AnalysisStepMixin:
     def analysis_cfg(self, cfg: AnalysisCfgProtocol) -> None:
         self.it_cfg.analysis_cfg = cfg
 
+    def log_analysis(self, name: str, value: Any) -> None:
+        """Record one value of the analysis metric ``name`` for the current analysis epoch.
+
+        ``self.log`` cannot report analysis metrics everywhere analysis runs: under a Lightning ``Trainer`` the
+        analysis loop is ``predict``, whose hooks refuse ``self.log``. Values recorded here are averaged per epoch by
+        the loop running the analysis, which reports them: the core runner prints them, and ``AnalysisStoreCallback``
+        sends them to the ``Trainer``'s loggers as ``analysis/<name>``. Each epoch's averages are kept in
+        ``analysis_metrics``.
+
+        Raises:
+            ValueError: ``value`` is a tensor with more than one element.
+        """
+        if isinstance(value, torch.Tensor):
+            if value.numel() != 1:
+                raise ValueError(
+                    f"log_analysis records one value per call, but {name!r} got a tensor of shape {tuple(value.shape)}"
+                )
+            value = value.detach().item()
+        pending = self.__dict__.setdefault("_pending_analysis_metrics", {})
+        pending.setdefault(name, []).append(float(value))
+
+    def reset_analysis_metrics(self) -> None:
+        """Start a run's analysis metrics afresh: drop recorded values and earlier epochs' averages."""
+        self.__dict__["_pending_analysis_metrics"] = {}
+        self.__dict__["_analysis_metric_epochs"] = []
+
+    def flush_analysis_metrics(self) -> dict[str, float]:
+        """Average and clear the values ``log_analysis`` recorded this epoch, append them to ``analysis_metrics``, and
+        return them (empty when nothing was recorded, in which case nothing is appended)."""
+        pending = self.__dict__.get("_pending_analysis_metrics") or {}
+        metrics = {name: sum(values) / len(values) for name, values in pending.items() if values}
+        self.__dict__["_pending_analysis_metrics"] = {}
+        if metrics:
+            self.__dict__.setdefault("_analysis_metric_epochs", []).append(metrics)
+        return metrics
+
+    @property
+    def analysis_metrics(self) -> list[dict[str, float]]:
+        """Each analysis epoch's averaged ``log_analysis`` values in the latest run, in epoch order (epochs that
+        recorded nothing are left out)."""
+        return list(self.__dict__.get("_analysis_metric_epochs", []))
+
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
         # Op-specific conditioning is gone: grad mode is now a declared `requires_grad`

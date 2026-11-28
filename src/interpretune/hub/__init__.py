@@ -85,6 +85,8 @@ _LAZY_ATTRS = {
     "IT_ARTIFACT_ENVELOPE": "interpretune.hub.artifacts",
     "ArtifactEnvelopeError": "interpretune.hub.artifacts",
     "validate_artifact_envelope": "interpretune.hub.artifacts",
+    "ANALYSIS_STORE_KIND": "interpretune.hub.artifacts",
+    "DASHBOARD_CORPUS_KIND": "interpretune.hub.artifacts",
     "build_analysis_store_envelope": "interpretune.hub.artifacts",
     "content_fingerprint": "interpretune.hub.artifacts",
     "push_analysis_store": "interpretune.hub.artifacts",

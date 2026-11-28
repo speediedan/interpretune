@@ -77,7 +77,6 @@ from interpretune.utils.neuronpedia_db_utils import (
     check_local_neuronpedia_services,
     import_neuronpedia_export_bundle_local_db,
     resolve_local_neuronpedia_db_url,
-    rewrite_container_postgres_url_for_host,
     summarize_neuronpedia_export_bundle,
     summarize_neuronpedia_export_bundle_parquet,
 )
@@ -241,7 +240,6 @@ __all__ = [
     "build_explanation_export_record",
     "write_explanation_import_bundle",
     "insert_explanation_record_local_db",
-    "rewrite_container_postgres_url_for_host",
     "resolve_local_neuronpedia_db_url",
     "check_local_neuronpedia_services",
     "summarize_neuronpedia_export_bundle",
