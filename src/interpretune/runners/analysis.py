@@ -822,11 +822,20 @@ def _pool_analysis_metrics(module: Any, dist_run: DistributedRun) -> None:
     not the one-process average. The writing rank of each lockstep group contributes its group's values (the group's
     ranks computed the same ones), and every rank then averages the pooled values, which is the one-process average.
     """
+    pool_analysis_metrics(module, contribute=dist_run.writes_outputs)
+
+
+def pool_analysis_metrics(module: Any, contribute: bool = True) -> None:
+    """Replace this rank's pending ``log_analysis`` values with every rank's, over the default process group.
+
+    A collective: every rank calls it. A rank that passes ``contribute=False`` adds nothing but still receives the
+    pooled values, which is how ranks that computed the same values as another rank avoid counting them twice.
+    """
     import torch.distributed as dist
 
     pending = module.__dict__.get("_pending_analysis_metrics") or {}
-    gathered: list[Any] = [None] * dist_run.world_size
-    dist.all_gather_object(gathered, pending if dist_run.writes_outputs else {})
+    gathered: list[Any] = [None] * dist.get_world_size()
+    dist.all_gather_object(gathered, pending if contribute else {})
     pooled: dict[str, list[float]] = {}
     for share in gathered:
         for name, values in (share or {}).items():
