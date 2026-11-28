@@ -61,8 +61,8 @@ Rules that must not be missed:
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
   benchmark-relevant dependencies must end with the dashboard parity gates green and a fresh benchmark wave.
 
-<!-- section: Testing sha=3722ed5cdcb7 -->
-Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
+<!-- section: Testing sha=1131433f3c60 -->
+Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
 `python -m gpu_epsilon.special_tests --lease --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
@@ -121,12 +121,12 @@ agent. Two GPU suites at once contend silently (OOM, flaky timing), which is eas
 - The `gpu-lease` skill (`.claude/skills/`, a vendored copy of the repo-neutral master in speediedan/skills: do not
   edit it here) covers planning and recovery from stuck or stale leases.
 
-<!-- section: Architecture sha=04e43805ac06 -->
+<!-- section: Architecture sha=919b2c38a035 -->
 **Layout:** `src/interpretune/` holds `adapters/` (TL, SAE, Lightning, CircuitTracer, NNsight), `analysis/` (ops system
 and dispatcher), `config/` (dataclass configs), `extensions/` (MemProfiler, DebugGeneration, NeuronpediaIntegration),
 `runners/` (SessionRunner, AnalysisRunner), `utils/`, `protocol.py`, `registry.py` (ModuleRegistry, RegisteredCfg),
-`session.py` (ITSession) and `base/components/cli.py`; `src/it_examples/` holds example experiments, configs and
-notebooks; `tests/` has `core/`, `benchmarks/` (see `tests/benchmarks/README.md`), `*_parity/` and `examples/`.
+`session.py` (ITSession) and `base/components/cli.py`; the example notebooks, components and dashboard configs live
+in the interpretune/examples repository; `tests/` has `core/`, `benchmarks/` (see `tests/benchmarks/README.md`), `*_parity/` and `examples/`.
 
 **Key patterns:**
 

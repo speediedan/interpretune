@@ -3,9 +3,8 @@
 #
 # WHAT THIS ADDS OVER TIER 1: the GPU-gated half. Tier 1 is hosted and CPU-only, so it validates config
 # PARSING (all 15 shipped configs through their real argv surface) while config INSTANTIATION skips --
-# `test_cli_unit_configs` and `test_cli_configs` are both `RunIf(min_cuda_gpus=1)`, and the four
-# `bf16_cuda` notebooks skip too. Instantiation is where a resolver-shaped defect would surface, so
-# leaving it uncovered was the known gap in Tier 1 rather than an oversight.
+# `test_cli_unit_configs` and `test_cli_configs` are both `RunIf(min_cuda_gpus=1)`. Instantiation is where a
+# resolver-shaped defect would surface, so leaving it uncovered was the known gap in Tier 1 rather than an oversight.
 #
 # WHY A SEPARATE PIPELINE rather than a fifth task in gpu-tests.yml: Azure path filters and triggers are
 # per-pipeline, not per-task. gpu-tests.yml runs on every PR touching src/**; this must run only on
@@ -102,19 +101,5 @@ jobs:
           displayName: 'CLI instantiation (GPU-gated, the Tier 1 gap)'
           env:
             # Secrets must be mapped explicitly; without this they fail with KeyError (build 575).
-            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-            HF_TOKEN: $(HF_TOKEN)
-
-        # 5 expected skips, all measured from a real run rather than anticipated:
-        #   2  Optional/extended test execution
-        #   2  Standalone execution
-        #   1  test_circuit_tracer_w_neuronpedia_notebook, needs NEURONPEDIA_API_KEY
-        # None is GPU-gated, so they skip on a GPU host too and are part of the pinned shape. The neuronpedia one skips
-        # in EVERY environment: no workflow in this repo supplies that key, so exercising it would be a new credential
-        # decision rather than a pipeline fix. Pinning it here keeps the assertion able to detect drift; it does not
-        # endorse the gap.
-        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/readme_flow.sh notebooks'
-          displayName: 'Published notebooks (bf16_cuda)'
-          env:
             HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
             HF_TOKEN: $(HF_TOKEN)

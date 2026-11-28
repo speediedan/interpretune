@@ -16,9 +16,6 @@ include requirements.txt
 
 # Excludes
 # -----------------------------------------------------------------------
-# repo-only example/notebook tests (import repo-only helpers; wheel- and sdist-excluded)
-prune src/it_examples/tests
-
 # ci requirements
 prune requirements/ci
 prune requirements/utils
@@ -28,10 +25,6 @@ prune requirements/utils
 #       post-processing to remove. We'll do so in the future if we decide the marginal complexity is justified.
 exclude MANIFEST.in
 
-# NOTE: We are intentionally keeping Jupyter notebooks and their images in the
-# sdist for now (they live under `src/it_examples/notebooks/`). If/when we decide
-# to package examples separately we should
-# prune that directory here (e.g. `prune src/it_examples/notebooks`).
 # Exclude pre-commit cfg
 exclude .pre-commit-config.yaml
 # exclude non-src folders
@@ -45,5 +38,3 @@ prune .*/
 exclude .*
 # exclude compiled Python files and other log patterns globally
 global-exclude __pycache__/ *.orig lightning_logs *.py[cod]
-# exclude it_examples tests
-exclude src/it_examples/test_examples.py

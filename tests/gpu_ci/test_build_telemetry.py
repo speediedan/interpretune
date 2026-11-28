@@ -17,7 +17,7 @@ gpu_epsilon_evidence = pytest.importorskip("gpu_epsilon.evidence")
 ROOT = Path(__file__).resolve().parents[2]
 TELEMETRY_SH = ROOT / ".azure-pipelines" / "scripts" / "telemetry.sh"
 REV = "a" * 40
-SELECTOR = "IT_RUN_CUDA_TESTS=1; pytest tests src/it_examples/tests"
+SELECTOR = "IT_RUN_CUDA_TESTS=1; pytest tests"
 FULL_PHASE = [f"tests/test_x.py::test_{i}" for i in range(10)]
 RAW = FULL_PHASE + [f"tests/test_cpu.py::test_{i}" for i in range(90)]
 

@@ -60,7 +60,7 @@ Everything but the database URL (above) is in a committed config, so the command
 
 ```bash
 python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-16k-monology-production.yaml
 ```
 
 Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
@@ -211,16 +211,17 @@ Notes:
 5. When you need a fresh generation lineage for the same `model_name` plus `neuronpedia_source_set_id`, set `run_name_suffix` or override `--run-name-suffix`. That changes the run directory and default logs without forcing a fake source-set id or a different export target.
 6. If you accidentally point a resumed launch at a fully completed lineage, the pipeline now warns that the requested layer range is already complete and tells you to use `--run-name-suffix`, `--run-root`, or `--no-resume`.
 
-The vendored example configs for the current RTE flows live under `src/it_examples/neuronpedia_dashboard/`
-(a shared `gemmascope-2-rte-base.yaml` plus `EXTENDS` variants). Config values may reference environment variables
-with `${VAR}` syntax, which the pipeline expands at load time — the vendored configs use `${IT_NP_CACHE}` for the
+The example configs for the current RTE flows (a shared `gemmascope-2-rte-base.yaml` plus `EXTENDS` variants) live in
+the [interpretune/examples](https://github.com/interpretune/examples) repository's `dashboards/`; the commands here name
+a checkout of it as `IT_EXAMPLES_DIR`. Config values may reference environment variables
+with `${VAR}` syntax, which the pipeline expands at load time — the example configs use `${IT_NP_CACHE}` for the
 pretokenized prompt cache paths.
 
 Current single-worker fallback pattern for the context-`319` full-prompt transcoder restart:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -228,7 +229,7 @@ Current two-worker launch pattern for the same run namespace:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -243,7 +244,7 @@ You can still override individual values at launch time:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --start-layer 3 \
   --start-batch 10
 ```
@@ -386,7 +387,7 @@ Supported behaviors (all exercised on the example pair below):
 
 The commands below are exactly what was validated on an RTX 4090 (24 GiB, `cuda:0`) + RTX 2070
 (8 GiB, `cuda:1`) pair with `gemma-3-1b-it` × the 262k transcoders on the columnar path, using
-`src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+the examples repository's `dashboards/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
 (Monology 2,490 prompts; layer 0 on the 4090 at `2048×256`, layer 1 on the 2070 at `512×64 / acts16`,
 batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
@@ -394,7 +395,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
+     --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
      --dry-run
    ```
 
@@ -411,7 +412,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
+     --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
    ```
 
    Expected: the workers generate their layers concurrently on their pinned GPUs (validated: layer 0
@@ -502,7 +503,7 @@ rm -f <run_directory>/layer_locks/*.lock
 
 ```bash
 nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts \
   --worker-id gpu1 \
   --enable-layer-locks \
@@ -691,14 +692,14 @@ and passes it to SAEDashboard with `--custom-dataset-module`.
 RTE full-prompt cache command of record:
 
 ```bash
-python \
+PYTHONPATH=${IT_EXAMPLES_DIR}/dashboards python \
   -m sae_dashboard.neuronpedia.prompt_pretokenization \
   --dataset-path aps/super_glue \
   --dataset-name rte \
   --dataset-split train \
   --tokenizer-name google/gemma-3-1b-it \
   --context-size 128 \
-  --custom-dataset-module it_examples.utils.dashboard_pretokenization_rte \
+  --custom-dataset-module dashboard_pretokenization_rte \
   --windowing-mode max-prompt-pad \
   --no-shuffle \
   --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
@@ -844,8 +845,8 @@ Two invocations produce all four artifacts — each run writes both a SAELens-co
 Prerequisites:
 
 1. The Interpretune environment active with the editable SAEDashboard install (provides
-   `sae_dashboard.neuronpedia.prompt_pretokenization`) and Interpretune importable (provides the RTE custom module
-   `it_examples.utils.dashboard_pretokenization_rte`).
+   `sae_dashboard.neuronpedia.prompt_pretokenization`), and a checkout of interpretune/examples as `IT_EXAMPLES_DIR`
+   (its `dashboards/dashboard_pretokenization_rte.py` is the RTE custom module, imported by name).
 2. `google/gemma-3-1b-it` is a **gated** HuggingFace model: accept the license on the model page and authenticate
    (`hf auth login`, or export `HF_TOKEN`). Only the tokenizer is downloaded. The source datasets (`aps/super_glue`
    and `monology/pile-uncopyrighted`) are not gated.
@@ -861,14 +862,14 @@ the Monology run streams the source corpus, so its first-shard download dominate
 (`max-prompt-pad`) full-prompt cache used by the `columnar-rte-pretokenized-reduced` preset:
 
 ```bash
-python \
+PYTHONPATH=${IT_EXAMPLES_DIR}/dashboards python \
   -m sae_dashboard.neuronpedia.prompt_pretokenization \
   --dataset-path aps/super_glue \
   --dataset-name rte \
   --dataset-split train \
   --tokenizer-name google/gemma-3-1b-it \
   --context-size 128 \
-  --custom-dataset-module it_examples.utils.dashboard_pretokenization_rte \
+  --custom-dataset-module dashboard_pretokenization_rte \
   --windowing-mode max-prompt-pad \
   --no-shuffle \
   --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
@@ -1001,7 +1002,7 @@ Keep the knobs distinct when reasoning about this path: `n_features_per_batch` c
 cd ~/repos/interpretune && \
 source <your-venv>/bin/activate && \
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config ${IT_EXAMPLES_DIR}/dashboards/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 

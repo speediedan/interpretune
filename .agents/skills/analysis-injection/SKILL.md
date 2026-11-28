@@ -1,6 +1,6 @@
 ---
 name: analysis-injection
-description: Use when modifying runtime hook injection for upstream package analysis under src/it_examples: config YAML schemas, analysis points, and patcher logic.
+description: Use when modifying runtime hook injection for upstream package analysis in the example notebooks (interpretune/examples): config YAML schemas, analysis points, and patcher logic.
 license: Apache-2.0
 metadata:
   author: speediedan
@@ -173,13 +173,13 @@ The patcher inserts imports after finding a valid insertion point. Current logic
 ## Testing Analysis Injection Changes
 
 ```bash
-# Run specific notebook test
+# From an interpretune/examples checkout: run one notebook test
 IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-  "src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]" -v
+  "tests/tutorials/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]" -v
 
 # Run all circuit-tracer notebook tests
 IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-  "src/it_examples/tests/test_notebooks.py" -k "circuit_tracer or attribution_analysis" -v
+  "tests/tutorials/test_notebooks.py" -k "circuit_tracer or attribution_analysis" -v
 ```
 
 ## Checklist for Analysis Injection Updates

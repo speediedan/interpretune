@@ -24,45 +24,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements/docs.txt
 
-      # nbpress is standard library only, so installing it alone keeps the two checks below ahead of
-      # the heavy install. Its pin is the line in requirements/docs.txt.
-      - name: Install nbpress
-        run: |
-          pip install "$(grep -E '^nbpress @ git\+' requirements/docs.txt)"
-      # Cheap, stdlib-only, and BEFORE the heavy install so it fails fast. The docs render
-      # docs/notebook_artifacts/ in preference to the publish lane (see conf.py), so editing a
-      # notebook without rebuilding its artifact leaves the site showing the OLD text with a
-      # perfectly green build and no error anywhere. This is the only thing that catches that.
-      - name: Check notebook artifacts are not stale
-        run: |
-          nbpress-render --check-stale && rc=0 || rc=$?
-          case $rc in
-            0) ;;
-            3) echo "::error::A docs notebook artifact has drifted from its publish source, or a published \
-          notebook has no rendered artifact at all (the page would render code-only). \
-          Render it with: nbpress-render --notebook <name>; an artifact naming a checkout path is \
-          normalized by nbpress-render --no-execute"; exit 1 ;;
-            *) echo "::error::The notebook-artifact staleness check FAILED TO RUN (exit $rc). \
-          This is NOT a drift report -- see the log above for the real error."; exit 1 ;;
-          esac
-      # Also stdlib-only (argparse/hashlib/json only), so it shares the fail-fast slot. The publish
-      # lane is the STAGING FALLBACK for any notebook without an executed artifact (see conf.py), so
-      # a stale published copy renders on the site just as invisibly as a stale artifact. Exit 1
-      # names the offending notebooks; rerun `nbpress-publish` to republish.
-      - name: Check published notebooks are in sync with dev
-        run: |
-          nbpress-publish --check-only
       - name: Install docs requirements
         run: |
           pip install -r requirements/docs.txt
           PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu pip install .
-      # conf.py stages docs/notebook_artifacts/ IN PREFERENCE TO the publish lane, so editing a
-      # notebook without rebuilding its executed artifact leaves the site rendering the old text with
-      # no build error anywhere -- the drift is invisible by construction.
-      # Compares cell sources only (outputs ignored), so it needs no GPU and no execution.
-      - name: Check executed notebook artifacts are not stale
-        run: |
-          nbpress-render --check-stale
       - name: Build docs (errors fail; warnings reported)
         env:
           SPHINX_MOCK_REQUIREMENTS: "1"

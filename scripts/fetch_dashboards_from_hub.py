@@ -67,7 +67,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Parent directory for the corpus (created if absent). Defaults to $IT_NP_CACHE/hub_downloads, "
         "else $HF_HOME/interpretune/neuronpedia/hub_downloads.",
     )
-    parser.add_argument("--config", type=Path, default=None, help="Override the auto-selected import config.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="The import config; otherwise the matching one in IT_DASHBOARD_CONFIG_DIR.",
+    )
     parser.add_argument(
         "--local-db-url", default=None, help="Target Postgres. Defaults to the pipeline's own resolution."
     )

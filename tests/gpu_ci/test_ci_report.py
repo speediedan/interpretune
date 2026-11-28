@@ -26,7 +26,7 @@ from tests.gpu_ci.ci_report import (
 gpu_epsilon_evidence = pytest.importorskip("gpu_epsilon.evidence")
 
 REV = "b" * 40
-SELECTOR = "IT_RUN_CUDA_TESTS=1; pytest tests src/it_examples/tests"
+SELECTOR = "IT_RUN_CUDA_TESTS=1; pytest tests"
 NODES = [f"tests/test_x.py::test_{i}" for i in range(6)]
 
 

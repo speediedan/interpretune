@@ -27,7 +27,6 @@ run_all:
   # here is unclassified (a full run) until it is placed.
   - tests/gpu_ci/*.py
   - tests/gpu_ci/areas.yaml
-  - tests/gpu_ci/hf_warm_manifest_gpu.yaml
   - tests/gpu_ci/phase_collection_manifest.json
   - tests/conftest.py
   - tests/runif.py
@@ -69,9 +68,6 @@ run_all:
   - src/interpretune/hub/promptconfigs.py
   - src/interpretune/hub/manager.py
   - src/interpretune/runners/__init__.py
-  - src/it_examples/seeds.py
-  - src/it_examples/__init__.py
-  - src/it_examples/tests/__init__.py
 
 ignore:
   # agent tooling, docs and packaging metadata
@@ -115,22 +111,25 @@ ignore:
   - src/interpretune/utils/notebook_config.py
   - src/interpretune/utils/schema_validation.py
   - src/interpretune/utils/requirements.py
-  - src/it_examples/neuronpedia_dashboard/**
-  - src/it_examples/experiments/**
-  - src/it_examples/utils/dashboard_pretokenization_rte.py
-  # dev notebooks are sources; the tests execute the published copies
-  - src/it_examples/notebooks/dev/**
-  - src/it_examples/notebooks/publish/.notebook_hashes.json
-  - src/it_examples/notebooks/publish/quickstart/**
-  - src/it_examples/notebooks/publish/shared_analysis/**
-  - src/it_examples/notebooks/publish/example_op_collections/**
-  - src/it_examples/notebooks/publish/interp_engine_example/**
-  # the runner-flexibility demo is a CPU notebook, tested on the hosted matrix
-  - src/it_examples/notebooks/publish/runners/**
-  # so is the role-kinds tuning notebook
-  - src/it_examples/notebooks/publish/tuning/**
-  # so is the gradient-readouts notebook
-  - src/it_examples/notebooks/publish/gradient_readouts/**
+  # the notebook harness (all but `sessions.py`, which the jlens area names), the analysis-injection machinery and the
+  # Neuronpedia extension: on a GPU only the example notebooks exercise them, and those notebooks and their tests live
+  # in interpretune/examples, which runs them against its pinned interpretune revision; their CPU tests here run on the
+  # hosted matrix. Listed by file rather than `harness/**`, since an ignored path never reaches an area.
+  - src/interpretune/harness/__init__.py
+  - src/interpretune/harness/bootstrap.py
+  - src/interpretune/harness/cleanup.py
+  - src/interpretune/harness/config.py
+  - src/interpretune/harness/configs/**
+  - src/interpretune/harness/display.py
+  - src/interpretune/harness/experiments.py
+  - src/interpretune/harness/launcher.py
+  - src/interpretune/harness/measures.py
+  - src/interpretune/harness/nb_harness_utils.py
+  - src/interpretune/harness/notebook_inputs.py
+  - src/interpretune/harness/notebook_ui.py
+  - src/interpretune/harness/resources.py
+  - src/interpretune/analysis/injection/**
+  - src/interpretune/extensions/neuronpedia.py
   # benchmarks run in no pipeline phase; the warm manifest is read only by the hosted matrix
   - tests/benchmarks/**
   - tests/hf_warm_manifest.yaml
@@ -161,7 +160,6 @@ areas:
       - src/interpretune/extensions/memprofiler.py
       - src/interpretune/utils/**
       - src/interpretune/hub/adapters.py
-      - src/it_examples/examples/**
       - tests/core/fixtures/**
       - tests/parity_acceptance/**
     tests:
@@ -251,8 +249,6 @@ areas:
       - tests/core/test_analysis_backend_parity.py
       # the two public notebooks whose nnsight composition registers no HF module, the shape #859's regression hit
       # (about 2.5 min together on the NVIDIA agent); the rest of `ct_notebooks` stays selected by its own sources
-      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook[ct_analysis_backend_nnsight_public]
-      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook[ct_concept_steering_public]
   circuit_tracer_tl:
     # circuit-tracer over a TransformerLens backend, and the backend parity it is checked against
     paths:
@@ -267,153 +263,8 @@ areas:
       - src/interpretune/adapters/nnsight/backends.py
       - src/interpretune/adapters/transformer_lens/backends.py
       - src/interpretune/harness/sessions.py
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/jspace_workspace_demo.ipynb
-      - src/it_examples/tests/notebook/**
     tests:
       - tests/core/test_jlens_
-      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
-  latent_dynamics_notebook:
-    # runs the concept-direction component's latent-dynamics analysis, fetched from the Hub at a pinned revision
-    paths:
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/concept_direction_latent_dynamics.ipynb
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
-  ct_notebooks:
-    # Example notebooks on real models (9.1 of a full run's 22 GPU minutes, builds 2065 and 2087). This area is what
-    # every one of them loads: the harness package's import chain (`interpretune.harness` loads bootstrap, config and
-    # experiments), the injection machinery `example_helpers` imports, and the notebook test harness. The areas
-    # below select one notebook (or the few importing a helper), so a change to one notebook or helper runs only its
-    # users; every other change reaches them through the nightly full run.
-    paths:
-      - src/interpretune/analysis/injection/**
-      - src/interpretune/extensions/neuronpedia.py
-      - src/interpretune/config/extension_cfgs.py
-      - src/interpretune/harness/__init__.py
-      - src/interpretune/harness/bootstrap.py
-      - src/interpretune/harness/config.py
-      - src/interpretune/harness/experiments.py
-      - src/interpretune/harness/configs/**
-      - src/interpretune/harness/launcher.py
-      - src/interpretune/harness/resources.py
-      - src/interpretune/harness/cleanup.py
-      - src/interpretune/harness/nb_harness_utils.py
-      - src/it_examples/tests/notebook/**
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
-      - src/it_examples/tests/test_notebooks.py::test_ct_
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
-      - src/it_examples/tests/test_notebooks.py::test_concept_direction_latent_dynamics_notebook
-  ct_notebooks_new:
-    # anything else under the notebook sources and helpers (a new notebook or helper): every notebook test, as before
-    # the split. Only for a path none of the areas above or below names.
-    fallback: true
-    paths:
-      - src/interpretune/harness/**
-      - src/it_examples/utils/**
-      - src/it_examples/notebooks/publish/attribution_analysis/**
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/**
-      - src/it_examples/notebooks/publish/neuronpedia_example/**
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
-      - src/it_examples/tests/test_notebooks.py::test_ct_
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
-      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
-  nb_example_helpers:
-    # imported by the attribution, circuit-tracer basic, ct analysis-backend, concept-steering and neuronpedia notebooks
-    paths:
-      - src/it_examples/utils/example_helpers.py
-      - src/interpretune/harness/notebook_inputs.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
-      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
-      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
-  nb_ui:
-    # imported by the ct analysis-backend, concept-steering and J-space workspace notebooks
-    paths:
-      - src/it_examples/utils/nb_ui_utils.py
-      - src/interpretune/harness/notebook_ui.py
-      - src/interpretune/harness/display.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
-      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
-      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
-  nb_attribution:
-    paths:
-      - src/it_examples/notebooks/publish/attribution_analysis/**
-      - src/it_examples/utils/graph_analysis_helpers.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
-  nb_ct_basic:
-    paths:
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
-  nb_ct_analysis_backend:
-    paths:
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/ct_analysis_backend_demo*.ipynb
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
-  nb_ct_concept_steering:
-    paths:
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/ct_concept_steering_demo*.ipynb
-      - src/it_examples/utils/steering_demo_helpers.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
-  nb_neuronpedia:
-    paths:
-      - src/it_examples/notebooks/publish/neuronpedia_example/**
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
-  nb_neuron_communities:
-    # the Llama-3.1-8B replication; its test is optional-tier (a gated 8B model and network prompt sources), so a
-    # pull-request gate selects it without running it and the optional tier runs it
-    paths:
-      - src/it_examples/notebooks/publish/neuron_communities/**
-      - src/it_examples/utils/neuron_communities_helpers.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_neuron_communities_notebook
-  nb_bsf_blocks:
-    # the block-sparse featurizer blocks example on gemma-3-1b-it (#866): decision blocks ranked, edited natively at the
-    # featurizer's latent sub-hook against random blocks, and tuned through feature adapters by role
-    paths:
-      - src/it_examples/notebooks/publish/bsf_blocks/**
-      - src/it_examples/utils/bsf_featurizers.py
-      - src/interpretune/harness/measures.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_bsf_blocks_notebook
-  nb_neuron_finder:
-    # the neuron-finder example on Qwen3-0.6B (#869): screens, a dose sweep through address books on nnsight, the same
-    # book on TransformerLens, and unit-adapter tuning by role
-    paths:
-      - src/it_examples/notebooks/publish/neuron_finder/**
-      - src/it_examples/utils/neuron_finder.py
-      - src/interpretune/harness/measures.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_neuron_finder_notebook
-  nb_sasa_blocks:
-    # the SASA blocks example on Mistral-7B; its test is optional-tier (a 7B model and network prompt sources), so a
-    # pull-request gate selects it without running it and the optional tier runs it
-    paths:
-      - src/it_examples/notebooks/publish/sasa_blocks/**
-      - src/it_examples/utils/sasa_blocks_helpers.py
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_sasa_blocks_notebook
-  sae_lens_notebooks:
-    paths:
-      - src/it_examples/notebooks/publish/saelens_adapter_example/**
-      - src/it_examples/tests/notebook/**
-    tests:
-      - src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks
-
-# The few slow cases a per-change gate leaves to the full run (main, scheduled and run_all builds keep every one). Each
-# is a node id an area's `tests` select; a gate whose change set touches none of its `unless_changed` paths drops it,
-# and the run's output says how many it deferred. Each entry's path still runs in the gate through a cheaper case
-# (`covered_by`), so a gate keeps every composition path while the broadest, most expensive form of the check waits
-# for the full run. `unless_changed` names the code the case uniquely exercises: a change there keeps it in the gate.
 full_run_only:
   - test: tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_every_declared_point_is_captured
     why: captures every declared point of gemma-3-1b-it in one run (about 120 s of the class's 505 s on a 4090)

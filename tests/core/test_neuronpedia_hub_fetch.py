@@ -17,6 +17,7 @@ import pytest
 
 from interpretune.hub.discovery import DEFAULT_TRUSTED_PUBLISHERS, UntrustedPublisherSpecError
 from interpretune.utils.neuronpedia_hub_fetch import (
+    CONFIG_DIR_ENV,
     CorpusPlan,
     build_import_command,
     dashboards_present,
@@ -24,6 +25,7 @@ from interpretune.utils.neuronpedia_hub_fetch import (
     ensure_dashboards,
     find_dashboard_corpora,
     resolve_bucket_for,
+    resolve_corpus_config,
 )
 from interpretune.utils.neuronpedia_source_conflicts import ConflictPolicy, SourceSetOccupancy
 
@@ -277,3 +279,36 @@ class TestDefaultDest:
         monkeypatch.delenv("IT_NP_CACHE", raising=False)
         monkeypatch.setenv("HF_HOME", "/hf")
         assert default_corpus_dest() == Path("/hf/interpretune/neuronpedia/hub_downloads")
+
+
+class TestCorpusConfigResolution:
+    """The dashboard configs live in an interpretune/examples checkout, which the import is told about or
+    refuses."""
+
+    ENVELOPE = {"identity": {"model_id": MODEL, "source_set_id": SET}, "prompt_corpus": {"n_prompts": 8}}
+
+    def _config(self, directory: Path, name: str, source_set: str) -> Path:
+        path = directory / name
+        path.write_text(
+            f"pipeline:\n  model_name: {MODEL}\n  neuronpedia_source_set_id: {source_set}\n", encoding="utf-8"
+        )
+        return path
+
+    def test_an_unset_or_missing_config_dir_is_refused_by_name(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
+        with pytest.raises(LookupError, match=f"set {CONFIG_DIR_ENV}"):
+            resolve_corpus_config(self.ENVELOPE)
+        monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path / "absent"))
+        with pytest.raises(LookupError, match="absent"):
+            resolve_corpus_config(self.ENVELOPE)
+
+    def test_the_matching_config_is_read_from_the_named_dir(self, tmp_path, monkeypatch) -> None:
+        match = self._config(tmp_path, "match.yaml", SET)
+        self._config(tmp_path, "other.yaml", f"{SET}-rte")
+        monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path))
+        assert resolve_corpus_config(self.ENVELOPE) == match
+
+    def test_an_explicit_config_needs_no_dir(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
+        explicit = self._config(tmp_path, "explicit.yaml", SET)
+        assert resolve_corpus_config(self.ENVELOPE, explicit) == explicit

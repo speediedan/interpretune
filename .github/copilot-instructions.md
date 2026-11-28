@@ -58,7 +58,7 @@ See `docs/tl_config_hierarchy_overview.md` for detailed configuration relationsh
 ### Required Before Each Commit
 - Unless guidance in a comment or a pull request or target issue description states otherwise, always run our basic tests (which mirror the `ci_test-full.yml` workflow) in your local environment and ensure all tests are passing before committing, for example:
 ```bash
-cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests -v
 ```
 - Ensure all pre-commit hooks pass.
 - If the copilot session is still failing despite trying to get tests and pre-commit hooks passing for some time, it's okay to commit your intermediate work with a comment about the present challenge to be dealt with in a subsequent session.
@@ -255,10 +255,10 @@ cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Basic test run (requires full dependencies)
-cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests -v
 
 # With coverage (using pytest-cov ensures coverage starts before test collection imports)
-python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v
+python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v
 python -m coverage report
 
 # Test collection only (to check test discovery)
@@ -281,7 +281,7 @@ The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` 
 # RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-nohup python -m pytest tests src/it_examples/tests -v > /tmp/it_test_results.txt 2>&1 &
+nohup python -m pytest tests -v > /tmp/it_test_results.txt 2>&1 &
 disown
 echo "Test PID: $!"
 
@@ -367,7 +367,6 @@ src/interpretune/           # Main package
 ├── runners/                # Execution runners
 └── utils/                  # Utility functions
 
-src/it_examples/            # Example experiments
 ├── examples/               # In-tree publish sources of example components (e.g. rte/configs, rte/runs)
 └── notebooks/              # Example notebooks
 ```
@@ -384,14 +383,7 @@ src/it_examples/            # Example experiments
 
 ### Notebook Publishing
 
-**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `nbpress-publish --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
-
-Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` by [nbpress](https://github.com/speediedan/nbpress) (`nbpress-publish`, a git-deps pin), configured from `[tool.nbpress]` in `pyproject.toml`.
-
-- **Pre-commit hook** (`nbpress-publish`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
-- **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
-- **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
-- **Verification:** After any notebook changes, run `nbpress-publish --check-only` to verify published notebooks are in sync.
+The example notebooks live in the [interpretune/examples](https://github.com/interpretune/examples) repository, which publishes and renders them with [nbpress](https://github.com/speediedan/nbpress); this repository carries no notebooks of its own.
 
 ## CI and Validation Pipeline
 
@@ -668,7 +660,7 @@ Then run specific tests using **inline environment variables** (not export) to a
 # This prevents marker conflicts when multiple test environment variables are set
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-IT_RUN_STANDALONE_TESTS=1 python -m pytest src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_lens.py::TestGemma2ParameterMapping -v
 
 # another example using inline variable assignment with multiple standalone tests invoked separately
 cd ${IT_REPO_DIR} && \
@@ -712,7 +704,7 @@ IT_RUN_OPTIONAL_TESTS=1 python -m pytest tests/parity_acceptance/test_it_fts.py:
   instead of `item.own_markers` so class-level standalone marks are properly collected.
 
 ### Configuration
-- YAML configs in `src/it_examples/experiments/cli/` (experiment configs) and `src/it_examples/neuronpedia_dashboard/` (dashboard pipeline configs)
+- YAML configs in `tests/benchmarks/configs/` (experiment configs); the dashboard pipeline configs live in interpretune/examples `dashboards/`
 - Use dataclasses for configuration objects
 - Support jsonargparse CLI integration
 

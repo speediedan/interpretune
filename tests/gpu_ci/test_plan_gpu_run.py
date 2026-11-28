@@ -197,7 +197,7 @@ def test_a_checkout_owned_by_another_user_is_read_once_trusted(tmp_path, monkeyp
     assert merge_commit_changes(repo) == ["b.txt"]
 
 
-NOTEBOOKS = "src/it_examples/tests/test_notebooks.py"
+TARGET = "tests/benchmarks/test_benchmarks.py"
 
 
 @pytest.mark.parametrize(
@@ -206,8 +206,8 @@ NOTEBOOKS = "src/it_examples/tests/test_notebooks.py"
         ("full", None, True),
         ("none", None, False),
         ("selected", "full\n", True),
-        ("selected", "src/it_examples/tests/\n", True),
-        ("selected", f"{NOTEBOOKS}::test_attribution_analysis_notebook\n", True),
+        ("selected", "tests/benchmarks/\n", True),
+        ("selected", f"{TARGET}::test_one_benchmark\n", True),
         ("selected", "tests/core/\ntests/parity_acceptance/\n", False),
     ],
 )
@@ -216,12 +216,12 @@ def test_selection_covers_a_target(tmp_path, mode, lines, covered):
     if lines is not None:
         sel = tmp_path / "it_gpu_selection.txt"
         sel.write_text(lines, encoding="utf-8")
-    assert selection_covers(NOTEBOOKS, mode, str(sel) if sel else None) is covered
+    assert selection_covers(TARGET, mode, str(sel) if sel else None) is covered
 
 
 def test_an_unreadable_selection_file_covers(tmp_path):
     """A broken plan costs the work rather than skipping it."""
-    assert selection_covers(NOTEBOOKS, "selected", str(tmp_path / "missing.txt"))
+    assert selection_covers(TARGET, "selected", str(tmp_path / "missing.txt"))
 
 
 def test_covers_cli_exit_codes(tmp_path, monkeypatch):
@@ -231,7 +231,7 @@ def test_covers_cli_exit_codes(tmp_path, monkeypatch):
     sel.write_text("tests/core/\n", encoding="utf-8")
     monkeypatch.setenv("IT_GPU_SELECTION_MODE", "selected")
     monkeypatch.setenv("IT_GPU_SELECTION_FILE", str(sel))
-    assert main(["--covers", NOTEBOOKS]) == 1
+    assert main(["--covers", TARGET]) == 1
     assert main(["--covers", "tests/core/test_backend_conformance.py"]) == 0
 
 

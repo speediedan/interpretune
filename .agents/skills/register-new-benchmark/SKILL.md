@@ -50,7 +50,7 @@ Before running this skill, gather the following:
 - Development venv built and activated (see `copilot-instructions.md`)
 - Required model weights accessible (HuggingFace auth token set if gated)
 - GPU available for benchmark validation
-- Existing experiment module available (e.g., `it_examples.experiments.rte_boolq`) or plan to create one
+- Existing experiment module available (e.g., the `speediedan/rte` component's `rte_boolq`) or plan to create one
 
 ## Step-by-Step Process
 
@@ -61,7 +61,7 @@ Before running this skill, gather the following:
 1. **Identify the reference config** — Find the closest existing config to use as a template:
 
    ```bash
-   ls src/it_examples/experiments/cli/<experiment>/<model_family>/
+   ls tests/benchmarks/configs/<experiment>/<model_family>/
    ```
 
    For adapter-specific fields, check configs with similar adapter stacks.
@@ -69,7 +69,7 @@ Before running this skill, gather the following:
 2. **Create the config directory** (if needed for a new model family):
 
    ```bash
-   mkdir -p src/it_examples/experiments/cli/<experiment>/<model_family>/
+   mkdir -p tests/benchmarks/configs/<experiment>/<model_family>/
    ```
 
 3. **Create the YAML config** by adapting the reference config. Key sections to update:
@@ -145,7 +145,7 @@ Before running this skill, gather the following:
    benchmarks:
      <experiment_name>:
        <benchmark_id>:
-         config_path: src/it_examples/experiments/cli/<experiment>/<model_family>/<config>.yaml
+         config_path: tests/benchmarks/configs/<experiment>/<model_family>/<config>.yaml
          expected_accuracy: null  # Will be set after validation
          tolerance: 0.03
          adapter_ctx: [<adapters>]

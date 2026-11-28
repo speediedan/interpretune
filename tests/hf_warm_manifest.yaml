@@ -69,9 +69,9 @@ components:
   # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
-    revision: fba0afcff43e09a1882aadd767720195880d0755
+    revision: ee9e3b78f5785177f5ab3c15a60c6a8b9a832f5c
   # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
-  # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
+  # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache.
   - repo_id: speediedan/prompt-configs
     revision: 3d8b9710061283dd14c86a46f0c0649b5e262db0
   # The task-neutral prompt-analysis component the circuit-tracer notebooks load (free-form prompts, no task head).

@@ -218,7 +218,8 @@ print(f"Registered hooks: {list(orchestrator.HOOK_REGISTRY._hooks.keys())}")
 
 ## Example: Attribution Analysis Notebook
 
-See `src/it_examples/notebooks/publish/attribution_analysis/attribution_analysis.ipynb` for a complete example that:
+See the attribution analysis notebook (`tutorials/publish/attribution_analysis/attribution_analysis.ipynb` in
+[interpretune/examples](https://github.com/interpretune/examples)) for a complete example that:
 
 1. Sets up analysis injection for `circuit_tracer`
 2. Captures intermediate values during graph generation

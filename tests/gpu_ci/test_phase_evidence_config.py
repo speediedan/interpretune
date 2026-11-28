@@ -55,7 +55,7 @@ def test_each_phase_collects_what_its_step_runs():
         if "gpu_epsilon.special_tests" in phase.command:
             (mark,) = re.findall(r"--mark_type=(\w+)", phase.command)
             assert mark == name and runner.marks[mark]["env"] == {var: value}, name
-    assert CONFIG.selector(PHASES["cuda"]).startswith("IT_RUN_CUDA_TESTS=1; pytest tests src/it_examples/tests")
+    assert CONFIG.selector(PHASES["cuda"]).startswith("IT_RUN_CUDA_TESTS=1; pytest tests")
 
 
 def test_every_selection_variable_conftest_reads_is_stripped_before_collecting():

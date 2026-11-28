@@ -53,27 +53,20 @@ any pipeline currently runs offline — otherwise it survives until someone adds
 fails as though the new pass were the defect. The same criterion, from the manifest's side, is in the
 header of `tests/hf_warm_manifest.yaml`.
 
-### Verifying the mark, and the check that looks like it fails
+### Verifying the mark
 
-Running the marked file on its own does **not** verify anything: `tests/conftest.py` applies the skip from a
-session-level hook, and that conftest is never loaded when only `src/it_examples/tests/` is collected. The
-mark then appears broken when it is correct — and it fails in whichever direction your machine happens to
-be in, passing against a warm local cache or erroring against a clean one. Neither is the skip you are
-checking for, which is why the outcome looks like information and is not.
+`tests/conftest.py` applies the skip from a session-level hook, so check it with that conftest loaded (any path under
+`tests/` loads it) and the Hub offline:
 
 ```bash
-# WRONG - conftest never loads, so the mark appears broken
-pytest src/it_examples/tests/test_x.py
-
-# RIGHT - CI's shape: both paths collected together, so the hook sees the item
-HF_HUB_OFFLINE=1 pytest -rs tests/core/test_warm_hf_cache.py src/it_examples/tests/test_x.py
+HF_HUB_OFFLINE=1 pytest -rs tests/core/test_x.py
 #   expect: SKIPPED ... "needs the live Hub, and HF_HUB_OFFLINE=1 is set"
 ```
 
 And confirm the mark is on the item you think it is, which the skip alone does not tell you:
 
 ```bash
-pytest --collect-only -m hf_live src/it_examples/tests/test_x.py
+pytest --collect-only -m hf_live tests/core/test_x.py
 ```
 
 Nothing changes for a developer running the suite locally: without `HF_HUB_OFFLINE` set, every test runs
@@ -81,8 +74,8 @@ online exactly as before. To reproduce the CI shape locally:
 
 ```bash
 python scripts/warm_hf_cache.py
-HF_HUB_OFFLINE=1 python -m pytest tests src/it_examples/tests
-python -m pytest tests src/it_examples/tests -m hf_live
+HF_HUB_OFFLINE=1 python -m pytest tests
+python -m pytest tests -m hf_live
 ```
 
 ## Why the cache is saved before the tests run

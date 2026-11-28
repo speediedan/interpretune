@@ -1,4 +1,4 @@
-"""The task-neutral ``speediedan/prompt-analysis`` component, published locally from its in-tree source.
+"""The task-neutral ``speediedan/prompt-analysis`` component, published locally from its warmed snapshot.
 
 Its model-only configurations must carry no prompts and no attribution targets, so circuit-tracer's salient-logit
 selection is what a caller gets unless they name targets; its datamodule serves only the prompts it is given.
@@ -15,19 +15,27 @@ import interpretune as it
 from interpretune.config import ITDataModuleConfig
 from interpretune.hub import components
 
-COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "prompt_analysis"
 REPO_ID = "speediedan/prompt-analysis"
+# The revision tests/hf_warm_manifest.yaml warms. The component's source is in interpretune/examples, so its published
+# snapshot is the tree these tests publish from.
+REVISION = "d221f0e9293888836a0101509546968eced813bd"
+
+
+def _snapshot() -> Path:
+    _, snapshot, _ = components.resolve_component_manifest(REPO_ID, revision=REVISION)
+    return snapshot
+
+
 CONFIG_KEYS = sorted(
-    yaml.safe_load((COMPONENT_DIR / "it_component.yaml").read_text(encoding="utf-8"))["module"]["configs"]
+    yaml.safe_load((_snapshot() / "it_component.yaml").read_text(encoding="utf-8"))["module"]["configs"]
 )
 
 
 @pytest.fixture
 def prompt_analysis_cache(tmp_path) -> Path:
     cache = tmp_path / "components"
-    components.local_publish(
-        COMPONENT_DIR, REPO_ID, entrypoint_src=COMPONENT_DIR / "prompt_analysis.py", cache_dir=cache
-    )
+    snapshot = _snapshot()
+    components.local_publish(snapshot, REPO_ID, entrypoint_src=snapshot / "prompt_analysis.py", cache_dir=cache)
     return cache
 
 

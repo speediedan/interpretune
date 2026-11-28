@@ -61,7 +61,7 @@ looked at once a real version exists (Phase 1).
 1. **CHANGELOG.** Turn `## [Unreleased]` into `## [X.Y.Z] - YYYY-MM-DD`. Every breaking change sits under a
    `### Breaking` heading naming the old and new form (`docs/source/stability.md`). Nothing checks that heading
    automatically yet, so read the section by hand.
-1. **Component floors.** The in-tree component manifests (`src/it_examples/examples/*/it_component.yaml`) declare
+1. **Component floors.** The component manifests in interpretune/examples (`components/*/it_component.yaml`) declare
    `requires: interpretune: '>=0.1.dev0'`, with a note to tighten it to `'>=0.1a0'` at release. Tightening changes
    what the Hub components accept, so it ships as a component republish, and each Hub write needs its own
    maintainer approval naming the repository.
@@ -79,7 +79,7 @@ revision it ran on (the full sha) and the result, with `collected` beside `passe
 | 2 | Full local coverage run | `scripts/gen_it_coverage.sh ... --run-all-and-examples` (see `AGENTS.md`, Testing) | The final run is free of real failures. Use `--allow-failures` only for diagnosing runs. |
 | 3 | Stub freshness | `python scripts/generate_op_stubs.py`, then `git diff --exit-code` | |
 | 4 | Lint and types | `pre-commit run --all-files`, `pyright` | |
-| 5 | Notebooks | `nbpress-publish --check-only`, `nbpress-render --check-stale` | A stale or missing docs artifact fails here. |
+| 5 | Example notebooks | interpretune/examples' CI with its `interpretune.ref` at the candidate | The notebooks and their docs artifacts live in that repository. |
 | 6 | Hosted matrix | `ci_test-full` on Linux, Windows and macOS, `type-check`, `docs-build`, `lint` | Dispatch `ci_test-full` on `main` while `main` is still at the candidate (a dispatch runs all three operating systems), or run it on a `release/*` push. Check the run's head sha is the candidate. |
 | 7 | Gated GPU pipeline | `.azure-pipelines/gpu-tests.yml`, every phase | Queue a manual run on the candidate sha with `mode=full`: a pull request gate runs only the tests its change selects, and `main` has no push trigger. |
 | 8 | Release pipeline, both vendors | `.azure-pipelines/gpu-release.yml`, queued by hand on the candidate | Check both agents carry the `ci-release` capability first. Its verdict, `it-release-eligibility`, is the GPU gate; a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json`. |

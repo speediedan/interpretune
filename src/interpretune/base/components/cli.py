@@ -46,7 +46,9 @@ if TYPE_CHECKING:
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
-IT_BASE = Path(os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples"))
+# A relative config path is looked up under IT_CONFIG_BASE, then searched for under IT_BASE (the working directory
+# unless set): interpretune ships no example configurations of its own.
+IT_BASE = Path(os.environ.get("IT_BASE", Path.cwd()))
 IT_CONFIG_BASE = Path(os.environ.get("IT_CONFIG_BASE", IT_BASE / "config"))
 IT_CONFIG_GLOBAL = Path(os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global"))
 

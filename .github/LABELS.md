@@ -75,10 +75,8 @@ The repository uses GitHub Actions to automatically apply labels:
 ### Area Labels (Auto-applied based on file changes)
 | Label | Color | Auto-applied when files in these paths change |
 |-------|-------|-----------------------------------------------|
-| `area: examples` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `src/it_examples/**`, `examples/**` |
-| `area: experiments` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `src/it_examples/experiments/**` |
+| `area: examples` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `examples/**` |
 | `area: notebooks` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `**/*.ipynb` |
-| `area: patching` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `src/it_examples/patching/**` |
 | `area: tests` | ![#bfdadc](https://via.placeholder.com/10/bfdadc/000000?text=+) #bfdadc | `tests/**`, `**/test_*.py` |
 | `area: docs` | ![#0075ca](https://via.placeholder.com/10/0075ca/000000?text=+) #0075ca | `**/*.md`, `docs/**` |
 | `area: ci` | ![#1d76db](https://via.placeholder.com/10/1d76db/000000?text=+) #1d76db | `.github/**` |

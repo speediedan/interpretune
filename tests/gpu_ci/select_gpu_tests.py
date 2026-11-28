@@ -18,7 +18,7 @@ from pathlib import Path
 import yaml
 
 AREAS_FILE = Path(__file__).with_name("areas.yaml")
-TEST_ROOTS = ("tests/", "src/it_examples/tests/")
+TEST_ROOTS = ("tests/",)
 
 
 @dataclass
@@ -94,7 +94,7 @@ def _module_name(path: str) -> str | None:
 def _test_importers(root: Path) -> dict[str, set[str]]:
     """Map each ``tests.*`` support module to the test modules that import it, transitively."""
     direct: dict[str, set[str]] = {}
-    for f in [*root.glob("tests/**/*.py"), *root.glob("src/it_examples/tests/**/*.py")]:
+    for f in root.glob("tests/**/*.py"):
         rel = f.relative_to(root).as_posix()
         try:
             tree = ast.parse(f.read_text(encoding="utf-8"))

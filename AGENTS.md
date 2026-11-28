@@ -167,7 +167,7 @@ Rules that must not be missed:
 
 > Full text: `.agents/reference/AGENTS.full.md`, section "Testing".
 
-Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
+Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
 `python -m gpu_epsilon.special_tests --lease --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
@@ -365,8 +365,8 @@ The skill is vendored from a shared master and is not editable here; corrections
 **Layout:** `src/interpretune/` holds `adapters/` (TL, SAE, Lightning, CircuitTracer, NNsight), `analysis/` (ops system
 and dispatcher), `config/` (dataclass configs), `extensions/` (MemProfiler, DebugGeneration, NeuronpediaIntegration),
 `runners/` (SessionRunner, AnalysisRunner), `utils/`, `protocol.py`, `registry.py` (ModuleRegistry, RegisteredCfg),
-`session.py` (ITSession) and `base/components/cli.py`; `src/it_examples/` holds example experiments, configs and
-notebooks; `tests/` has `core/`, `benchmarks/` (see `tests/benchmarks/README.md`), `*_parity/` and `examples/`.
+`session.py` (ITSession) and `base/components/cli.py`; the example notebooks, components and dashboard configs live
+in the interpretune/examples repository; `tests/` has `core/`, `benchmarks/` (see `tests/benchmarks/README.md`), `*_parity/` and `examples/`.
 
 **Key patterns:**
 
@@ -496,8 +496,8 @@ to have landed. Leave merged commit history alone; a rewrite costs more than the
 
 ## Commit & PR Requirements
 
-- Before each commit, run the basic local test command (`python -m pytest tests src/it_examples/tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
-- All tests passing (`python -m pytest tests src/it_examples/tests -v`)
+- Before each commit, run the basic local test command (`python -m pytest tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
+- All tests passing (`python -m pytest tests -v`)
 - All pre-commit hooks passing
 - CPU coverage >= existing coverage
 - Docstrings for all public functions/classes
@@ -567,33 +567,16 @@ notes) follow this documentation cadence:
 
 ## Notebook Publishing
 
-**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `nbpress-publish --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
+The example notebooks live in the [interpretune/examples](https://github.com/interpretune/examples) repository, which
+publishes and renders them with [nbpress](https://github.com/speediedan/nbpress) and whose own instructions cover that
+workflow (dev and published lanes, rendered docs artifacts, the gallery rows). This repository carries no notebooks of
+its own.
 
-Dev notebooks live in `src/it_examples/notebooks/dev/` and are published to `src/it_examples/notebooks/publish/` by
-[nbpress](https://github.com/speediedan/nbpress) (`nbpress-publish`), configured from `[tool.nbpress]` in
-`pyproject.toml`. nbpress is a git-deps pin, and the same commit is the `rev` of its hooks in
-`.pre-commit-config.yaml` and a line in `requirements/docs.txt` (a test fails when the three differ).
-
-The publisher, the docs-artifact renderer (`nbpress-render`) and the output stripper (`nbpress-strip`) are
-**repository-neutral** and live in nbpress, shared with finetuning-scheduler, so nothing interpretune-specific goes
-there; a missing capability is added to nbpress generically. Interpretune's own renderer checks (the op-surface
-stamp and its output-drift checks) live in the hooks file `scripts/notebook_docs_hooks.py`, named by `docs_hooks`
-in the table. The published library does not depend on nbpress: the notebook conformance cases and the experiment
-harness read the table and hashes through `interpretune.utils.notebook_config`.
-
-- **Pre-commit hook** (`nbpress-publish`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
-- **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
-- **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
-- **Verification:** After any notebook changes, run `nbpress-publish --check-only` to verify published notebooks are in sync.
-- **Rendered artifacts are part of the change.** A PR that adds or edits a notebook also re-renders its docs
-  artifact (`docs/notebook_artifacts/<lane>/<name>.ipynb`, produced by
-  `nbpress-render --notebook <name>` on a host with the full environment; some
-  notebooks need a GPU, gated weights, Hub tokens or the local Neuronpedia stack) and commits it, so the PR's
-  docs preview (`https://interpretune--<PR>.org.readthedocs.build/en/<PR>/notebooks/<lane>/<name>.html`) shows
-  real outputs. Reviewers read that page, not the code-only fallback, before a merge is proposed.
-  `--check-stale` fails by name on a stale artifact AND on a published notebook with no artifact at all: the
-  fallback renders code-only with no error anywhere, which is the state this rule exists to prevent. A new
-  notebook also gets its row in `docs/source/examples.md` in the same PR.
+nbpress stays a git-deps pin here, and the same commit is the `rev` of its hooks in `.pre-commit-config.yaml` and a
+line in `requirements/docs.txt` (a test fails when the three differ): its `nbpress-strip` hook keeps any committed
+notebook free of outputs, and `tests/core/test_notebook_publishing.py` holds `interpretune.utils.notebook_config` to
+nbpress's answers. The published library does not depend on nbpress: the notebook conformance cases and the experiment
+harness read a repository's `[tool.nbpress]` table and hashes through `interpretune.utils.notebook_config`.
 
 ## Elevated-Access Blockers
 
@@ -622,8 +605,8 @@ The following skills under `.claude/skills/` provide in-depth guidance for speci
 
 | Skill | Applies to | When to use |
 |------|-----------|-------------|
-| `analysis-injection` | `src/it_examples/**` | Modifying runtime hook injection for upstream package analysis (config YAML, analysis points, patcher logic) |
+| `analysis-injection` | `src/interpretune/analysis/injection/**` | Modifying runtime hook injection for upstream package analysis (config YAML, analysis points, patcher logic) |
 | `developing-adapters` | `src/interpretune/adapters/**` | Creating or modifying adapters: protocol enum, config, MRO composition order, registration checklist |
 | `fixture-usage` | `tests/**` | Writing or debugging test fixtures: fixture types/phases, MODULE_EXAMPLE_REGISTRY dependency, parameterization patterns |
-| `registering-example-modules` | `src/it_examples/examples/*/it_component.yaml`, `tests/test_module_registry.yaml` | Adding adapter combinations to the central registry: registry key patterns, config structure, verification steps |
+| `registering-example-modules` | `tests/test_module_registry.yaml` (components: `components/*/it_component.yaml` in interpretune/examples) | Adding adapter combinations to the central registry: registry key patterns, config structure, verification steps |
 | `updating-expected-results` | `tests/parity_acceptance/**` | Updating expected test baselines: state logging, memory footprint YAML, profiling update script |

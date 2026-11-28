@@ -54,7 +54,7 @@ finish() { telemetry_event kind=phase phase="$PHASE" class="$CLASS" action=end r
 
 case "$PHASE" in
     cuda)
-        IT_RUN_CUDA_TESTS=1 python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests \
+        IT_RUN_CUDA_TESTS=1 python -m pytest --cov=src/interpretune --cov-append --cov-report= tests \
             -v --durations=50 --reruns 2 --reruns-delay 5
         rc=$?
         if (( rc == 5 )); then

@@ -4,9 +4,6 @@ Owns the pytest-scale entries split out of the former monolithic example registr
 datamodule/module classes live in ``tests.modules`` and therefore cannot ship. Registers BOTH YAMLs (test entries
 first, then the example entries) into one registry so test parametrization keeps seeing the full original key set;
 the example entries all declare shipping classes explicitly, so the test-class defaults below never leak into them.
-
-``it_examples`` must never import from this module (that is the dependency 3d severed) — the import direction is
-tests -> src only.
 """
 
 from __future__ import annotations
@@ -16,7 +13,7 @@ from pathlib import Path
 
 from interpretune.registry import LazyModuleRegistry
 
-# Test-entry config defaults (formerly it_examples' example_*_defaults): published example configs
+# Test-entry config defaults (formerly the examples' example_*_defaults): published example configs
 # are self-contained, so these now exist ONLY for the pytest-scale entries in this registry.
 example_datamodule_defaults = dict(prepare_data_map_cfg={"batched": True})
 example_itmodule_defaults = dict(

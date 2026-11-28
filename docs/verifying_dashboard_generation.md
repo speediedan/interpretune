@@ -179,15 +179,16 @@ a 38.5 MiB file rather than all of it. Each corpus records its own layout in its
 > [source-set collisions](neuronpedia_dashboard_pipeline.md#source-set-collisions) for the other options.
 
 ```bash
-python scripts/fetch_dashboards_from_hub.py \
+IT_DASHBOARD_CONFIG_DIR=${IT_EXAMPLES_DIR}/dashboards python scripts/fetch_dashboards_from_hub.py \
   --bucket speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards \
   --local-db-url postgres://postgres:postgres@127.0.0.1:5432/postgres \
   --autosuffix-on-exists
 ```
 
 Swap the bucket id for `…__rte__dashboards` to fetch the other corpus. That is the whole
-procedure: it reads the corpus's own `it_artifact.json`, picks the matching committed config,
-creates the destination, downloads, imports, and prints a count summary.
+procedure: it reads the corpus's own `it_artifact.json`, picks the matching config from the
+`dashboards/` directory of an interpretune/examples checkout (`IT_DASHBOARD_CONFIG_DIR`; `--config` names one
+directly), creates the destination, downloads, imports, and prints a count summary.
 
 **The target database must already be initialised, not merely reachable.** The import writes a
 `SourceRelease` row whose `creatorId` references the `bot` user that `prisma/seed.ts` creates, so a

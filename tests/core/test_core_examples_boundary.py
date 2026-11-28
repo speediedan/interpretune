@@ -1,7 +1,7 @@
 """The core package and its tests import nothing from ``it_examples``.
 
-The examples are moving to their own repository, so the library must not depend on them: an import from
-``it_examples`` is one more thing that move would have to carry. Example components reach core tests from the warmed
+The examples moved to the interpretune/examples repository and interpretune's ``it_examples`` tree is gone, so an
+import of it would fail in every install. Example components reach core tests from the warmed
 components cache instead (``tests/hf_warm_manifest.yaml``). Strings that name ``it_examples`` (snapshot-rewrite tables,
 subprocess probes, path fixtures) are fine, so the scan reads import statements and ``importlib.import_module`` /
 ``__import__`` calls, never string contents.

@@ -66,7 +66,7 @@ is planned.
 | **Extensions** | Cross-cutting capabilities: memory profiling, debug generation, Neuronpedia dashboard/explanation integration. |
 
 A minimal flavor of the composition pattern (see the
-[docs](https://interpretune.org/en/latest/) and `src/it_examples/notebooks/` demos for
+[docs](https://interpretune.org/en/latest/) and the [example notebooks](https://github.com/interpretune/examples) for
 runnable versions):
 
 ```python
@@ -199,9 +199,9 @@ interfaces, and multimodal model support — see the
 
 - [Latest docs](https://interpretune.org/en/latest/) — concepts, usage guides, design
   notes, API reference
-- Demo notebooks: `src/it_examples/notebooks/` (start with the CPU-only
-  [quickstart](https://interpretune.org/en/latest/examples.html), then circuit-tracer analysis +
-  concept-steering demos, SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
+- Demo notebooks: the [interpretune/examples](https://github.com/interpretune/examples) repository and its
+  [gallery](https://interpretune.org/projects/examples/) (start with the CPU-only quickstart, then circuit-tracer
+  analysis + concept-steering demos, SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
 
 ## Testing
 

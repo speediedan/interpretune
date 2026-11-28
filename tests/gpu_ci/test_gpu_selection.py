@@ -65,12 +65,11 @@ def test_every_ci_gpu_test_is_reachable_from_an_area(spec):
         ("tests/gpu_ci/vram_measurements.yaml", "none"),
         ("requirements/docs.txt", "none"),
         ("requirements/ci/requirements.txt", "full"),
-        ("tests/gpu_ci/hf_warm_manifest_gpu.yaml", "full"),
         ("tests/gpu_ci/a_new_machinery_file.py", "full"),
-        # one notebook, or one helper, selects its users only
-        ("src/it_examples/utils/steering_demo_helpers.py", {"nb_ct_concept_steering"}),
-        ("src/it_examples/notebooks/publish/attribution_analysis/attribution_analysis.ipynb", {"nb_attribution"}),
-        ("src/interpretune/harness/notebook_ui.py", {"nb_ui"}),
+        # the notebook harness is exercised on a GPU only by the examples repository's notebooks
+        ("src/interpretune/harness/notebook_ui.py", "none"),
+        # but the sessions module the J-lens tests build through selects them
+        ("src/interpretune/harness/sessions.py", {"jlens"}),
     ],
 )
 def test_each_rule_class_selects_what_it_should(spec, path, expect):
@@ -98,11 +97,7 @@ def test_a_transformer_lens_change_skips_the_circuit_tracer_conformance_class(sp
 
 
 def test_a_fallback_area_takes_only_what_no_narrower_area_names(spec):
-    """A new notebook or helper selects every notebook test (the fallback); a mapped one only its own users."""
-    new = select(["src/it_examples/notebooks/publish/circuit_tracer_examples/a_new_demo.ipynb"], spec, ROOT)
-    assert new.areas == {"ct_notebooks_new"} and not new.full
-    mapped = select(["src/it_examples/utils/steering_demo_helpers.py"], spec, ROOT)
-    assert "ct_notebooks_new" not in mapped.areas
+    """A path only a `fallback` area names selects it; a path a narrower area names selects only that area."""
     fallback = {"paths": ["x/**"], "tests": ["t/fallback"], "fallback": True}
     narrow = {"paths": ["x/one.py"], "tests": ["t/one"]}
     toy = {"run_all": [], "ignore": [], "areas": {"wide": fallback, "one": narrow}}
@@ -133,7 +128,6 @@ def test_the_selection_file_narrows_a_gpu_phase(tmp_path, spec):
                 "-m",
                 "pytest",
                 "tests",
-                "src/it_examples/tests",
                 "-q",
                 "--collect-only",
                 "-p",

@@ -41,13 +41,10 @@ CPU-only pass that in CI runs on the GitHub-hosted matrix instead:
 This split is deliberate: regular CUDA tests still append to the same coverage file, but they run after the CPU-only
 baseline has released its fixture state.
 
-In `--run-all-and-examples` mode (mandatory for pre-PR-wave gates; see CLAUDE.md), the base phase
-additionally collects `src/it_examples` (including its doctests) BEFORE `tests/`, and the harness appends
-`profile`, `optional`, and `benchmark` special-test phases. Two collection-order consequences worth
-knowing (both bit us on 2026-07-09): module/doctest side effects from `src/it_examples` can poison
-later `tests/` state if they mutate global import state, and the CPU-only base pass exercises paths
-that CUDA-visible local runs never hit — treat first run-all executions as discovery runs
-(`--allow-failures --resource-debug`).
+In `--run-all-and-examples` mode (mandatory for pre-PR-wave gates; see CLAUDE.md), the harness appends
+`profile`, `optional`, and `benchmark` special-test phases. The CPU-only base pass exercises paths that
+CUDA-visible local runs never hit, so treat first run-all executions as discovery runs
+(`--allow-failures --resource-debug`). The example notebooks' tests run in the interpretune/examples repository.
 
 Example local run:
 
@@ -121,7 +118,7 @@ These are configured in `.github/workflows/ci_test-full.yml` under the `env:` se
 
 ### Affected Tests
 
-- **`test_op_collection_notebooks`** (`src/it_examples/tests/test_notebooks.py`): Executes the
+- **`test_op_collection_notebooks`** (`tests/tutorials/test_notebooks.py` in interpretune/examples): Executes the
   `op_collection_example.ipynb` published notebook via papermill. The notebook uploads/downloads
   analysis op collections to a private HuggingFace repo. Requires `HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY`
   or `HF_TOKEN` to be set. **Skipped automatically** when neither token is available.
@@ -145,8 +142,8 @@ export HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY="hf_your_token_here"
 # Option 2: Use the standard HF_TOKEN
 export HF_TOKEN="hf_your_token_here"
 
-# Then run the test
-python -m pytest src/it_examples/tests/test_notebooks.py::test_op_collection_notebooks -v
+# Then run the test, from an interpretune/examples checkout
+python -m pytest tests/tutorials/test_notebooks.py::test_op_collection_notebooks -v
 ```
 
 The token requires **write** permissions since the notebook creates and uploads to a private HuggingFace
@@ -466,7 +463,7 @@ To see what a branch would select:
 
 ```bash
 python tests/gpu_ci/select_gpu_tests.py --base origin/main --emit /tmp/gpu_selection.txt
-IT_GPU_SELECTION_FILE=/tmp/gpu_selection.txt IT_RUN_CUDA_TESTS=1 python -m pytest tests src/it_examples/tests
+IT_GPU_SELECTION_FILE=/tmp/gpu_selection.txt IT_RUN_CUDA_TESTS=1 python -m pytest tests
 ```
 
 The selection narrows only the GPU phases, and is inert when `IT_GPU_SELECTION_FILE` is unset.
