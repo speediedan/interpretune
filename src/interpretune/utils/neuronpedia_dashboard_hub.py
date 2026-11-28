@@ -77,8 +77,8 @@ __all__ = [
     "RowGroupSizeCheck",
     "BUCKET_ROOT",
     "UNSPECIFIED",
-    "CORPUS_MANIFEST_FILE",
-    "corpus_manifest_summary",
+    "CORPUS_ENVELOPE_FILE",
+    "corpus_envelope_summary",
     "manifest_referenced_tables",
     "collect_publish_files",
     "summarize_by_table",
@@ -115,7 +115,7 @@ DASHBOARDS_TOKEN_ENV_VAR = "HF_HUB_DASHBOARDS_TOKEN"
 #: imported: pulling it from the pipeline module would drag sae_dashboard and torch into what is
 #: otherwise a lightweight publisher. ``TestCorpusManifest`` asserts the two constants agree, so
 #: drift is a test failure rather than a silently-missing file in a published corpus.
-CORPUS_MANIFEST_FILE = "dashboards.json"
+CORPUS_ENVELOPE_FILE = "it_artifact.json"
 
 #: Parquet files inspected when estimating page-index coverage. The corpus is homogeneous -- every
 #: file comes from the same writer configuration -- so a sample answers the question that matters
@@ -305,28 +305,27 @@ def manifest_referenced_tables(run_root: Path, sample: int = 4) -> set[str]:
     return referenced
 
 
-def corpus_manifest_summary(run_root: Path) -> str:
+def corpus_envelope_summary(run_root: Path) -> str:
     """One line describing what the corpus says it is, for the pre-publish report.
 
-    Returns a warning string when the corpus describes nothing. That is not fatal -- nothing imports from the manifest
-    -- but it is worth seeing at the moment of publishing, since a corpus that reaches a consumer without it forces them
-    to infer provenance from the bucket name.
+    Returns a warning string when the corpus carries no readable envelope. That is not fatal -- nothing imports from
+    the envelope -- but it is worth seeing at the moment of publishing: a corpus published without one is not
+    discoverable, and a consumer would have to infer its provenance from the bucket name.
     """
-    path = Path(run_root) / CORPUS_MANIFEST_FILE
-    if not path.exists():
-        return f"corpus manifest: ABSENT ({CORPUS_MANIFEST_FILE}) -- backfill with --write-source-ids"
+    from interpretune.hub.artifacts import ArtifactEnvelopeError
+    from interpretune.utils.neuronpedia_dashboard_pipeline import read_corpus_envelope
+
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return f"corpus manifest: UNREADABLE ({exc})"
-    model = (payload.get("model") or {}).get("name", "?")
-    source_set = (payload.get("source_set") or {}).get("id", "?")
-    corpus = payload.get("prompt_corpus") or {}
-    layers = (payload.get("layers") or {}).get("generated") or []
+        envelope = read_corpus_envelope(run_root)
+    except ArtifactEnvelopeError as exc:
+        return f"corpus envelope: INVALID ({exc})"
+    if envelope is None:
+        return f"corpus envelope: ABSENT ({CORPUS_ENVELOPE_FILE}) -- backfill with --write-source-ids"
+    identity, corpus = envelope["identity"], envelope.get("prompt_corpus") or {}
     return (
-        f"corpus manifest: {model} / {source_set} / "
+        f"corpus envelope: {identity['model_id']} / {identity['source_set_id']} / "
         f"{corpus.get('n_prompts', '?')} prompts x {corpus.get('n_tokens_in_prompt', '?')} tokens / "
-        f"{len(layers)} layers"
+        f"{len(envelope['layers']['generated'])} layers"
     )
 
 
@@ -363,7 +362,7 @@ def format_publish_plan(plan: DashboardPublishPlan, repo_id: str = "", max_table
     lines = [f"run root : {plan.run_root}"]
     if repo_id:
         lines.append(f"repo     : {repo_id}")
-    lines.append(corpus_manifest_summary(plan.run_root))
+    lines.append(corpus_envelope_summary(plan.run_root))
     lines.append(f"upload   : {len(plan.upload):>5} files  {plan.upload_bytes / _GIB:6.2f} GiB")
 
     if plan.skip:
@@ -577,12 +576,12 @@ class HubBucketStore:
         from huggingface_hub import HfApi
 
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
-        # The root manifest is what makes a bucket discoverable, so it is held back until `release`, after the
+        # The root envelope is what makes a bucket discoverable, so it is held back until `release`, after the
         # published copy has passed every check: a corpus whose read-back failed is then never listed.
         HfApi(token=token).sync_bucket(
             source=str(plan.run_root),
             dest=self.uri(target, prefix),
-            exclude=[*publish_ignore_patterns(include_copy_rows), CORPUS_MANIFEST_FILE],
+            exclude=[*publish_ignore_patterns(include_copy_rows), CORPUS_ENVELOPE_FILE],
             delete=delete,
         )
 
@@ -595,15 +594,15 @@ class HubBucketStore:
         path_in_repo: str = "",
         token: str | None = None,
     ) -> None:
-        """Upload the run's ``dashboards.json``, which corpus discovery lists a bucket by."""
+        """Upload the run's ``it_artifact.json``, which corpus discovery lists a bucket by."""
         from huggingface_hub import HfApi
 
-        manifest = Path(plan.run_root) / CORPUS_MANIFEST_FILE
-        if not manifest.is_file():
-            return  # the manifest-consistency check has already reported a corpus without one
+        envelope = Path(plan.run_root) / CORPUS_ENVELOPE_FILE
+        if not envelope.is_file():
+            return  # the pre-publish report has already shown the corpus carries no envelope
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
-        dest = f"{prefix}/{CORPUS_MANIFEST_FILE}" if prefix else CORPUS_MANIFEST_FILE
-        HfApi(token=token).batch_bucket_files(target, add=[(manifest, dest)], token=token)
+        dest = f"{prefix}/{CORPUS_ENVELOPE_FILE}" if prefix else CORPUS_ENVELOPE_FILE
+        HfApi(token=token).batch_bucket_files(target, add=[(envelope, dest)], token=token)
 
     def pull(
         self,
@@ -856,9 +855,9 @@ def publish_dashboard_run(
     ``add_checks`` name checks to skip or to turn on; an unknown name is refused. Skips are recorded in
     the returned plan's ``checks`` and, for the dataset store, in the commit message.
 
-    A corpus published to a bucket in a trusted publisher's namespace is discoverable once its ``dashboards.json`` is
+    A corpus published to a bucket in a trusted publisher's namespace is discoverable once its ``it_artifact.json`` is
     there (``interpretune.utils.neuronpedia_hub_fetch.find_dashboard_corpora`` lists the publisher's buckets that carry
-    one), so the bucket store uploads that manifest last, only after every post-upload check has passed: a corpus
+    one), so the bucket store uploads that envelope last, only after every post-upload check has passed: a corpus
     whose read-back failed is never discoverable.
     """
     validate_check_names(DASHBOARD_CORPUS, skip_checks, add_checks)

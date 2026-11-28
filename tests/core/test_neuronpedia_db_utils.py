@@ -14,24 +14,27 @@ upstream_db_import = pytest.importorskip("neuronpedia_utils.local_db_import")
 db_utils = importlib.import_module("interpretune.utils.neuronpedia_db_utils")
 
 
-def test_resolve_local_neuronpedia_db_url_rewrites_container_host_port() -> None:
-    resolved = db_utils.resolve_local_neuronpedia_db_url(
-        "postgresql://np_user:secret@postgres:5432/postgres",
-        env={"POSTGRES_HOST_PORT": "5433"},
-    )
-
-    assert resolved == "postgresql://np_user:secret@127.0.0.1:5433/postgres"
+def test_resolve_local_neuronpedia_db_url_returns_the_url_it_is_given() -> None:
+    """The URL is used as given: no host or port rewriting, whatever the environment holds."""
+    url = "postgresql://np_user:secret@postgres:5432/postgres"
+    assert db_utils.resolve_local_neuronpedia_db_url(url, env={"POSTGRES_HOST_PORT": "5433"}) == url
 
 
-def test_resolve_local_neuronpedia_db_url_uses_env_candidate() -> None:
+def test_resolve_local_neuronpedia_db_url_takes_the_first_set_env_var() -> None:
     resolved = db_utils.resolve_local_neuronpedia_db_url(
         env={
-            "POSTGRES_URL_NON_POOLING": "postgresql://np_user:secret@postgres:5432/postgres",
-            "POSTGRES_HOST_PORT": "15433",
+            "POSTGRES_URL_NON_POOLING": "postgresql://np_user:secret@127.0.0.1:5432/second",
+            "DATABASE_URL": "postgresql://np_user:secret@127.0.0.1:5432/third",
         }
     )
-
-    assert resolved == "postgresql://np_user:secret@127.0.0.1:15433/postgres"
+    assert resolved == "postgresql://np_user:secret@127.0.0.1:5432/second"
+    resolved = db_utils.resolve_local_neuronpedia_db_url(
+        env={
+            "LOCAL_NEURONPEDIA_DB_URL": "postgresql://np_user:secret@127.0.0.1:5432/first",
+            "POSTGRES_URL_NON_POOLING": "postgresql://np_user:secret@127.0.0.1:5432/second",
+        }
+    )
+    assert resolved == "postgresql://np_user:secret@127.0.0.1:5432/first"
 
 
 def test_resolve_local_neuronpedia_db_url_requires_candidate() -> None:
@@ -63,7 +66,6 @@ def test_import_neuronpedia_export_bundle_local_db_resolves_url_before_neuronped
         upstream_calls.append({"args": args, "kwargs": kwargs})
         return SimpleNamespace(imported_row_counts={"Activation": 2})
 
-    monkeypatch.setenv("POSTGRES_HOST_PORT", "5433")
     monkeypatch.setattr(db_utils, "_import_neuronpedia_export_bundle_local_db", _fake_import)
 
     summary = db_utils.import_neuronpedia_export_bundle_local_db(
@@ -79,7 +81,7 @@ def test_import_neuronpedia_export_bundle_local_db_resolves_url_before_neuronped
         {
             "args": (export_root,),
             "kwargs": {
-                "local_db_url": "postgresql://np_user:secret@127.0.0.1:5433/postgres",
+                "local_db_url": "postgresql://np_user:secret@postgres:5432/postgres",
                 "prefer_arrow_for_tables": ("Activation",),
                 "prefer_copy_for_tables": ("Activation",),
                 "artifact_format_by_table": {"Activation": "arrow"},
@@ -101,7 +103,6 @@ def test_benchmark_neuronpedia_export_bundle_local_db_modes_resolves_url_before_
         upstream_calls.append({"args": args, "kwargs": kwargs})
         return {"activation_arrow_copy": SimpleNamespace(imported_row_counts={"Activation": 2})}
 
-    monkeypatch.setenv("POSTGRES_HOST_PORT", "5433")
     monkeypatch.setattr(db_utils, "_benchmark_neuronpedia_export_bundle_local_db_modes", _fake_benchmark)
 
     summaries = db_utils.benchmark_neuronpedia_export_bundle_local_db_modes(
@@ -116,7 +117,7 @@ def test_benchmark_neuronpedia_export_bundle_local_db_modes_resolves_url_before_
         {
             "args": (export_root,),
             "kwargs": {
-                "local_db_url": "postgresql://np_user:secret@127.0.0.1:5433/postgres",
+                "local_db_url": "postgresql://np_user:secret@postgres:5432/postgres",
                 "import_modes": import_modes,
                 "rollback_each_mode": False,
             },

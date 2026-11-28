@@ -170,7 +170,7 @@ layers. The monology dataset is a typical dense, generic dataset used for many e
 
 Both were regenerated 2026-08-07 with multiple Parquet row groups (`row_group_size=4096`), which is
 what makes them range-readable: fetching one feature's dashboard over the S3 gateway costs 1.4 MiB of
-a 38.5 MiB file rather than all of it. Each corpus records its own layout in `dashboards.json` under
+a 38.5 MiB file rather than all of it. Each corpus records its own layout in its `it_artifact.json` under
 `artifacts.parquet_row_group_size`.
 
 > These land in the same source sets **(d)** would generate into. `--autosuffix-on-exists` below
@@ -186,7 +186,7 @@ python scripts/fetch_dashboards_from_hub.py \
 ```
 
 Swap the bucket id for `…__rte__dashboards` to fetch the other corpus. That is the whole
-procedure: it reads the corpus's own `dashboards.json`, picks the matching committed config,
+procedure: it reads the corpus's own `it_artifact.json`, picks the matching committed config,
 creates the destination, downloads, imports, and prints a count summary.
 
 **The target database must already be initialised, not merely reachable.** The import writes a

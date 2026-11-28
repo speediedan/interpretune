@@ -163,9 +163,10 @@ def cleanup_local_graph_artifacts(
             dry_run=dry_run,
         )
 
-    resolved_db_url = local_db_url or os.environ.get("LOCAL_NEURONPEDIA_DB_URL")
-    if not resolved_db_url:
-        raise ValueError("local_db_url is required unless LOCAL_NEURONPEDIA_DB_URL is set.")
+    from interpretune.utils.neuronpedia_db_utils import resolve_local_neuronpedia_db_url
+
+    # the same resolution every other local-database caller uses, so a URL set in any of its variables works here too
+    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
 
     resolved_webapp_url = local_webapp_url or os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL")
     resolved_api_key = (
