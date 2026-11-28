@@ -2,11 +2,13 @@ r"""
 Fetching Recipes by Reference
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Wherever interpretune names a recipe (and, in time, an address book), it accepts a venngram document reference
+Wherever interpretune names a recipe, a treatment in an address book (venngram's ``treatments`` section, read as a
+``venngram.treatment.Treatment``), it accepts a venngram document reference
 (``<store>:<ref>[@<revision>]:<path>[#<sha256>]``, see ``venngram.store``) as well as a local path or an inline
 mapping. A fetched recipe comes back with the exact reference it resolved to, :func:`venngram.store.pin` applied,
 so a caller can record that in its provenance and reproduce the run: provenance keeps only hashes and references,
-never fetched content.
+never fetched content. Venngram retired the standalone ``kind: recipe`` document, so each source is a book carrying
+its treatments.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -37,7 +39,7 @@ def _require(module: str):
 class FetchedRecipe:
     """A recipe and where it came from: the exact (pinned) reference for a store fetch, else the local source."""
 
-    recipe: Any  # venngram.recipe.Recipe, typed loosely so importing this module needs no venngram install
+    recipe: Any  # venngram.treatment.Treatment, typed loosely so importing this module needs no venngram install
     reference: str | None  #: the pinned document reference, when fetched from a store
     source: str  #: where the document was read from, for provenance (a path, or ``"<inline>"``)
 
@@ -58,13 +60,23 @@ def _treatment(book: Any, name: str | None, source: str, module: Any, catalog: A
     return treatments[name]
 
 
-def _read_local(path: str | Path, treatment: str | None, recipe_mod: Any, module: Any, catalog: Any) -> Any:
-    with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
+def _book_doc(doc: Any, source: str) -> Mapping[str, Any]:
+    """``doc``, once it is an address book carrying treatments; a standalone recipe document is refused by name."""
     if isinstance(doc, Mapping) and "treatments" in doc:
-        book = _require("venngram.book").AddressBook.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
-        return _treatment(book, treatment, str(path), module, catalog)
-    return recipe_mod.Recipe.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
+        return doc
+    if isinstance(doc, Mapping) and doc.get("kind") == "recipe":
+        raise MisconfigurationException(
+            f"{source}: venngram retired the standalone `kind: recipe` document; a treatment lives in the address book "
+            "it treats, under its `treatments` section (export_book writes that form)."
+        )
+    raise MisconfigurationException(f"{source}: not an address book with a `treatments` section.")
+
+
+def _read_local(path: str | Path, treatment: str | None, module: Any, catalog: Any) -> Any:
+    with open(path, encoding="utf-8") as fh:
+        doc = _book_doc(yaml.safe_load(fh), str(path))
+    book = _require("venngram.book").AddressBook.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
+    return _treatment(book, treatment, str(path), module, catalog)
 
 
 def load_recipe(
@@ -76,13 +88,12 @@ def load_recipe(
 ) -> FetchedRecipe:
     """Read a recipe from a document reference, a local path, a mapping, or a recipe already in hand.
 
-    Each document may be a recipe or a book carrying treatments (the form
-    :func:`~interpretune.analysis.venngram.export.export_book` writes). A book's treatment is read by name, and a book
-    with one treatment needs none.
+    Each document is a book carrying treatments (the form :func:`~interpretune.analysis.venngram.export.export_book`
+    writes). A book's treatment is read by name, and a book with one treatment needs none.
 
     A string that parses as a venngram document reference (``venngram.store.is_reference``) is fetched
     manifest-first and hash-checked by venngram, and the returned reference is pinned. Any other string (or a
-    ``Path``) is a local file. A mapping is an inline document. A ``venngram.recipe.Recipe`` passes through.
+    ``Path``) is a local file. A mapping is an inline document. A ``venngram.treatment.Treatment`` passes through.
 
     A book that pins the models it was written against is checked against those ``module`` has loaded, and the frames
     it pins against ``catalog``'s (:func:`~interpretune.tuning.pins.check_book_pins`), so it needs the module.
@@ -90,29 +101,27 @@ def load_recipe(
     Raises:
         PinMismatchError: ``module``'s models are not the ones the book pins.
         ValueError: The book pins its models and no ``module`` was given.
-        MisconfigurationException: If venngram is not installed, the fetched document is not a recipe or a book with
-            the named treatment, or the source is none of these. A fetch or parse failure from venngram itself
-            propagates unchanged.
+        MisconfigurationException: If venngram is not installed, the document is not a book with the named treatment
+            (a standalone ``kind: recipe`` document included), or the source is none of these. A fetch or parse
+            failure from venngram itself propagates unchanged.
     """
-    recipe_mod, store = _require("venngram.recipe"), _require("venngram.store")
-    if isinstance(source, recipe_mod.Recipe):
+    treatment_mod, store = _require("venngram.treatment"), _require("venngram.store")
+    if isinstance(source, treatment_mod.Treatment):
         return FetchedRecipe(source, None, "<inline>")
     if isinstance(source, Mapping):
-        if "treatments" in source:
-            book = _require("venngram.book").AddressBook.from_mapping(source)
-            return FetchedRecipe(_treatment(book, treatment, "<inline>", module, catalog), None, "<inline>")
-        return FetchedRecipe(recipe_mod.Recipe.from_mapping(source), None, "<inline>")
+        book = _require("venngram.book").AddressBook.from_mapping(_book_doc(source, "<inline>"))
+        return FetchedRecipe(_treatment(book, treatment, "<inline>", module, catalog), None, "<inline>")
     if isinstance(source, Path) or (isinstance(source, str) and not store.is_reference(source)):
-        return FetchedRecipe(_read_local(source, treatment, recipe_mod, module, catalog), None, str(source))
+        return FetchedRecipe(_read_local(source, treatment, module, catalog), None, str(source))
     if isinstance(source, str):
         loaded = store.load(source)
         if isinstance(loaded, _require("venngram.book").AddressBook) and loaded.treatments:
             loaded = _treatment(loaded, treatment, source, module, catalog)
-        if not isinstance(loaded, recipe_mod.Recipe):
+        if not isinstance(loaded, treatment_mod.Treatment):
             raise MisconfigurationException(
                 f"{source}: the fetched document is a {type(loaded).__name__} with no treatments, not a recipe."
             )
         return FetchedRecipe(loaded, str(store.pin(source)), source)
     raise MisconfigurationException(
-        f"A recipe source must be a document reference, a path, a mapping or a Recipe, not {type(source).__name__}."
+        f"A recipe source must be a document reference, a path, a mapping or a Treatment, not {type(source).__name__}."
     )

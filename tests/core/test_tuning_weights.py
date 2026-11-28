@@ -12,6 +12,7 @@ from venngram.maps.view import MappedView  # noqa: E402
 from venngram.ops import check_ops  # noqa: E402
 from venngram.patches import tensor_sha256, write_weight_patch  # noqa: E402
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.backends.capabilities import PositionScope  # noqa: E402
 from interpretune.analysis.backends.interventions import InterventionSpec, apply_op  # noqa: E402
 from interpretune.analysis.venngram import load_recipe, recipe_interventions  # noqa: E402
@@ -103,7 +104,6 @@ def _recipe(weights, operands=None, sets=None):
     }
     doc = {
         "schema_version": 3,
-        "kind": "recipe",
         "name": "edit",
         "model": {"id": "tiny", "revision": "r1"},
         "book": {
@@ -117,7 +117,7 @@ def _recipe(weights, operands=None, sets=None):
     }
     if operands:
         doc["operands"] = operands
-    return load_recipe(doc).recipe
+    return load_recipe(treatment_book(doc)).recipe
 
 
 IDS = torch.tensor([[1, 4, 2, 9]])
@@ -371,7 +371,6 @@ def test_parameter_targets_are_declared_only_where_weights_are_materialized():
 def _stage_doc(ops, tokens="all", site="mlp.out.hook_in"):
     return {
         "schema_version": 2,
-        "kind": "recipe",
         "name": "neurons",
         "model": {"id": "tiny", "revision": "r1"},
         "book": {
@@ -386,7 +385,7 @@ def _stage_doc(ops, tokens="all", site="mlp.out.hook_in"):
 
 
 def _stage_recipe(ops, tokens="all", site="mlp.out.hook_in"):
-    return load_recipe(_stage_doc(ops, tokens=tokens, site=site)).recipe
+    return load_recipe(treatment_book(_stage_doc(ops, tokens=tokens, site=site))).recipe
 
 
 def _hooked(model, recipe):
@@ -643,7 +642,7 @@ def _output_recipe(*stages, operand=SPAN):
     values, shape = operand.flatten().tolist(), list(operand.shape)
     doc["operands"] = {"span": {"values": values, "shape": shape, "basis": "unfolded"}}
     doc["stages"] = list(stages)
-    return load_recipe(doc).recipe
+    return load_recipe(treatment_book(doc)).recipe
 
 
 def _hooked_both(model, recipe):

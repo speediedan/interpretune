@@ -33,7 +33,7 @@
   "notebooks/dev/example_op_collections/local_op_collection/local_op_definitions.py": "e7a21b8151f745ed60fabf992f9742eae30a4a4b9c98d1ced6a5d47a0461d450",
   "notebooks/dev/example_op_collections/op_collection_demo_utils.py": "a7a739e9457dade95ee0e4480e3ac855db352127de816c04032dc26f658f65ec",
   "notebooks/dev/example_op_collections/op_collection_example.ipynb": "7249d103fd6f2fcb9b9d7f7bb890e45f495bbdca69b8eaf6ceb2aa82babdd383",
-  "notebooks/dev/gradient_readouts/gradient_readouts.ipynb": "ddbd2da68465b55c71c65e22d10bf7211e3bac5fbd5381147b74d8a0cbf8d135",
+  "notebooks/dev/gradient_readouts/gradient_readouts.ipynb": "b54b5006121a6f4ddf907905077d8b2b9e529c90c3123e81998ad6a640d5e802",
   "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "8e4f79603852285e899ec06313b45a5bcca1e9923a26c62af4e95dd64f51de9b",
   "notebooks/dev/neuron_communities/neuron_communities_replication.ipynb": "58287965e50fcce7a88af1503866a6457e694f936b42e6e8473ce3ce53b48f52",
   "notebooks/dev/neuron_finder/neuron_finder.ipynb": "c6962a2d11dd07ed571bdb9e5c0d0fcbbb2b75ade2c61f3f1e6a0096c710c4ed",

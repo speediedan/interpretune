@@ -28,11 +28,10 @@ CONCEPT = {"values": [1.0, 0.0, 0.0, 0.0], "shape": [4], "basis": "jlens_folded"
 
 
 def _recipe(operands=None, **stage):
-    from venngram.recipe import Recipe
+    from interpretune.analysis.venngram import load_recipe
+    from interpretune.testing.venngram_books import treatment_book
 
     doc = {
-        "schema_version": 2,
-        "kind": "recipe",
         "name": "dose-the-units",
         "model": {"id": "m", "revision": "r1"},
         "book": BOOK,
@@ -40,7 +39,7 @@ def _recipe(operands=None, **stage):
     }
     if operands:
         doc["operands"] = operands
-    return Recipe.from_mapping(doc)
+    return load_recipe(treatment_book(doc)).recipe
 
 
 def _support(capture=True):
@@ -132,9 +131,9 @@ class TestCheckRecipe:
 
         support = _support()
         document = support_mapping(support)
-        assert document["schema_version"] == 2 and set(document["sections"]) == {"steering"}
+        assert document["schema_version"] == 9 and set(document["sections"]) == {"treatments"}
         record = SupportRecord.from_mapping(document)
-        reread = record.steering
+        reread = record.treatments
         assert record.name == support.name
         assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.bases) == (
             support.ops,

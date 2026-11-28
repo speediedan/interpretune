@@ -5,12 +5,12 @@ import yaml
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.venngram import load_recipe
 from interpretune.utils import MisconfigurationException
 
 RECIPE = {
     "schema_version": 2,
-    "kind": "recipe",
     "name": "dose-the-units",
     "model": {"id": "m", "revision": "r1"},
     "book": {
@@ -30,16 +30,16 @@ RECIPE = {
 
 
 def test_a_mapping_and_a_recipe_pass_through():
-    from venngram.recipe import Recipe
+    from venngram.treatment import Treatment
 
-    fetched = load_recipe(RECIPE)
-    assert isinstance(fetched.recipe, Recipe) and fetched.reference is None and fetched.source == "<inline>"
+    fetched = load_recipe(treatment_book(RECIPE))
+    assert isinstance(fetched.recipe, Treatment) and fetched.reference is None and fetched.source == "<inline>"
     assert load_recipe(fetched.recipe).recipe is fetched.recipe
 
 
 def test_a_local_path_reads_the_file(tmp_path):
     path = tmp_path / "recipe.yaml"
-    path.write_text(yaml.safe_dump(RECIPE), encoding="utf-8")
+    path.write_text(yaml.safe_dump(treatment_book(RECIPE)), encoding="utf-8")
     fetched = load_recipe(path)
     assert fetched.recipe.name == "dose-the-units" and fetched.reference is None and fetched.source == str(path)
 

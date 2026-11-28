@@ -7,6 +7,7 @@ import torch
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
 from interpretune.analysis.venngram import (
     evaluate_readout_case,
@@ -26,7 +27,6 @@ DIRECTION = [0.5, -1.0, 0.0, 2.0, 0.25, 1.0]
 def _doc(readout=None, *, stages=None, operands=None, sets=None, schema=4):
     doc = {
         "schema_version": schema,
-        "kind": "recipe",
         "name": "declared-readout",
         "model": {"id": "m", "revision": "r"},
         "book": {
@@ -73,7 +73,7 @@ LOGIT_DIFFERENCE = {
 
 
 def _readout(readout, **kw):
-    return recipe_readout(load_recipe(_doc(readout, **kw)).recipe, n_layers=8)
+    return recipe_readout(load_recipe(treatment_book(_doc(readout, **kw))).recipe, n_layers=8)
 
 
 def _inputs(seed=0):
@@ -193,7 +193,7 @@ class TestDeclaredReadout:
     def test_a_recipe_written_before_readouts_leaves_the_default(self):
         doc = _doc(schema=2, operands={})
         del doc["operands"]
-        assert recipe_readout(load_recipe(doc).recipe, n_layers=8) is None
+        assert recipe_readout(load_recipe(treatment_book(doc)).recipe, n_layers=8) is None
 
 
 class TestRefusals:
@@ -222,7 +222,7 @@ class TestRefusals:
     def test_a_recipe_with_no_gradient_stage_is_refused(self):
         stage = {"site": "blocks.3.hook_out", "tokens": "last", "ops": [{"op": "scale", "value": {"dose": 0.0}}]}
         with pytest.raises(MisconfigurationException, match="has no stage acting on a gradient"):
-            recipe_readout(load_recipe(_doc(schema=2, operands={}, stages=[stage])).recipe, n_layers=8)
+            recipe_readout(load_recipe(treatment_book(_doc(schema=2, operands={}, stages=[stage]))).recipe, n_layers=8)
 
     def test_a_term_mixing_the_logits_with_a_block_site_is_refused(self):
         with pytest.raises(MisconfigurationException, match=r"mixes the logits .* with block sites \['hook_in'\]"):
@@ -247,7 +247,7 @@ class TestRefusals:
 
     def test_an_operand_outside_the_declared_bases_or_of_another_width_is_refused(self):
         term = {"reduce": "project", "set": "read", "tokens": "last", "operand": "direction"}
-        recipe = load_recipe(_doc({"terms": [term]})).recipe
+        recipe = load_recipe(treatment_book(_doc({"terms": [term]}))).recipe
         with pytest.raises(MisconfigurationException, match="basis `jlens_folded`, which is not one of"):
             recipe_readout(recipe, n_layers=8, bases=frozenset({"vocab"}))
         operands = {"direction": {"values": [1.0, 2.0], "shape": [2], "basis": "jlens_folded"}}
@@ -283,7 +283,7 @@ def test_the_support_record_declares_the_executed_reductions_only_where_it_acts_
 def test_check_recipe_refuses_a_reduction_the_record_does_not_declare():
     from interpretune.analysis.venngram import check_recipe
 
-    recipe = load_recipe(_doc({"terms": [{"reduce": "norm", "set": "read", "tokens": "last"}]})).recipe
+    recipe = load_recipe(treatment_book(_doc({"terms": [{"reduce": "norm", "set": "read", "tokens": "last"}]}))).recipe
     both = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={"scale"}, of={"value", "grad"})
     narrowed = copy.replace(venngram_support(both), readouts=frozenset({"sum"}))
     assert any("reduction `norm` is not computed" in r for r in check_recipe(recipe, narrowed, flow="grad"))

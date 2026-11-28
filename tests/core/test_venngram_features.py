@@ -5,6 +5,7 @@ import torch
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.backends.capabilities import (
     FeatureTargetSupport,
     InterventionSupport,
@@ -49,21 +50,21 @@ def _recipe(ops, *, site=SITE, tokens="last", sets=None):
     operands = {"v": {"shape": [2], "values": [1.0, 2.0], "basis": "b"}}
     sets = sets or {"top": {"features": "3,7", "layers": [2, 5]}}
     return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "feature-treatment",
-            "model": {"id": "m", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "features",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
-                "sets": sets,
-            },
-            "operands": operands,
-            "stages": [{"site": site, "tokens": tokens, "ops": ops}],
-        }
+        treatment_book(
+            {
+                "name": "feature-treatment",
+                "model": {"id": "m", "revision": "r1"},
+                "book": {
+                    "schema_version": 1,
+                    "name": "features",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+                    "sets": sets,
+                },
+                "operands": operands,
+                "stages": [{"site": site, "tokens": tokens, "ops": ops}],
+            }
+        )
     ).recipe
 
 
@@ -510,7 +511,7 @@ class TestSupport:
         ],
     )
     def test_both_declarations_publish_as_support_records(self, support):
-        steering = support_mapping(support)["sections"]["steering"]
+        steering = support_mapping(support)["sections"]["treatments"]
         assert "features" in steering["targets"] and "from" in steering["values"]
         assert "sign_aware_scale" in steering["transforms"]
 
@@ -674,7 +675,7 @@ class TestGraphSubsets:
         """Venngram's check of the declaration refuses what the apply path refuses, so a recipe passing one passes
         the other."""
         recipe = _graph_recipe(tmp_path, ops)
-        declared = venngram_feature_subsets(_feature_record(TRANSCODER)).check_recipe(recipe)
+        declared = venngram_feature_subsets(_feature_record(TRANSCODER)).check_treatment(recipe)
         assert bool(declared) is refused, declared
         checked = check_recipe(recipe, venngram_feature_support(_feature_record(TRANSCODER)), analysis_backend=True)
         assert checked == declared

@@ -11,6 +11,7 @@ import torch
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 pytest.importorskip("circuit_tracer", reason="the circuit_tracer extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.adapters.circuit_tracer.backends import CircuitTracerAnalysisBackend  # noqa: E402
 from interpretune.analysis.backends.interventions import apply_intervention  # noqa: E402
 from interpretune.analysis.venngram import (  # noqa: E402
@@ -34,26 +35,26 @@ def toy():
 
 def _recipe(op: str, dose: float, feature: int, tokens):
     return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "relative-feature-treatment",
-            "model": {"id": "m", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "features",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
-                "sets": {"top": {"features": str(feature), "layers": [LAYER]}},
-            },
-            "stages": [
-                {
-                    "site": "hook_resid_post",
-                    "tokens": tokens,
-                    "ops": [{"op": op, "target": {"set": "top"}, "value": {"dose": dose}}],
-                }
-            ],
-        }
+        treatment_book(
+            {
+                "name": "relative-feature-treatment",
+                "model": {"id": "m", "revision": "r1"},
+                "book": {
+                    "schema_version": 1,
+                    "name": "features",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+                    "sets": {"top": {"features": str(feature), "layers": [LAYER]}},
+                },
+                "stages": [
+                    {
+                        "site": "hook_resid_post",
+                        "tokens": tokens,
+                        "ops": [{"op": op, "target": {"set": "top"}, "value": {"dose": dose}}],
+                    }
+                ],
+            }
+        )
     ).recipe
 
 

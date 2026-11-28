@@ -349,33 +349,36 @@ activation with a vector or subspace operand, so it cannot represent this direct
 
 ### Naming and composing a set
 
-A recipe's book names its sets. A set is a term (a site, the layers it spans and the units at each) or a composition of
-other sets by reference: `@a & @b` (intersection), `@a | @b` (union) and `@a - @b` (difference). venngram resolves a
-composition over `(layer, unit)` pairs when it reads the recipe, so Interpretune never evaluates set algebra itself and
-a composed set means the same thing to every consumer.
+A recipe is a treatment in an address book: the book names its sets, and its `treatments` section holds the
+treatments over them (venngram's `Treatment`; the standalone `kind: recipe` document is retired). A set is a term (a
+site, the layers it spans and the units at each) or a composition of other sets by reference: `@a & @b`
+(intersection), `@a | @b` (union) and `@a - @b` (difference). venngram resolves a composition over `(layer, unit)`
+pairs when it reads the book, so Interpretune never evaluates set algebra itself and a composed set means the same
+thing to every consumer.
 
 ```yaml
-schema_version: 2
-kind: recipe
-name: steer-the-shared-units
-model: {id: <model id>, revision: <revision>}
-book:
-  schema_version: 2
-  name: shared-units
-  portability: checkpoint
-  applies_to: {models: [{id: <model id>, revision: <revision>}]}
-  sets:
-    a: {point: mlp.out.hook_in, layers: [12], units: {12: [1, 2, 3]}}
-    b: {point: mlp.out.hook_in, layers: [12], units: {12: [3, 4]}}
-    shared: "@a & @b"      # unit 3
-    only_a: "@a - @b"      # units 1 and 2
-stages:
-  - site: mlp.out.hook_in
-    tokens: last
-    ops:
-      - {op: add, target: {set: shared}, value: {dose: 0.5}}
-      - {op: scale, target: {set: only_a}, value: {doses: {12: {1: 0.0, 2: 2.0}}}}
+schema_version: 1
+name: shared-units
+portability: checkpoint
+applies_to: {models: [{id: <model id>, revision: <revision>}]}
+sets:
+  a: {point: mlp.out.hook_in, layers: [12], units: {12: [1, 2, 3]}}
+  b: {point: mlp.out.hook_in, layers: [12], units: {12: [3, 4]}}
+  shared: "@a & @b"      # unit 3
+  only_a: "@a - @b"      # units 1 and 2
+treatments:
+  steer-the-shared-units:
+    model: {id: <model id>, revision: <revision>}
+    stages:
+      - site: mlp.out.hook_in
+        tokens: last
+        ops:
+          - {op: add, target: {set: shared}, value: {dose: 0.5}}
+          - {op: scale, target: {set: only_a}, value: {doses: {12: {1: 0.0, 2: 2.0}}}}
 ```
+
+`load_recipe` reads the treatment by name (`treatment="steer-the-shared-units"`), and a book with one treatment needs
+none.
 
 A unit target's stage names the layer-free site, since the set carries its own layers. The units are explicit indices,
 as a flat list over the set's layers or per layer (above); a slice of units is refused, because a treatment needs to

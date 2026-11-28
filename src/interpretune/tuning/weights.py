@@ -1049,7 +1049,8 @@ def apply_recipe_weights(
 
     Args:
         root: The module the targets resolve under.
-        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        recipe: A ``venngram.treatment.Treatment`` (or a document
+            :func:`~interpretune.analysis.venngram.load_recipe` reads).
         role: Every edit's operand role (see :func:`apply_weight_patch`).
         name: The edits' name stem (``<name>-<op index>``); the recipe's name by default.
         reversible: Parametrize the tensors (the default), or write the edited values into them.
@@ -1210,7 +1211,8 @@ def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = 
 
     Args:
         root: The module the targets resolve under.
-        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        recipe: A ``venngram.treatment.Treatment`` (or a document
+            :func:`~interpretune.analysis.venngram.load_recipe` reads).
         view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
             its default view (venngram's registry map for the model it carries).
 
@@ -1268,7 +1270,8 @@ def weight_form(
 
     Args:
         root: The module the targets resolve under.
-        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        recipe: A ``venngram.treatment.Treatment`` (or a document
+            :func:`~interpretune.analysis.venngram.load_recipe` reads).
         role: Every edit's operand role (see :func:`apply_weight_patch`).
         name: The edits' name stem (``<name>-<layer>-scale``, ``<name>-<layer>-shift``, and
             ``<name>-<layer>-<op><k>`` and ``<name>-<layer>-<op><k>-bias`` for the ``k``-th span); the recipe's name by

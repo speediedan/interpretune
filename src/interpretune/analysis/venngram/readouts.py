@@ -325,7 +325,7 @@ def recipe_readout(recipe: Any, *, n_layers: int, bases: frozenset[str] | None =
     ``recipe_interventions(recipe, ..., flow="grad")`` translates.
 
     Args:
-        recipe: A ``venngram.recipe.Recipe`` with at least one stage acting on ``of: grad`` targets.
+        recipe: A ``venngram.treatment.Treatment`` with at least one stage acting on ``of: grad`` targets.
         n_layers: The model's block count, which layer slices and negative layers count from.
         bases: The bases a ``project`` term's operand may be written in, or ``None`` for any. The operand is applied
             to the addressed units in their order, so it must be written in those coordinates.

@@ -1172,7 +1172,7 @@ def recipe_weight_equivalence(
     Args:
         module: The module whose model runs.
         batch: The batch both forwards run on.
-        recipe: A ``venngram.recipe.Recipe``, or a document or reference
+        recipe: A ``venngram.treatment.Treatment``, or a document or reference
             :func:`~interpretune.analysis.venngram.load_recipe` reads.
         rtol: Relative tolerance on the largest logit magnitude.
         atol: Absolute tolerance.

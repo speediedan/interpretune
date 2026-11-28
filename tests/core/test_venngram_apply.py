@@ -5,6 +5,7 @@ import torch
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.backends.capabilities import PositionScope
 from interpretune.analysis.backends.interventions import apply_intervention
 from interpretune.analysis.venngram import load_recipe, recipe_interventions
@@ -12,7 +13,6 @@ from interpretune.utils import MisconfigurationException
 
 RECIPE = {
     "schema_version": 2,
-    "kind": "recipe",
     "name": "dose-the-units",
     "model": {"id": "m", "revision": "r1"},
     "book": {
@@ -33,7 +33,7 @@ RECIPE = {
 
 
 def _recipe(doc=RECIPE):
-    return load_recipe(doc).recipe
+    return load_recipe(treatment_book(doc)).recipe
 
 
 def test_unit_doses_scatter_per_layer_and_apply_through_the_native_path():
@@ -170,7 +170,7 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
         },
         "stages": [{"site": "blocks.1.hook_resid_post", "tokens": "all", "ops": [{"op": "add", "operand": "concept"}]}],
     }
-    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    (tmp_path / "recipe.yaml").write_text(yaml.safe_dump(treatment_book(doc)), encoding="utf-8")
     payload = recipe_interventions(load_recipe(tmp_path / "recipe.yaml").recipe, site_widths={})
     (spec,) = payload["blocks.1.hook_resid_post"]
     assert torch.equal(spec.intervention_tensor, torch.tensor([0.0, 2.0, 0.0, 0.0]))

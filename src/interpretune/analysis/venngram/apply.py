@@ -785,7 +785,7 @@ def recipe_interventions(
     token_ids: Sequence[int] | None = None,
     tokenizer: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
-    """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
+    """Translate a supported ``venngram.treatment.Treatment`` into a backend intervention payload.
 
     With ``flow="grad"``, the payload is for ``bwd_w_intervention``: each unit- or feature-targeted op whose target set
     addresses ``of: grad`` acts on the gradient at its site, through the same specs a value op becomes. A recipe's ops

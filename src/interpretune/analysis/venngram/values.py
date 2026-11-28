@@ -26,8 +26,8 @@ value, as venngram refuses them on a dose when it reads a recipe:
   value the op read from its ``from`` column. This is circuit-tracer's meaning of the name
   (``CircuitTracerAnalysisBackend._signed_feature_intervention_value``);
 - ``statistic``: $v \cdot t$ for the named statistic $t$, the inverse of ``normalize`` by that name. A dose written in
-  units of a statistic (neuronary's, in units of a layer's median residual norm, which ``venngram.recipe.migrate``
-  translates into this transform) becomes an activation-space dose this way, as venngram#58's draft defines it.
+  units of a statistic (neuronary's, in units of a layer's median residual norm) becomes an activation-space dose
+  this way, as venngram#58's draft defines it.
 
 The sign of zero is zero, as circuit-tracer takes it. A statistic is computed from the model, so the caller supplies it:
 ``statistics`` maps a name to one value, to a value per layer (keyed by layer), or to a value per member (keyed by
