@@ -26,6 +26,7 @@ from torch import nn
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
 from venngram.maps.schema import from_document  # noqa: E402
+from interpretune.testing.venngram_books import treatment_book  # noqa: E402
 from venngram.maps.view import MappedView  # noqa: E402
 
 from interpretune.analysis.backends import Capability, InterventionSupport, PositionScope  # noqa: E402
@@ -125,7 +126,7 @@ def test_an_activation_path_that_ignores_the_payload_is_reported_not_equivalent(
 
 
 def test_a_recipe_document_is_read_as_load_recipe_reads_it():
-    assert _check(_Module(_UnitBackend()), _stage_doc([SCALE, SHIFT])).we_equivalent is True
+    assert _check(_Module(_UnitBackend()), treatment_book(_stage_doc([SCALE, SHIFT]))).we_equivalent is True
 
 
 @pytest.mark.parametrize(
