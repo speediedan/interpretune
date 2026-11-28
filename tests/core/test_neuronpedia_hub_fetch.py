@@ -285,7 +285,7 @@ class TestCorpusConfigResolution:
     """The dashboard configs live in an interpretune/examples checkout, which the import is told about or
     refuses."""
 
-    MANIFEST = {"model": {"name": MODEL}, "source_set": {"id": SET}, "prompt_corpus": {"n_prompts": 8}}
+    ENVELOPE = {"identity": {"model_id": MODEL, "source_set_id": SET}, "prompt_corpus": {"n_prompts": 8}}
 
     def _config(self, directory: Path, name: str, source_set: str) -> Path:
         path = directory / name
@@ -297,18 +297,18 @@ class TestCorpusConfigResolution:
     def test_an_unset_or_missing_config_dir_is_refused_by_name(self, tmp_path, monkeypatch) -> None:
         monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
         with pytest.raises(LookupError, match=f"set {CONFIG_DIR_ENV}"):
-            resolve_corpus_config(self.MANIFEST)
+            resolve_corpus_config(self.ENVELOPE)
         monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path / "absent"))
         with pytest.raises(LookupError, match="absent"):
-            resolve_corpus_config(self.MANIFEST)
+            resolve_corpus_config(self.ENVELOPE)
 
     def test_the_matching_config_is_read_from_the_named_dir(self, tmp_path, monkeypatch) -> None:
         match = self._config(tmp_path, "match.yaml", SET)
         self._config(tmp_path, "other.yaml", f"{SET}-rte")
         monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path))
-        assert resolve_corpus_config(self.MANIFEST) == match
+        assert resolve_corpus_config(self.ENVELOPE) == match
 
     def test_an_explicit_config_needs_no_dir(self, tmp_path, monkeypatch) -> None:
         monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
         explicit = self._config(tmp_path, "explicit.yaml", SET)
-        assert resolve_corpus_config(self.MANIFEST, explicit) == explicit
+        assert resolve_corpus_config(self.ENVELOPE, explicit) == explicit
