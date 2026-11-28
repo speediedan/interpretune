@@ -282,7 +282,7 @@ def support_mapping(support: Any) -> dict[str, Any]:
 
 
 def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False, flow: str = "value") -> list[str]:
-    """Every way ``recipe`` (a ``venngram.recipe.Recipe``) asks for something interpretune does not honour.
+    """Every way ``recipe`` (a ``venngram.treatment.Treatment``) asks for something interpretune does not honour.
 
     Venngram's own ``check_support`` covers the declared record (ops, targets, token scopes, value sources,
     transforms, bases, reachable sites). This adds the refusals the record cannot express, the ones the apply path
@@ -296,11 +296,12 @@ def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False, f
     venngram's ``check_support`` leaves to it; on the model backend, also against the layout one latent model's columns
     admit (:func:`~interpretune.analysis.venngram.apply.graph_layout_refusal`).
 
-    Evidence is supplied when the recipe is applied, so whether it has what a value reads is decided then.
+    A unit table the caller supplies is passed when the recipe is applied, so whether it has what a value reads is
+    decided then (venngram checks the book's own tables when it reads the book).
     """
     vg_ops = _require_venngram()
     refusals = list(vg_ops.check_support(recipe, support))
-    refusals += (_feature_subsets(support) if analysis_backend else _latent_subsets(support)).check_recipe(recipe)
+    refusals += (_feature_subsets(support) if analysis_backend else _latent_subsets(support)).check_treatment(recipe)
     for i, stage in enumerate(recipe.stages):
         for j, op in enumerate(stage.ops):
             if getattr(op, "graph", None) is not None:

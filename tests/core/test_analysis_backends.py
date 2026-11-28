@@ -2128,12 +2128,12 @@ class TestGradientReadouts:
         callable readout that writes the same scalar by hand (the reference test above checks that form)."""
         pytest.importorskip("venngram", reason="the venngram extra is not installed")
         from interpretune.analysis.venngram import load_recipe, recipe_readout
+        from interpretune.testing.venngram_books import treatment_book
 
         direction = self._unit(0)
         book_model = {"id": "gpt2", "revision": "main"}
         doc = {
             "schema_version": 4,
-            "kind": "recipe",
             "name": "logit-difference-plus-projection",
             "model": book_model,
             "book": {
@@ -2164,7 +2164,7 @@ class TestGradientReadouts:
                 }
             ],
         }
-        declared = recipe_readout(load_recipe(doc).recipe, n_layers=12)
+        declared = recipe_readout(load_recipe(treatment_book(doc)).recipe, n_layers=12)
         hand = self._readouts()
 
         def both(logits, activations):

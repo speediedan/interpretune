@@ -5,14 +5,16 @@ A Recipe Op's Members and Values
 What a unit or feature target names, and the value each of its members takes. Venngram declares a value's source and
 its transforms and leaves evaluating them to the consumer, so this is where Interpretune evaluates them, checked against
 venngram's own conformance vectors (``venngram.ops.check_transforms``). A value starts as a ``dose``, a ``doses``
-table, or a column of evidence the caller supplies: ``evidence`` maps an evidence name to a table, a table maps a
-column name to its values, and a column is keyed by ``(layer, unit)``. Interpretune does not compute evidence, and a
-member the column has no row for is refused rather than dropped, since a treatment missing a member is a different
-treatment.
+table, or a column of a unit table (``from: {table, column}``). The book's own unit tables (its ``tables`` section,
+:class:`venngram.tables.UnitTable`) give the column, read for the stack the op's target sits in, unless the caller
+supplies that table: ``tables`` maps a table name to a table, a table maps a column name to its values, and a column is
+keyed by ``(layer, unit)``. A table the caller supplies replaces the book's table of that name. Interpretune does not
+compute a table's values, and a member the column has no row for is refused rather than dropped, since a treatment
+missing a member is a different treatment.
 
 The transforms run in the order the recipe writes them, each over the values the last one produced, whatever the
-value's source. The two that read the evidence table (``sign_of`` and ``sign_aware_scale``) apply only to an
-evidence-sourced value, as venngram refuses them on a dose when it reads a recipe:
+value's source. The two that read the unit table (``sign_of`` and ``sign_aware_scale``) apply only to a table-sourced
+value, as venngram refuses them on a dose when it reads a recipe:
 
 - ``scale``: $v \cdot f$ for the ``factor`` $f$;
 - ``abs``: $\lvert v \rvert$;
@@ -24,8 +26,8 @@ evidence-sourced value, as venngram refuses them on a dose when it reads a recip
   value the op read from its ``from`` column. This is circuit-tracer's meaning of the name
   (``CircuitTracerAnalysisBackend._signed_feature_intervention_value``);
 - ``statistic``: $v \cdot t$ for the named statistic $t$, the inverse of ``normalize`` by that name. A dose written in
-  units of a statistic (neuronary's, in units of a layer's median residual norm, which ``venngram.recipe.migrate``
-  translates into this transform) becomes an activation-space dose this way, as venngram#58's draft defines it.
+  units of a statistic (neuronary's, in units of a layer's median residual norm) becomes an activation-space dose
+  this way, as venngram#58's draft defines it.
 
 The sign of zero is zero, as circuit-tracer takes it. A statistic is computed from the model, so the caller supplies it:
 ``statistics`` maps a name to one value, to a value per layer (keyed by layer), or to a value per member (keyed by
@@ -48,9 +50,9 @@ from interpretune.utils import MisconfigurationException
 #: The transforms :func:`member_values` evaluates without a statistic from the caller.
 EVALUATED_TRANSFORMS = frozenset({"scale", "abs", "normalize", "sign_of", "sign_aware_scale"})
 
-#: The transforms that read the evidence table, so apply only to an evidence-sourced value (venngram's
-#: ``EVIDENCE_TRANSFORMS`` for its core transforms; a test keeps them equal).
-EVIDENCE_TRANSFORMS = frozenset({"sign_of", "sign_aware_scale"})
+#: The transforms that read the unit table, so apply only to a table-sourced value (venngram's ``TABLE_TRANSFORMS``
+#: for its core transforms; a test keeps them equal).
+TABLE_TRANSFORMS = frozenset({"sign_of", "sign_aware_scale"})
 
 #: A ``features`` value naming the features themselves, rather than a latent model whose ``units`` name them.
 _FEATURE_IDS = re.compile(r"^\d+(,\s*\d+)*$")
@@ -179,7 +181,7 @@ def _composed_members(recipe: Any, op: Any) -> list[Member]:
     """A composed unit target's members (``@a & @b``, ``@a - @control``), as venngram resolves the composition.
 
     Venngram lists them in order of first appearance whatever the op's value is (``Op.unit_members``), as a single
-    set's members are listed here: a ``doses`` table then doses only the members it lists, and an evidence-sourced
+    set's members are listed here: a ``doses`` table then doses only the members it lists, and a table-sourced
     value reads its column for every member.
     """
     from venngram.errors import AddressError
@@ -213,10 +215,10 @@ class _Evaluation:
     where: str
 
     def column(self, name: str, members: Any) -> dict[Member, float]:
-        """The named column of the op's evidence table, for ``members``."""
+        """The named column of the op's unit table, for ``members``."""
         if name not in self.table:
             raise MisconfigurationException(
-                f"{self.where}: the evidence table has no column `{name}` (columns: {sorted(self.table)})"
+                f"{self.where}: the unit table has no column `{name}` (columns: {sorted(self.table)})"
             )
         column = self.table[name]
         if missing := sorted(set(members) - set(column)):
@@ -289,22 +291,39 @@ _TRANSFORMS: dict[str, Callable[[Mapping[Member, float], Mapping[str, Any], _Eva
 }
 
 
+Table = Mapping[str, Mapping[Member, float]]
+
+
+def _unit_table(recipe: Any, op: Any, name: str, tables: Mapping[str, Table], where: str) -> Table:
+    """The unit table ``name`` an op's value reads: the caller's, else the book's, over the rows of the stack the
+    op's target sits in."""
+    from venngram.errors import AddressError
+
+    if name in tables:
+        return tables[name]
+    book = recipe.book
+    if name not in getattr(book, "tables", {}):
+        raise MisconfigurationException(
+            f"{where}: the value reads table `{name}`, which neither the book's `tables` nor the caller supplies"
+            f" (book: {sorted(getattr(book, 'tables', {}))}, supplied: {sorted(tables)})"
+        )
+    try:
+        return book.tables[name].table(stack=op.unit_stack(book, where))
+    except AddressError as err:
+        raise MisconfigurationException(str(err)) from err
+
+
 def _starting_values(
-    value: Any, members: list[Member], evidence: Mapping[str, Mapping[str, Mapping[Member, float]]], where: str
-) -> tuple[Mapping[str, Mapping[Member, float]], dict[Member, float]]:
-    """The evidence table a value reads (empty unless evidence-sourced) and each member's value before
-    transforms."""
+    recipe: Any, op: Any, members: list[Member], tables: Mapping[str, Table], where: str
+) -> tuple[Table, dict[Member, float]]:
+    """The unit table a value reads (empty unless table-sourced) and each member's value before transforms."""
+    value = op.value
     if value.source == "dose":
         return {}, dict.fromkeys(members, float(value.dose))
     if value.source == "doses":
         doses = value.doses or {}
         return {}, {(ly, u): float(doses[ly][u]) for ly, u in members if u in doses.get(ly, {})}
-    if value.evidence not in evidence:
-        raise MisconfigurationException(
-            f"{where}: the value reads evidence `{value.evidence}`, which the caller did not supply"
-            f" (supplied: {sorted(evidence)})"
-        )
-    table = evidence[value.evidence]
+    table = _unit_table(recipe, op, value.table, tables, where)
     return table, _Evaluation(table, {}, {}, where).column(value.column, members)
 
 
@@ -312,23 +331,30 @@ def member_values(
     recipe: Any,
     op: Any,
     *,
-    evidence: Mapping[str, Mapping[str, Mapping[Member, float]]] | None = None,
+    tables: Mapping[str, Table] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
     where: str = "<recipe>",
 ) -> dict[Member, float]:
     """``(layer, unit) -> value`` for a unit or feature target (a ``doses`` table may leave members undosed).
 
+    Args:
+        recipe: The venngram treatment the op belongs to; its book gives the unit tables the caller does not.
+        op: The op whose target's members take values.
+        tables: Unit tables by name, each replacing the book's table of that name.
+        statistics: Statistics the ``normalize`` and ``statistic`` transforms read, by name.
+        where: Where the op is, for refusals.
+
     Raises:
-        MisconfigurationException: If the target's members cannot be listed, a transform that reads the evidence
-            table applies to a value that is not evidence-sourced, or a value reads evidence, a column, a member or a
-            statistic the caller did not supply.
+        MisconfigurationException: If the target's members cannot be listed, a transform that reads the unit table
+            applies to a value that is not table-sourced, or a value reads a table, a column, a member or a statistic
+            that neither the book nor the caller supplies.
     """
     value = op.value
-    if value.source != "from" and (reads := sorted({t.name for t in value.transform} & EVIDENCE_TRANSFORMS)):
+    if value.source != "from" and (reads := sorted({t.name for t in value.transform} & TABLE_TRANSFORMS)):
         raise MisconfigurationException(
-            f"{where}: {reads} read the evidence table, so apply only to a `from` value, not `{value.source}`"
+            f"{where}: {reads} read the unit table, so apply only to a `from` value, not `{value.source}`"
         )
-    table, values = _starting_values(value, target_members(recipe, op), evidence or {}, where)
+    table, values = _starting_values(recipe, op, target_members(recipe, op), tables or {}, where)
     ctx = _Evaluation(table, values, statistics or {}, where)
     for transform in value.transform:
         values = _TRANSFORMS[transform.name](values, transform.params, ctx)

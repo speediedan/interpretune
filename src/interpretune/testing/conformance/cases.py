@@ -29,6 +29,7 @@ from interpretune.analysis.backends import (
 )
 from interpretune.analysis.backends.ops import registered_ops
 from interpretune.analysis.optools import require_backend_capability
+from interpretune.testing.venngram_books import treatment_book
 
 from .gates import UNDECLARED, conformance_case, describe_capabilities, gate_of
 from .plugin import _REPORT_KEY
@@ -932,29 +933,29 @@ class ModelBackendConformance:
         model = {"id": suite.inputs.model_id, "revision": "conformance"}
         scales = dict(self.WEIGHT_FORM_SCALES)
         shifts = {u: d * shift_factor for u, d in self.WEIGHT_FORM_SHIFTS.items()}
-        return {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "conformance-weight-form",
-            "model": model,
-            "book": {
-                "schema_version": 1,
-                "name": "conformance-units",
-                "portability": "checkpoint",
-                "applies_to": {"models": [model]},
-                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [layer], "units": {layer: units}}},
-            },
-            "stages": [
-                {
-                    "site": "mlp.out.hook_in",
-                    "tokens": "all",
-                    "ops": [
-                        {"op": "scale", "target": {"set": "units"}, "value": {"doses": {layer: scales}}},
-                        {"op": "add", "target": {"set": "units"}, "value": {"doses": {layer: shifts}}},
-                    ],
-                }
-            ],
-        }
+        return treatment_book(
+            {
+                "name": "conformance-weight-form",
+                "model": model,
+                "book": {
+                    "schema_version": 1,
+                    "name": "conformance-units",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [model]},
+                    "sets": {"units": {"point": "mlp.out.hook_in", "layers": [layer], "units": {layer: units}}},
+                },
+                "stages": [
+                    {
+                        "site": "mlp.out.hook_in",
+                        "tokens": "all",
+                        "ops": [
+                            {"op": "scale", "target": {"set": "units"}, "value": {"doses": {layer: scales}}},
+                            {"op": "add", "target": {"set": "units"}, "value": {"doses": {layer: shifts}}},
+                        ],
+                    }
+                ],
+            }
+        )
 
     def _weight_form_recipe(self, suite, *, shift_factor: float = 1.0) -> Any:
         """:meth:`_weight_form_document`, loaded."""
@@ -1075,27 +1076,29 @@ class ModelBackendConformance:
         ``reject`` of ``basis``'s span from ``mlp.out``'s output, removing ``fraction`` of it."""
         layer = suite.inputs.capture_layer
         model = {"id": suite.inputs.model_id, "revision": "conformance"}
-        return {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "conformance-output-rejection",
-            "model": model,
-            "book": {
-                "schema_version": 1,
-                "name": "conformance-sites",
-                "portability": "checkpoint",
-                "applies_to": {"models": [model]},
-                "sets": {"site": {"point": "mlp.out.hook_out", "layers": [layer]}},
-            },
-            "operands": {"span": {"values": basis.flatten().tolist(), "shape": list(basis.shape), "basis": "unfolded"}},
-            "stages": [
-                {
-                    "site": f"blocks.{layer}.mlp.out.hook_out",
-                    "tokens": "all",
-                    "ops": [{"op": "reject", "operand": "span", "params": {"fraction": fraction}}],
-                }
-            ],
-        }
+        return treatment_book(
+            {
+                "name": "conformance-output-rejection",
+                "model": model,
+                "book": {
+                    "schema_version": 1,
+                    "name": "conformance-sites",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [model]},
+                    "sets": {"site": {"point": "mlp.out.hook_out", "layers": [layer]}},
+                },
+                "operands": {
+                    "span": {"values": basis.flatten().tolist(), "shape": list(basis.shape), "basis": "unfolded"}
+                },
+                "stages": [
+                    {
+                        "site": f"blocks.{layer}.mlp.out.hook_out",
+                        "tokens": "all",
+                        "ops": [{"op": "reject", "operand": "span", "params": {"fraction": fraction}}],
+                    }
+                ],
+            }
+        )
 
     def _require_output_side(self, suite, recipe: Any) -> dict[str, int]:
         """The output rejection's site width, read through the module's view; a view that cannot resolve

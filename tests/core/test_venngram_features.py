@@ -1,11 +1,11 @@
-"""Feature targets and evidence-sourced values (#887, slice 3b): the two feature paths and the transform
-pipeline."""
+"""Feature targets and table-sourced values (#887, slice 3b): the two feature paths and the transform pipeline."""
 
 import pytest
 import torch
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.analysis.backends.capabilities import (
     FeatureTargetSupport,
     InterventionSupport,
@@ -50,26 +50,26 @@ def _recipe(ops, *, site=SITE, tokens="last", sets=None):
     operands = {"v": {"shape": [2], "values": [1.0, 2.0], "basis": "b"}}
     sets = sets or {"top": {"features": "3,7", "layers": [2, 5]}}
     return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "feature-treatment",
-            "model": {"id": "m", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "features",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
-                "sets": sets,
-            },
-            "operands": operands,
-            "stages": [{"site": site, "tokens": tokens, "ops": ops}],
-        }
+        treatment_book(
+            {
+                "name": "feature-treatment",
+                "model": {"id": "m", "revision": "r1"},
+                "book": {
+                    "schema_version": 1,
+                    "name": "features",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+                    "sets": sets,
+                },
+                "operands": operands,
+                "stages": [{"site": site, "tokens": tokens, "ops": ops}],
+            }
+        )
     ).recipe
 
 
-def _from(column="score", transform=(), evidence="graph"):
-    return {"from": {"evidence": evidence, "column": column}, "transform": list(transform)}
+def _from(column="score", transform=(), table="graph"):
+    return {"from": {"table": table, "column": column}, "transform": list(transform)}
 
 
 def _op(op="add", **value):
@@ -150,7 +150,7 @@ class TestModelBackendPath:
             recipe_interventions(_recipe(ops, **kwargs), site_widths={HOOKED: 16})
 
     def test_a_dose_runs_its_transforms_too(self):
-        """Venngram's transforms apply to a dose or a doses table, not only to evidence (venngram's conformance
+        """Venngram's transforms apply to a dose or a doses table, not only to a table (venngram's conformance
         vectors include both)."""
         value = {"dose": -0.5, "transform": ["abs", {"scale": {"factor": 4.0}}]}
         (spec,) = recipe_interventions(_recipe([_op(**value)]), site_widths={HOOKED: 16})[f"blocks.2.{HOOKED}"]
@@ -175,7 +175,7 @@ class TestEvidenceValues:
         payload = recipe_interventions(
             _recipe([_op(**_from(column, transform))]),
             site_widths={HOOKED: 8},
-            evidence=tables or _table(score=SCORES, activation={k: 3.0 for k in SCORES}),
+            tables=tables or _table(score=SCORES, activation={k: 3.0 for k in SCORES}),
             statistics=statistics,
         )
         return {(layer, f): payload[f"blocks.{layer}.{HOOKED}"][0].intervention_tensor[f].item() for layer, f in SCORES}
@@ -233,7 +233,7 @@ class TestEvidenceValues:
     @pytest.mark.parametrize(
         "value, tables, statistics, match",
         [
-            pytest.param(_from(), {}, None, "reads evidence `graph`, which the caller did not supply", id="no-table"),
+            pytest.param(_from(), {}, None, "reads table `graph`, which neither the book", id="no-table"),
             pytest.param(_from("gone"), _table(score=SCORES), None, "no column `gone`", id="no-column"),
             pytest.param(
                 _from(), _table(score={(2, 3): 1.0}), None, r"no value for \(layer, unit\) \[\(2, 7\)", id="no-member"
@@ -270,9 +270,7 @@ class TestEvidenceValues:
     )
     def test_what_the_caller_did_not_supply_is_refused_by_name(self, value, tables, statistics, match):
         with pytest.raises(MisconfigurationException, match=match):
-            recipe_interventions(
-                _recipe([_op(**value)]), site_widths={HOOKED: 8}, evidence=tables, statistics=statistics
-            )
+            recipe_interventions(_recipe([_op(**value)]), site_widths={HOOKED: 8}, tables=tables, statistics=statistics)
 
     def test_a_statistic_may_be_given_per_member(self):
         per_member = {"median": {(2, 3): 2.0, (2, 7): 4.0, (5, 3): 0.5, (5, 7): 1.0}}
@@ -290,17 +288,17 @@ class TestEvidenceValues:
         with pytest.raises(MisconfigurationException, match=match):
             self._values({"statistic": {"name": "median"}}, statistics={"median": statistic})
 
-    def test_a_unit_target_reads_evidence_too(self):
+    def test_a_unit_target_reads_a_table_too(self):
         sets = {"top": {"point": SITE, "layers": [2], "units": [3]}}
         payload = recipe_interventions(
-            _recipe([_op(**_from())], sets=sets), site_widths={SITE: 8}, evidence=_table(score=SCORES)
+            _recipe([_op(**_from())], sets=sets), site_widths={SITE: 8}, tables=_table(score=SCORES)
         )
         assert payload[f"blocks.2.{SITE}"][0].intervention_tensor[3] == 2.0
 
     def test_a_whole_activation_op_still_takes_a_single_dose(self):
         op = {"op": "add", "value": _from()}
         with pytest.raises(MisconfigurationException, match="takes a single `dose`"):
-            recipe_interventions(_recipe([op], site=f"blocks.2.{SITE}"), site_widths={}, evidence=_table(score=SCORES))
+            recipe_interventions(_recipe([op], site=f"blocks.2.{SITE}"), site_widths={}, tables=_table(score=SCORES))
 
 
 class TestVenngramConformance:
@@ -318,17 +316,17 @@ class TestVenngramConformance:
         elif case.source == "doses":
             value = {"doses": {0: {i: m.start for i, m in enumerate(case.members)}}}
         else:
-            value = {"from": {"evidence": "e", "column": case.column}}
+            value = {"from": {"table": "e", "column": case.column}}
         value["transform"] = [{t.name: dict(t.params)} if t.params else t.name for t in case.transform]
         sets = {"top": {"features": "sae", "layers": [0], "units": list(range(n))}}
         recipe = _recipe([{"op": "add", "target": {"set": "top"}, "value": value}], sets=sets)
         columns = {c for m in case.members for c in m.columns}
-        evidence = {
+        tables = {
             "e": {c: {(0, i): m.columns[c] for i, m in enumerate(case.members) if c in m.columns} for c in columns}
         }
         names = {s for m in case.members for s in m.statistics}
         statistics = {s: {(0, i): m.statistics[s] for i, m in enumerate(case.members)} for s in names}
-        values = member_values(recipe, recipe.stages[0].ops[0], evidence=evidence, statistics=statistics)
+        values = member_values(recipe, recipe.stages[0].ops[0], tables=tables, statistics=statistics)
         return [values[(0, i)] for i in range(n)]
 
     def test_every_transform_vector_agrees(self):
@@ -342,17 +340,17 @@ class TestVenngramConformance:
         vg_ops = pytest.importorskip("venngram.ops")
         assert vg_ops.check_transforms(lambda case: [v + 1.0 for v in self._evaluate(case)])
 
-    def test_the_evidence_transforms_agree_with_venngrams(self):
-        """Venngram refuses an evidence-reading transform on a dose when it reads the recipe; the evaluator refuses
-        the same set."""
-        from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS, EVIDENCE_TRANSFORMS
+    def test_the_table_transforms_agree_with_venngrams(self):
+        """Venngram refuses a table-reading transform on a dose when it reads the recipe; the evaluator refuses the
+        same set."""
+        from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS, TABLE_TRANSFORMS
 
         vg_ops = pytest.importorskip("venngram.ops")
         evaluated = EVALUATED_TRANSFORMS | {"statistic"}
-        assert EVIDENCE_TRANSFORMS == {name for name in vg_ops.EVIDENCE_TRANSFORMS if name in evaluated}
+        assert TABLE_TRANSFORMS == {name for name in vg_ops.TABLE_TRANSFORMS if name in evaluated}
         from venngram.errors import AddressError
 
-        with pytest.raises(AddressError, match="read the evidence table"):
+        with pytest.raises(AddressError, match="read the `from` table"):
             _recipe([_op(dose=1.0, transform=[{"sign_of": {"column": "score"}}])])
 
 
@@ -415,7 +413,7 @@ class TestAnalysisBackendPath:
         ours = recipe_feature_interventions(
             _recipe([_op("replace", **value)], site=self.SITE, tokens={"positions": [4]}),
             support=TRANSCODER,
-            evidence=_table(score=SCORES, activation=activations),
+            tables=_table(score=SCORES, activation=activations),
         )
         ours, theirs = sorted(ours), sorted(theirs)
         assert [t[:3] for t in ours] == [t[:3] for t in theirs]
@@ -513,7 +511,7 @@ class TestSupport:
         ],
     )
     def test_both_declarations_publish_as_support_records(self, support):
-        steering = support_mapping(support)["sections"]["steering"]
+        steering = support_mapping(support)["sections"]["treatments"]
         assert "features" in steering["targets"] and "from" in steering["values"]
         assert "sign_aware_scale" in steering["transforms"]
 
@@ -677,7 +675,7 @@ class TestGraphSubsets:
         """Venngram's check of the declaration refuses what the apply path refuses, so a recipe passing one passes
         the other."""
         recipe = _graph_recipe(tmp_path, ops)
-        declared = venngram_feature_subsets(_feature_record(TRANSCODER)).check_recipe(recipe)
+        declared = venngram_feature_subsets(_feature_record(TRANSCODER)).check_treatment(recipe)
         assert bool(declared) is refused, declared
         checked = check_recipe(recipe, venngram_feature_support(_feature_record(TRANSCODER)), analysis_backend=True)
         assert checked == declared

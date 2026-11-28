@@ -349,33 +349,36 @@ activation with a vector or subspace operand, so it cannot represent this direct
 
 ### Naming and composing a set
 
-A recipe's book names its sets. A set is a term (a site, the layers it spans and the units at each) or a composition of
-other sets by reference: `@a & @b` (intersection), `@a | @b` (union) and `@a - @b` (difference). venngram resolves a
-composition over `(layer, unit)` pairs when it reads the recipe, so Interpretune never evaluates set algebra itself and
-a composed set means the same thing to every consumer.
+A recipe is a treatment in an address book: the book names its sets, and its `treatments` section holds the
+treatments over them (venngram's `Treatment`; the standalone `kind: recipe` document is retired). A set is a term (a
+site, the layers it spans and the units at each) or a composition of other sets by reference: `@a & @b`
+(intersection), `@a | @b` (union) and `@a - @b` (difference). venngram resolves a composition over `(layer, unit)`
+pairs when it reads the book, so Interpretune never evaluates set algebra itself and a composed set means the same
+thing to every consumer.
 
 ```yaml
-schema_version: 2
-kind: recipe
-name: steer-the-shared-units
-model: {id: <model id>, revision: <revision>}
-book:
-  schema_version: 2
-  name: shared-units
-  portability: checkpoint
-  applies_to: {models: [{id: <model id>, revision: <revision>}]}
-  sets:
-    a: {point: mlp.out.hook_in, layers: [12], units: {12: [1, 2, 3]}}
-    b: {point: mlp.out.hook_in, layers: [12], units: {12: [3, 4]}}
-    shared: "@a & @b"      # unit 3
-    only_a: "@a - @b"      # units 1 and 2
-stages:
-  - site: mlp.out.hook_in
-    tokens: last
-    ops:
-      - {op: add, target: {set: shared}, value: {dose: 0.5}}
-      - {op: scale, target: {set: only_a}, value: {doses: {12: {1: 0.0, 2: 2.0}}}}
+schema_version: 1
+name: shared-units
+portability: checkpoint
+applies_to: {models: [{id: <model id>, revision: <revision>}]}
+sets:
+  a: {point: mlp.out.hook_in, layers: [12], units: {12: [1, 2, 3]}}
+  b: {point: mlp.out.hook_in, layers: [12], units: {12: [3, 4]}}
+  shared: "@a & @b"      # unit 3
+  only_a: "@a - @b"      # units 1 and 2
+treatments:
+  steer-the-shared-units:
+    model: {id: <model id>, revision: <revision>}
+    stages:
+      - site: mlp.out.hook_in
+        tokens: last
+        ops:
+          - {op: add, target: {set: shared}, value: {dose: 0.5}}
+          - {op: scale, target: {set: only_a}, value: {doses: {12: {1: 0.0, 2: 2.0}}}}
 ```
+
+`load_recipe` reads the treatment by name (`treatment="steer-the-shared-units"`), and a book with one treatment needs
+none.
 
 A unit target's stage names the layer-free site, since the set carries its own layers. The units are explicit indices,
 as a flat list over the set's layers or per layer (above); a slice of units is refused, because a treatment needs to
@@ -400,11 +403,14 @@ unit at or past it is refused rather than dropped. A feature set takes the same 
 sub-hook (`blocks.<layer>.<site>.hook_sae_acts_post`), or becomes circuit-tracer's feature tuples on the analysis
 backend (`recipe_feature_interventions`), as the [table above](#current-surfaces) describes.
 
-A value is a `dose` (every member takes it), a `doses` table, or a column of evidence the caller supplies, through
-venngram's transforms. On a composed target, as on a single set, a `dose` doses every member of the composition, a
-`doses` table only the members it lists, and an evidence-sourced value reads its column for every member: a table entry
-or evidence row for a unit outside the composition (unit 4 in `only_a` above) doses nothing, and a member the column has
-no row for is refused.
+A value is a `dose` (every member takes it), a `doses` table, or a column of a unit table (`from: {table, column}`),
+through venngram's transforms. The table is the book's own (its `tables` section, venngram's `UnitTable`, carrying the
+values a finder measured and their provenance), read for the stack the target sits in, so a book that carries its
+tables needs nothing more from the caller. A caller can still pass `tables={name: {column: {(layer, unit): value}}}` to
+`recipe_interventions`, which replaces the book's table of that name. On a composed target, as on a single set, a `dose`
+doses every member of the composition, a `doses` table only the members it lists, and a table-sourced value reads its
+column for every member: a `doses` entry or table row for a unit outside the composition (unit 4 in `only_a` above)
+doses nothing, and a member the column has no row for is refused.
 
 ### What bounds what runs
 
@@ -421,7 +427,8 @@ a silently narrowed treatment. The refusals a unit-set treatment can meet:
 | a unit-targeted recipe op other than `add`, `scale` and `replace` | venngram's op registry or `op_refusal` |
 | an operand on a unit-targeted op (it takes a value) | `op_refusal` |
 | a site with no supplied width, or a unit at or past it | `recipe_interventions` |
-| an evidence-sourced value whose column has no row for one of the target's members | `recipe_interventions` |
+| a table-sourced value whose column has no row for one of the target's members | venngram for the book's tables, reading the book; `recipe_interventions` for a table the caller supplies |
+| a value reading a table neither the book nor the caller supplies | `recipe_interventions` |
 | a target addressing the gradient (`of: grad`), composed or not, in a translation for values | `op_refusal` |
 
 `add` and `scale` use dense vectors with their identity values elsewhere; `replace` uses a selected-coordinate spec.

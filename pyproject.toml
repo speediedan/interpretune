@@ -243,7 +243,8 @@ git-deps = [
     "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@f428a579132aa68061304c51492f79fb6d47dbda",
     # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry, which
     # carries the same URL and replaces the lock file's release pin at install. Kept here too so an install still gets
-    # it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler main with #245 (a
+    # it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler main with #249 (on
+    # venngram main after its API review: `venngram.treatment`, support record schema 9), over #245 (a
     # schedule's pinned address books checked through the view), over #241 (a phase's `promote` acts on a sharded
     # model) and #237 (a restore chosen at the phase boundary) and #216, #222
     # and #230 (gradient addresses and transforms), over #218 (the `instrument` role kind renamed `artifact`,
@@ -252,10 +253,14 @@ git-deps = [
     # restores one earlier phase's best, `best:<depth>`, and `PlateauTransition` can judge each phase against its own
     # best), #195 (per-phase `refreeze` and `restore`) and #177 (venngram's address books, support record and registry
     # lookup), which depends on venngram.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@9869f497abc1cc20fcbb65c122cdbff286518f42",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@41e2a7ed239a0c1d0e5f951b3a33ffe8731dda63",
     # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
-    # The SHA is venngram main with #132 (a unit target's members listed whatever its op's value, `Op.unit_members`,
-    # so an evidence-sourced value applies on a composed target) and #134 (the default promote acts on DTensor
+    # The SHA is venngram main with its pre-0.1.0 API review: #143 (a treatment is `venngram.treatment.Treatment`; the
+    # standalone recipe document retired; every module's `__all__`), #151 (support record schema 9: `treatments` and
+    # `levels` sections) and #152 (`AddressBook.needed_schema`), over #137 (unit tables: a book's `tables` section,
+    # read by a treatment's `from: {table, column}` values) and #140 (a recorded `unit_block` checked against the
+    # bound model), over #132 (a unit target's members listed whatever its op's value, `Op.unit_members`, so a table-sourced value
+    # applies on a composed target) and #134 (the default promote acts on DTensor
     # parameters), over #129 (a verified execution map for Inkling 2 Mini, so an address names a module by
     # weight layer and execution pass), over #127 (attention head block sizes, `unit_block`, recorded in schema 6 component maps,
     # and whole heads selected by address, `units: {heads: [...]}`), #126 (a base map found under a wrapper that
@@ -269,7 +274,7 @@ git-deps = [
     # default view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner
     # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
     # Per-call cache-only lookup lets a pulled hook map check for registry collisions locally.
-    "venngram @ git+https://github.com/speediedan/venngram@2625825254671a46bc98c9eb9355fbbb6574f56a",
+    "venngram @ git+https://github.com/speediedan/venngram@5c1894eaca3b12bd227c6ff6e123197ce62be7f3",
     # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
     # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
     # requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the three differ.
@@ -364,10 +369,10 @@ override-dependencies = [
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@9869f497abc1cc20fcbb65c122cdbff286518f42",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@41e2a7ed239a0c1d0e5f951b3a33ffe8731dda63",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@2625825254671a46bc98c9eb9355fbbb6574f56a",
+    "venngram @ git+https://github.com/speediedan/venngram@5c1894eaca3b12bd227c6ff6e123197ce62be7f3",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

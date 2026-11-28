@@ -16,8 +16,8 @@ as venngram orders them. The stage's token scope is the spec's ``position_scope`
 - ``scale``: the same table as a multiplier, ones where no unit is named, applied as ``scale``.
 - ``replace``: the values at the named units only, preserving the unselected coordinates.
 
-The values are a ``dose``, a ``doses`` table, or a column of evidence the caller supplies through a transform pipeline
-(:mod:`~interpretune.analysis.venngram.values`).
+The values are a ``dose``, a ``doses`` table, or a column of a unit table (the book's, or one the caller supplies)
+through a transform pipeline (:mod:`~interpretune.analysis.venngram.values`).
 
 **Feature-targeted ops** take the same path one level down, into a latent model's feature activations: ``add`` and
 ``scale`` scatter at the latent sub-hook, ``blocks.<layer>.<site>.hook_sae_acts_post``, which the backend resolves to
@@ -778,14 +778,14 @@ def recipe_interventions(
     recipe: Any,
     *,
     site_widths: Mapping[str, int],
-    evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
+    tables: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
     weights_applied: bool = False,
     flow: str = "value",
     token_ids: Sequence[int] | None = None,
     tokenizer: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
-    """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
+    """Translate a supported ``venngram.treatment.Treatment`` into a backend intervention payload.
 
     With ``flow="grad"``, the payload is for ``bwd_w_intervention``: each unit- or feature-targeted op whose target set
     addresses ``of: grad`` acts on the gradient at its site, through the same specs a value op becomes. A recipe's ops
@@ -799,7 +799,8 @@ def recipe_interventions(
         site_widths: The width of every unit-targeted site the recipe names, keyed by the recipe's own layer-free
             site spelling, and of every feature- or graph-targeted one, keyed ``<site>.hook_sae_acts_post``. A width
             given for a whole-activation op's site also checks its operand's width.
-        evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
+        tables: Unit tables by name, each replacing the book's table of that name, for the values read ``from`` a
+            table (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
         weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
             stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
@@ -819,8 +820,8 @@ def recipe_interventions(
         MisconfigurationException: For a recipe whose weights were not applied, anything this module cannot translate
             (see :func:`op_refusal`), an unmapped token scope, a unit- or feature-targeted site whose width was not
             supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, a
-            value the supplied evidence cannot give, or a graph target without ``token_ids`` or with a node its anchor
-            does not place, naming the stage and op. Run
+            value neither the book's nor the supplied tables can give, or a graph target without ``token_ids`` or with a
+            node its anchor does not place, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
     if flow not in FLOWS:
@@ -859,7 +860,7 @@ def recipe_interventions(
             else:
                 hooked = f"{site}.{LATENT_SUBHOOK}" if kind == "features" else site
                 width = _require_width(site_widths, hooked, i, stage)
-                values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
+                values = member_values(recipe, op, tables=tables, statistics=statistics, where=where)
                 specs = _member_specs(op, values, width, scope, where)
             for spec_layer, spec in specs.items():
                 if scope == PositionScope.POSITIONS:
@@ -906,7 +907,7 @@ def recipe_feature_interventions(
     *,
     support: FeatureTargetSupport,
     clean_activations: Any | None = None,
-    evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
+    tables: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
     token_ids: Sequence[int] | None = None,
     tokenizer: Mapping[str, str] | None = None,
@@ -932,7 +933,8 @@ def recipe_feature_interventions(
         clean_activations: The clean feature activations, indexed ``[layer, position, feature]``: the backend's
             ``capture_feature_activations`` over the prompt the tuples will be applied to, with the same
             ``apply_activation_function`` as the intervention call. Needed only for ``add`` and ``scale``.
-        evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
+        tables: Unit tables by name, each replacing the book's table of that name, for the values read ``from`` a
+            table (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
         token_ids: The prompt's unpadded input token ids, which a graph target's anchors resolve in. Needed only for
             graph targets.
@@ -946,8 +948,8 @@ def recipe_feature_interventions(
     Raises:
         MisconfigurationException: For any op :func:`feature_op_refusal` refuses, a backend not honouring ``constant``,
             an ``add`` or ``scale`` without a clean capture (undeclared, or not passed), a member or position the
-            capture has no activation for, a value the supplied evidence cannot give, or a graph target without
-            ``token_ids`` or with a node its anchor does not place, naming the stage and op.
+            capture has no activation for, a value neither the book's nor the supplied tables can give, or a graph
+            target without ``token_ids`` or with a node its anchor does not place, naming the stage and op.
     """
     if (why := support.refusal({"value_source": "constant", "value": 0.0})) is not None:
         raise MisconfigurationException(f"this backend cannot take a recipe's computed values: {why}")
@@ -961,7 +963,7 @@ def recipe_feature_interventions(
             if getattr(op, "graph", None) is not None:
                 targets = _graph_targets(recipe, stage, op, token_ids, tokenizer, where)
             else:
-                values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
+                values = member_values(recipe, op, tables=tables, statistics=statistics, where=where)
                 positions = (op.tokens or stage.tokens).positions
                 targets = [
                     (layer, position, feature, value)

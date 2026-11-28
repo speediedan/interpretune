@@ -11,6 +11,7 @@ from transformer_lens.utilities.devices import get_device as tl_get_device
 from sae_lens.saes.sae import SAE, SAEMetadata
 from sae_lens.saes.transcoder import Transcoder, TranscoderConfig
 
+from interpretune.testing.venngram_books import treatment_book
 from interpretune.tuning.pins import book_pins
 from interpretune.utils import MisconfigurationException
 from interpretune.session import ITSession
@@ -824,26 +825,26 @@ class TestBridgeTranscoderSupport:
             )
         )
         recipe = load_recipe(
-            {
-                "schema_version": 2,
-                "kind": "recipe",
-                "name": "steer-a-feature",
-                "model": {"id": "m", "revision": "r1"},
-                "book": {
-                    "schema_version": 1,
-                    "name": "features",
-                    "portability": "checkpoint",
-                    "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
-                    "sets": {"top": {"features": "sae", "layers": [0], "units": [5]}},
-                },
-                "stages": [
-                    {
-                        "site": "hook_resid_post",
-                        "tokens": "all",
-                        "ops": [{"op": "add", "target": {"set": "top"}, "value": {"dose": 50.0}}],
-                    }
-                ],
-            }
+            treatment_book(
+                {
+                    "name": "steer-a-feature",
+                    "model": {"id": "m", "revision": "r1"},
+                    "book": {
+                        "schema_version": 1,
+                        "name": "features",
+                        "portability": "checkpoint",
+                        "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+                        "sets": {"top": {"features": "sae", "layers": [0], "units": [5]}},
+                    },
+                    "stages": [
+                        {
+                            "site": "hook_resid_post",
+                            "tokens": "all",
+                            "ops": [{"op": "add", "target": {"set": "top"}, "value": {"dose": 50.0}}],
+                        }
+                    ],
+                }
+            )
         ).recipe
         payload = recipe_interventions(recipe, site_widths={"hook_resid_post.hook_sae_acts_post": sae.cfg.d_sae})
         batch = {"input": tinystories_bridge_model.to_tokens(TRANSCODER_PROMPT)}
