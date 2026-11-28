@@ -1,0 +1,73 @@
+{
+  "schema": 3,
+  "artifact_kind": "dashboard-corpus",
+  "generated_utc": "2026-11-26T00:00:00+00:00",
+  "identity": {
+    "model_id": "gemma-3-1b-it",
+    "source_set_id": "gemmascope-2-transcoder-16k"
+  },
+  "subject": {
+    "model": {
+      "id": "google/gemma-3-1b-it",
+      "revision": null,
+      "n_layers": 26
+    },
+    "architecture": null,
+    "tokenizer": {
+      "id": "google/gemma-3-1b-it"
+    },
+    "component_map": null,
+    "dictionaries": [
+      {
+        "kind": "sae_lens",
+        "release": "gemma-scope-2-1b-it-transcoders-all",
+        "sae_id": null
+      }
+    ]
+  },
+  "source_set": {
+    "description": "Transcoder - 16k",
+    "sae_set": "gemma-scope-2-1b-it-transcoders-all",
+    "hook_point": "hook_mlp_in",
+    "capture_hook_name": "blocks.{layer}.ln2.hook_out",
+    "release_id": "gemma-scope-2",
+    "release_title": "Gemma Scope 2",
+    "release_url": "https://huggingface.co/google/gemma-scope-2-1b-it",
+    "creator": "Google DeepMind"
+  },
+  "prompt_corpus": {
+    "hf_dataset_path": "monology/pile-uncopyrighted",
+    "hf_dataset_config_name": null,
+    "hf_dataset_split": null,
+    "pretokenized_path_name": null,
+    "n_prompts": 24576,
+    "n_tokens_in_prompt": 128
+  },
+  "layers": {
+    "requested": [
+      0,
+      1
+    ],
+    "generated": [
+      0,
+      1
+    ]
+  },
+  "source_ids": {
+    "0": "0-gemmascope-2-transcoder-16k",
+    "1": "1-gemmascope-2-transcoder-16k"
+  },
+  "artifacts": {
+    "format": "legacy_json",
+    "page_index": true,
+    "parquet_row_group_size": 4096,
+    "includes_copy_rows": true,
+    "n_features_per_batch": 128
+  },
+  "tool_versions": {
+    "interpretune": "0.0.0.dev0",
+    "sae-dashboard": "0.0.0",
+    "pyarrow": "0.0.0",
+    "huggingface_hub": "0.0.0"
+  }
+}

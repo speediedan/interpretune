@@ -1,27 +1,46 @@
 {
-  "_comment": "Recorded buckets of the default trusted publishers, and each corpus bucket's dashboards.json, used to exercise discovery offline. Two corpora share a model and differ in source set and prompt corpus, which is the case resolution must not collapse. Re-record with record_dashboard_corpus_publishers.py beside this file.",
+  "_comment": "Recorded buckets of the default trusted publishers, and each corpus bucket's it_artifact.json, used to exercise discovery offline. Two corpora share a model and differ in source set and prompt corpus, which is the case resolution must not collapse. Re-record with record_dashboard_corpus_publishers.py beside this file.",
   "publishers": {
     "speediedan": [
       {
         "id": "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards",
-        "has_manifest": true
+        "has_envelope": true
       },
       {
         "id": "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards",
-        "has_manifest": true
+        "has_envelope": true
       }
     ]
   },
-  "manifests": {
+  "envelopes": {
     "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards": {
-      "schema": 2,
+      "schema": 3,
+      "artifact_kind": "dashboard-corpus",
       "generated_utc": "2026-08-28T13:22:18+00:00",
-      "model": {
-        "name": "gemma-3-1b-it",
-        "n_layers": 26
+      "identity": {
+        "model_id": "gemma-3-1b-it",
+        "source_set_id": "gemmascope-2-transcoder-16k-rte"
+      },
+      "subject": {
+        "model": {
+          "id": "google/gemma-3-1b-it",
+          "revision": null,
+          "n_layers": 26
+        },
+        "architecture": null,
+        "tokenizer": {
+          "id": null
+        },
+        "component_map": null,
+        "dictionaries": [
+          {
+            "kind": "sae_lens",
+            "release": "gemma-scope-2-1b-it-transcoders-all",
+            "sae_id": null
+          }
+        ]
       },
       "source_set": {
-        "id": "gemmascope-2-transcoder-16k-rte",
         "description": "Transcoder - 16k (RTE)",
         "sae_set": "gemma-scope-2-1b-it-transcoders-all",
         "hook_point": "hook_mlp_in",
@@ -137,17 +156,40 @@
         "sae-dashboard": "0.8.0",
         "pyarrow": "25.0.0",
         "huggingface_hub": "1.28.0"
+      },
+      "provenance": {
+        "converted_from": "dashboards.json (schema 2)",
+        "converted_utc": "2026-11-26T22:18:33+00:00"
       }
     },
     "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards": {
-      "schema": 2,
+      "schema": 3,
+      "artifact_kind": "dashboard-corpus",
       "generated_utc": "2026-08-28T12:48:32+00:00",
-      "model": {
-        "name": "gemma-3-1b-it",
-        "n_layers": 26
+      "identity": {
+        "model_id": "gemma-3-1b-it",
+        "source_set_id": "gemmascope-2-transcoder-16k"
+      },
+      "subject": {
+        "model": {
+          "id": "google/gemma-3-1b-it",
+          "revision": null,
+          "n_layers": 26
+        },
+        "architecture": null,
+        "tokenizer": {
+          "id": null
+        },
+        "component_map": null,
+        "dictionaries": [
+          {
+            "kind": "sae_lens",
+            "release": "gemma-scope-2-1b-it-transcoders-all",
+            "sae_id": null
+          }
+        ]
       },
       "source_set": {
-        "id": "gemmascope-2-transcoder-16k",
         "description": "Transcoder - 16k",
         "sae_set": "gemma-scope-2-1b-it-transcoders-all",
         "hook_point": "hook_mlp_in",
@@ -263,6 +305,10 @@
         "sae-dashboard": "0.8.0",
         "pyarrow": "25.0.0",
         "huggingface_hub": "1.28.0"
+      },
+      "provenance": {
+        "converted_from": "dashboards.json (schema 2)",
+        "converted_utc": "2026-11-26T22:18:32+00:00"
       }
     }
   }

@@ -89,13 +89,13 @@ class TestDashboardsPresent:
             assert not dashboards_present(DB, model_id=MODEL, source_set_id=SET)
 
 
-def _recorded_hub(extra_buckets: list[dict] | None = None, extra_manifests: dict | None = None):
-    """Serve the recorded publishers' buckets and manifests, with optional extra buckets, in place of the Hub."""
+def _recorded_hub(extra_buckets: list[dict] | None = None, extra_envelopes: dict | None = None):
+    """Serve the recorded publishers' buckets and envelopes, with optional extra buckets, in place of the Hub."""
     buckets = {publisher: list(rows) for publisher, rows in RECORDED["publishers"].items()}
     for row in extra_buckets or []:
         buckets.setdefault(row["id"].split("/")[0], []).append(row)
-    manifests = {**RECORDED["manifests"], **(extra_manifests or {})}
-    has_manifest = {row["id"]: row["has_manifest"] for rows in buckets.values() for row in rows}
+    envelopes = {**RECORDED["envelopes"], **(extra_envelopes or {})}
+    has_envelope = {row["id"]: row["has_envelope"] for rows in buckets.values() for row in rows}
     listed: list = []
 
     def list_buckets(self, namespace=None, *, search=None, token=None):
@@ -103,13 +103,13 @@ def _recorded_hub(extra_buckets: list[dict] | None = None, extra_manifests: dict
         return [SimpleNamespace(id=row["id"]) for row in buckets.get(namespace, [])]
 
     def get_bucket_paths_info(self, bucket_id, paths, *, token=None):
-        return [SimpleNamespace(path=p) for p in paths if has_manifest[bucket_id]]
+        return [SimpleNamespace(path=p) for p in paths if has_envelope[bucket_id]]
 
     return (
         patch.multiple("huggingface_hub.HfApi", list_buckets=list_buckets, get_bucket_paths_info=get_bucket_paths_info),
         patch(
-            "interpretune.utils.neuronpedia_hub_fetch.read_remote_manifest",
-            lambda bucket, token=None: manifests[bucket],
+            "interpretune.utils.neuronpedia_hub_fetch.read_remote_corpus_envelope",
+            lambda bucket, token=None: envelopes[bucket],
         ),
         listed,
     )
@@ -147,28 +147,28 @@ class TestCorpusDiscovery:
     def test_several_corpora_for_one_source_set_need_a_prompt_corpus(self) -> None:
         """More than one prompt corpus per source set is normal, so the first match is never taken."""
         other = f"{PUBLISHER}/gemma-3-1b-it__gemmascope-2-transcoder-16k__wikitext__dashboards"
-        manifest = json.loads(json.dumps(RECORDED["manifests"][MONOLOGY]))
-        manifest["prompt_corpus"].update(hf_dataset_path="Salesforce/wikitext", hf_dataset_config_name="wikitext-103")
-        hub, man, _ = _recorded_hub([{"id": other, "has_manifest": True}], {other: manifest})
+        envelope = json.loads(json.dumps(RECORDED["envelopes"][MONOLOGY]))
+        envelope["prompt_corpus"].update(hf_dataset_path="Salesforce/wikitext", hf_dataset_config_name="wikitext-103")
+        hub, man, _ = _recorded_hub([{"id": other, "has_envelope": True}], {other: envelope})
         with hub, man:
             with pytest.raises(LookupError, match="several corpora serve.*prompt_corpus="):
                 resolve_bucket_for(MODEL, SET)
             assert resolve_bucket_for(MODEL, SET, prompt_corpus="monology/pile-uncopyrighted") == MONOLOGY
             assert resolve_bucket_for(MODEL, SET, prompt_corpus="Salesforce/wikitext") == other
 
-    def test_buckets_without_a_manifest_are_not_corpora(self) -> None:
+    def test_buckets_without_an_envelope_are_not_corpora(self) -> None:
         """A publisher's other buckets are not corpora, whatever they are named."""
         decoy = f"{PUBLISHER}/gemma-3-1b-it__gemmascope-2-transcoder-16k__decoy__dashboards"
-        hub, man, _ = _recorded_hub([{"id": decoy, "has_manifest": False}])
+        hub, man, _ = _recorded_hub([{"id": decoy, "has_envelope": False}])
         with hub, man:
             assert {c.bucket for c in find_dashboard_corpora()} == {MONOLOGY, RTE}
 
     def test_only_trusted_publishers_are_listed(self, monkeypatch) -> None:
         """The trust list is the keyword, else the environment variable, else the default, read at call time."""
         stranger = "stranger/gemma-3-1b-it__gemmascope-2-transcoder-16k__other__dashboards"
-        manifest = json.loads(json.dumps(RECORDED["manifests"][MONOLOGY]))
-        manifest["prompt_corpus"].update(hf_dataset_path="Salesforce/wikitext")
-        hub, man, listed = _recorded_hub([{"id": stranger, "has_manifest": True}], {stranger: manifest})
+        envelope = json.loads(json.dumps(RECORDED["envelopes"][MONOLOGY]))
+        envelope["prompt_corpus"].update(hf_dataset_path="Salesforce/wikitext")
+        hub, man, listed = _recorded_hub([{"id": stranger, "has_envelope": True}], {stranger: envelope})
         with hub, man:
             assert {c.bucket for c in find_dashboard_corpora()} == {MONOLOGY, RTE}
             assert {c.bucket for c in find_dashboard_corpora(publishers=["stranger"])} == {stranger}

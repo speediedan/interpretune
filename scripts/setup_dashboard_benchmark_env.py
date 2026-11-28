@@ -576,22 +576,19 @@ class Setup:
         `make inference-dev` sources this `.env` into the process environment, so a relocated HF
         cache is honoured with no mount and no flag.
 
-        `POSTGRES_HOST_PORT` and `POSTGRES_DATA_DIR` are **vestigial** and kept only because
-        removing keys from an operator's `.env` is not this script's business. They were read by
-        `docker/compose.yaml`, which upstream deleted; nothing consumes them now. The port that
-        matters today is the one inside `--local-db-url`, and the data directory belongs to
-        whoever runs the server. Existing values are never modified here.
+        It no longer writes `POSTGRES_HOST_PORT` or `POSTGRES_DATA_DIR`: they were read by
+        `docker/compose.yaml`, which upstream deleted, and nothing consumes them now. An operator's
+        existing lines are left alone, since removing keys from their `.env` is not this script's
+        business. The port that matters is the one inside `--local-db-url`. Existing values are
+        never modified here.
         """
 
         np_repo = self.repo_paths["neuronpedia"]
         env_file = np_repo / ".env"
         existing = env_file.read_text(encoding="utf-8") if env_file.is_file() else ""
         existing_keys = {line.split("=", 1)[0].strip() for line in existing.splitlines() if "=" in line}
-        parsed = urlsplit(self.args.local_db_url)
         hf_home = Path(self.args.hf_home).expanduser()
         wanted = {
-            "POSTGRES_HOST_PORT": str(parsed.port or 5432),
-            "POSTGRES_DATA_DIR": str(Path(self.args.postgres_data_dir).expanduser()),
             "HF_HOME": str(hf_home),
             "HF_HUB_CACHE": str(hf_home / "hub"),
             "HF_DATASETS_CACHE": str(hf_home / "datasets"),
@@ -1106,12 +1103,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="HF_HOME exported in benchmark_env.sh (model/dataset caches; "
         "HF_HUB_CACHE/HF_DATASETS_CACHE derive from it).",
     )
-    parser.add_argument(
-        "--postgres-data-dir",
-        default=None,
-        help="Host directory for the local Neuronpedia Postgres data volume (written to the neuronpedia "
-        "untracked .env when missing; default: <np-cache>/neuronpedia_db).",
-    )
     parser.add_argument("--venv-dir", default=os.getenv("IT_VENV_BASE", str(Path.home() / ".venvs")))
     parser.add_argument("--venv-name", default="it_bench")
     parser.add_argument(
@@ -1140,10 +1131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args() -> argparse.Namespace:
-    args = build_parser().parse_args()
-    if args.postgres_data_dir is None:
-        args.postgres_data_dir = str(Path(args.np_cache).expanduser() / "neuronpedia_db")
-    return args
+    return build_parser().parse_args()
 
 
 if __name__ == "__main__":

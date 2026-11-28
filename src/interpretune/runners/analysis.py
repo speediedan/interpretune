@@ -15,7 +15,7 @@ from datasets.fingerprint import generate_random_fingerprint
 from interpretune.analysis import schema_to_features
 from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
-from interpretune.runners.core import SessionRunner, profiling, run_step
+from interpretune.runners.core import SessionRunner, _print_metrics, profiling, run_step
 from interpretune.runners.distributed import (
     DistributedRun,
     distributed_dataloader,
@@ -97,6 +97,7 @@ def analysis_store_generator(
         dataloader = distributed_dataloader(dataloader, dist_run, share_batches=True)
     shares, index = (dist_run.data_shares, dist_run.data_index) if dist_run is not None else (1, 0)
     test_ctx = {"module": module, "as_generator": True}
+    module.reset_analysis_metrics()
     with profiling(module, "analysis") as prof:
         for epoch_idx in range(max_epochs):
             module.current_epoch = epoch_idx
@@ -118,6 +119,10 @@ def analysis_store_generator(
                 if prof is not None:
                     prof.step()
             _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
+            if dist_run is not None and dist_run.data_shares > 1:
+                _pool_analysis_metrics(module, dist_run)
+            if metrics := module.flush_analysis_metrics():
+                _print_metrics(f"Analysis epoch {epoch_idx} end", metrics)
             # Declared op state (`op_state` trait) is reset here only for ops that ask for it; by default
             # it accumulates across epochs. `batch_idx` restarts at 0 above, so the previous
             # `batch_idx == 0` reset heuristic silently discarded every epoch but the last.
@@ -808,6 +813,34 @@ def _merge_shares(
     assert isinstance(merged, Dataset)
     shutil.rmtree(share_dir, ignore_errors=True)
     return merged.with_format("interpretune", **it_format_kwargs)
+
+
+def _pool_analysis_metrics(module: Any, dist_run: DistributedRun) -> None:
+    """Give every rank the epoch's ``log_analysis`` values from all the data shares, before they are averaged.
+
+    Each share analyzes its own batches, so one rank's values average a part of the epoch: a plausible number that is
+    not the one-process average. The writing rank of each lockstep group contributes its group's values (the group's
+    ranks computed the same ones), and every rank then averages the pooled values, which is the one-process average.
+    """
+    pool_analysis_metrics(module, contribute=dist_run.writes_outputs)
+
+
+def pool_analysis_metrics(module: Any, contribute: bool = True) -> None:
+    """Replace this rank's pending ``log_analysis`` values with every rank's, over the default process group.
+
+    A collective: every rank calls it. A rank that passes ``contribute=False`` adds nothing but still receives the
+    pooled values, which is how ranks that computed the same values as another rank avoid counting them twice.
+    """
+    import torch.distributed as dist
+
+    pending = module.__dict__.get("_pending_analysis_metrics") or {}
+    gathered: list[Any] = [None] * dist.get_world_size()
+    dist.all_gather_object(gathered, pending if contribute else {})
+    pooled: dict[str, list[float]] = {}
+    for share in gathered:
+        for name, values in (share or {}).items():
+            pooled.setdefault(name, []).extend(values)
+    module.__dict__["_pending_analysis_metrics"] = pooled
 
 
 def _replayed(merged: Dataset, module: Any, plan: ShareExecution, reports: list[Any]) -> Dataset:

@@ -45,6 +45,12 @@ class _Module:
         self.it_cfg = SimpleNamespace(profiler_cfg=SimpleNamespace(which=None))
         self.global_step, self.current_epoch, self.steps, self.dtype = 1, 0, 0, torch.float32
 
+    def reset_analysis_metrics(self):
+        """The loop clears the module's analysis-metric accumulator before a run; this step logs no metric."""
+
+    def flush_analysis_metrics(self):
+        return {}
+
     def batch_to_device(self, batch):
         return batch
 

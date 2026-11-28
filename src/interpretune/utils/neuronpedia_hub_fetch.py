@@ -29,7 +29,7 @@ from interpretune.utils.neuronpedia_source_conflicts import (
 )
 
 __all__ = [
-    "CORPUS_MANIFEST",
+    "CORPUS_ENVELOPE",
     "CorpusListing",
     "CorpusPlan",
     "DashboardDatabaseUnreachableError",
@@ -38,15 +38,16 @@ __all__ = [
     "ensure_dashboards",
     "fetch_dashboards",
     "find_dashboard_corpora",
-    "read_remote_manifest",
+    "read_remote_corpus_envelope",
     "resolve_bucket_for",
     "resolve_corpus_config",
 ]
 
 log = logging.getLogger(__name__)
 
-#: Self-description carried at the root of every published corpus.
-CORPUS_MANIFEST = "dashboards.json"
+#: Self-description carried at the root of every published corpus: the shared ``it_artifact.json`` envelope, kind
+#: ``dashboard-corpus``.
+CORPUS_ENVELOPE = "it_artifact.json"
 
 #: The dashboard pipeline configurations live in the interpretune/examples repository's ``dashboards/``. A corpus import
 #: that is not handed a config reads them from the checkout ``IT_DASHBOARD_CONFIG_DIR`` names.
@@ -67,7 +68,7 @@ def dashboard_config_dir() -> Path:
 
 @dataclass(frozen=True)
 class CorpusListing:
-    """One discoverable corpus, described by its own manifest, enough to choose it before any GiB moves."""
+    """One discoverable corpus, described by its own envelope, enough to choose it before any GiB moves."""
 
     bucket: str
     publisher: str
@@ -91,7 +92,7 @@ def _prompt_corpus_label(corpus: dict[str, Any]) -> str | None:
 
 @dataclass(frozen=True)
 class CorpusPlan:
-    """What a fetch would do, resolved from the corpus's own manifest."""
+    """What a fetch would do, resolved from the corpus's own envelope."""
 
     bucket: str
     model_id: str
@@ -169,32 +170,38 @@ def find_dashboard_corpora(
 
     ``publishers`` is the trust list shared with analysis stores (``interpretune.hub.trusted_publishers``: the
     keyword, else ``IT_TRUSTED_PUBLISHERS``, else the project's namespace). Each publisher's buckets are listed, and a
-    bucket is a corpus when it carries a ``dashboards.json`` (about 3 KB, read with ``token``); nothing else is
-    downloaded. The match is on what the corpus says about itself, never on the bucket's name.
+    bucket is a corpus when it carries a corpus ``it_artifact.json`` (about 3 KB, read with ``token``); nothing else
+    is downloaded. The match is on what the corpus says about itself, never on the bucket's name. A bucket whose
+    envelope this build cannot read is left out of the listing with a warning naming why.
     """
     from huggingface_hub import HfApi
 
+    from interpretune.hub.artifacts import ArtifactEnvelopeError
     from interpretune.hub.discovery import trusted_publishers
 
     api = HfApi(token=token)
     found: list[CorpusListing] = []
     for publisher in trusted_publishers(publishers):
         for bucket in api.list_buckets(namespace=publisher, token=token):
-            if not list(api.get_bucket_paths_info(bucket.id, [CORPUS_MANIFEST], token=token)):
-                log.debug("skipping bucket %s of %s: it carries no %s", bucket.id, publisher, CORPUS_MANIFEST)
+            if not list(api.get_bucket_paths_info(bucket.id, [CORPUS_ENVELOPE], token=token)):
+                log.debug("skipping bucket %s of %s: it carries no %s", bucket.id, publisher, CORPUS_ENVELOPE)
                 continue
-            manifest = read_remote_manifest(bucket.id, token)
-            corpus = manifest.get("prompt_corpus") or {}
+            try:
+                envelope = read_remote_corpus_envelope(bucket.id, token)
+            except ArtifactEnvelopeError as exc:
+                log.warning("left bucket %s of %s out of the listing: %s", bucket.id, publisher, exc)
+                continue
+            corpus = envelope.get("prompt_corpus") or {}
             listing = CorpusListing(
                 bucket=bucket.id,
                 publisher=publisher,
-                model_id=(manifest.get("model") or {}).get("name"),
-                source_set_id=(manifest.get("source_set") or {}).get("id"),
+                model_id=envelope["identity"]["model_id"],
+                source_set_id=envelope["identity"]["source_set_id"],
                 prompt_corpus=_prompt_corpus_label(corpus),
                 n_prompts=corpus.get("n_prompts"),
                 n_tokens=corpus.get("n_tokens_in_prompt"),
-                layers=len((manifest.get("layers") or {}).get("generated") or []),
-                page_index=(manifest.get("artifacts") or {}).get("page_index"),
+                layers=len(envelope["layers"]["generated"]),
+                page_index=(envelope.get("artifacts") or {}).get("page_index"),
             )
             if model_id is not None and listing.model_id != model_id:
                 continue
@@ -243,20 +250,31 @@ def resolve_bucket_for(
     )
 
 
-def read_remote_manifest(bucket: str, token: str | bool | None = None) -> dict[str, Any]:
-    """Fetch just ``dashboards.json`` (~3 KB) so a plan is known before any GiB moves."""
+def read_remote_corpus_envelope(bucket: str, token: str | bool | None = None) -> dict[str, Any]:
+    """Fetch and validate just the corpus's ``it_artifact.json`` (~3 KB), so a plan is known before any GiB moves.
+
+    Raises :class:`~interpretune.hub.artifacts.ArtifactEnvelopeError` when the envelope is unreadable, of another
+    kind, or outside this build's schema window.
+    """
     import json
     import tempfile
 
     from huggingface_hub import HfApi
 
+    from interpretune.hub.artifacts import DASHBOARD_CORPUS_KIND, ArtifactEnvelopeError, validate_artifact_envelope
+
+    source = f"{bucket}/{CORPUS_ENVELOPE}"
     with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp) / CORPUS_MANIFEST
-        HfApi(token=token).download_bucket_files(bucket, [(CORPUS_MANIFEST, target)], token=token)
-        return json.loads(target.read_text(encoding="utf-8"))
+        target = Path(tmp) / CORPUS_ENVELOPE
+        HfApi(token=token).download_bucket_files(bucket, [(CORPUS_ENVELOPE, target)], token=token)
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ArtifactEnvelopeError(f"{source}: unreadable corpus envelope ({exc})") from None
+    return validate_artifact_envelope(payload, source=source, kind=DASHBOARD_CORPUS_KIND)
 
 
-def resolve_corpus_config(manifest: dict[str, Any], explicit: Path | None = None) -> Path:
+def resolve_corpus_config(envelope: dict[str, Any], explicit: Path | None = None) -> Path:
     """Pick the committed config whose model + source set match the corpus.
 
     Matched on what the corpus says about itself rather than on the bucket name: bucket names are
@@ -272,9 +290,9 @@ def resolve_corpus_config(manifest: dict[str, Any], explicit: Path | None = None
     # inherits model_name from its base, so a raw read matches nothing).
     from interpretune.utils.neuronpedia_dashboard_pipeline import load_dashboard_pipeline_config_payload
 
-    want_model = (manifest.get("model") or {}).get("name")
-    want_set = (manifest.get("source_set") or {}).get("id")
-    want_prompts = (manifest.get("prompt_corpus") or {}).get("n_prompts")
+    want_model = envelope["identity"]["model_id"]
+    want_set = envelope["identity"]["source_set_id"]
+    want_prompts = (envelope.get("prompt_corpus") or {}).get("n_prompts")
 
     resolved: dict[Path, dict] = {}
     config_dir = dashboard_config_dir()
@@ -310,10 +328,10 @@ def plan_fetch(
     token: str | None = None,
 ) -> CorpusPlan:
     """Resolve everything a fetch needs, without downloading the corpus."""
-    manifest = read_remote_manifest(bucket, token)
-    model_id = (manifest.get("model") or {}).get("name") or "?"
-    source_set_id = (manifest.get("source_set") or {}).get("id") or "?"
-    corpus = manifest.get("prompt_corpus") or {}
+    envelope = read_remote_corpus_envelope(bucket, token)
+    model_id = envelope["identity"]["model_id"]
+    source_set_id = envelope["identity"]["source_set_id"]
+    corpus = envelope.get("prompt_corpus") or {}
     dest_parent = (Path(dest) if dest else default_corpus_dest()).expanduser()
     return CorpusPlan(
         bucket=bucket,
@@ -321,9 +339,9 @@ def plan_fetch(
         source_set_id=source_set_id,
         n_prompts=corpus.get("n_prompts"),
         n_tokens=corpus.get("n_tokens_in_prompt"),
-        layers=len((manifest.get("layers") or {}).get("generated") or []),
-        page_index=(manifest.get("artifacts") or {}).get("page_index"),
-        config=resolve_corpus_config(manifest, config),
+        layers=len(envelope["layers"]["generated"]),
+        page_index=(envelope.get("artifacts") or {}).get("page_index"),
+        config=resolve_corpus_config(envelope, config),
         # The corpus lands under its OWN identity regardless of conflict policy: a rename changes
         # where rows go in the database, not what the corpus is, and making the download path depend
         # on database contents would put the same corpus in different directories on different hosts.

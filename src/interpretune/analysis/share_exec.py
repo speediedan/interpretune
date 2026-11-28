@@ -101,6 +101,15 @@ class ShareExecution:
         self.recorded[self.key(module, batch_idx)] = {"inputs": inputs, "batch": _detached(batch)}
 
 
+def stateful_op_names(op: Any) -> list[str]:
+    """The names of ``op`` and its member ops (a composite's) that declare cross-batch ``op_state``."""
+    if op is None:
+        return []
+    return [
+        getattr(member, "name", str(member)) for member in _members(op) if getattr(member, "op_state", None) is not None
+    ]
+
+
 def plan_share_execution(op: Any) -> ShareExecution | None:
     """The :class:`ShareExecution` that keeps ``op``'s cross-batch state exact under data shares, or None when no
     member of ``op`` declares ``op_state``."""

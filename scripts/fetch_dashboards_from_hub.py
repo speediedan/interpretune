@@ -3,7 +3,7 @@
 
     python scripts/fetch_dashboards_from_hub.py --bucket <ns>/<bucket> --autosuffix-on-exists
 
-Everything else is derived. The corpus carries ``dashboards.json`` (model, source set, prompt corpus,
+Everything else is derived. The corpus carries ``it_artifact.json`` (model, source set, prompt corpus,
 layers) and ``source_ids.json`` (identity), so the bucket id is enough to pick the matching committed
 config, choose a destination, and import under the right source ids. Directories are created as
 needed; ``--dest`` overrides where they go.

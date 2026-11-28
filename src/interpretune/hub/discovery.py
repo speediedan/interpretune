@@ -2,8 +2,8 @@
 
 Trust is per publisher: a Hub namespace (a user or an organization) whose analysis stores and dashboard corpora a
 session will discover. One list governs both kinds, so a publisher trusted for one is trusted for the other. Discovery
-reads only what each artifact says about itself (a store's ``it_artifact.json``, a corpus's ``dashboards.json``),
-never a repo or bucket name.
+reads only what each artifact says about itself (its ``it_artifact.json``: kind ``analysis-store`` for a store,
+``dashboard-corpus`` for a corpus), never a repo or bucket name.
 
 The list resolves in order: the ``publishers=`` keyword, then the ``IT_TRUSTED_PUBLISHERS`` environment variable
 (comma-separated, read at call time like ``IT_TRUST_REMOTE_CODE``), then :data:`DEFAULT_TRUSTED_PUBLISHERS`.
